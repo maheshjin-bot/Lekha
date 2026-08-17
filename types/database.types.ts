@@ -1549,6 +1549,22 @@ export type Database = {
         }
         Returns: string
       }
+      create_invoice: {
+        Args: {
+          p_branch_id: string
+          p_company_id: string
+          p_godown_id: string
+          p_items: Json
+          p_narration?: string
+          p_party_ledger_id: string
+          p_reference_date?: string
+          p_reference_number?: string
+          p_trading_ledger_id: string
+          p_voucher_date: string
+          p_voucher_type: string
+        }
+        Returns: string
+      }
       create_voucher: {
         Args: {
           p_branch_id: string
