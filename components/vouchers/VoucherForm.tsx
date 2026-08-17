@@ -23,22 +23,51 @@ type Line = { ledgerId: string; side: "dr" | "cr"; amount: string; narration: st
 
 const emptyLine = (): Line => ({ ledgerId: "", side: "dr", amount: "", narration: "" });
 
+/**
+ * An existing voucher being edited. voucherType and branch are absent by
+ * design: neither is editable once a number has been allocated, because the
+ * number encodes both.
+ */
+export type ExistingVoucher = {
+  id: string;
+  voucherNumber: string;
+  voucherType: string;
+  financialYearLabel: string;
+  date: string;
+  narration: string;
+  reference: string;
+  branchId: string;
+  lines: Line[];
+};
+
+/** Today as a local wall-clock date — not toISOString(), which is UTC. */
+function todayLocal(): string {
+  const d = new Date();
+  const pad = (n: number) => String(n).padStart(2, "0");
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+}
+
 export function VoucherForm({
   companyId,
   ledgers,
   branches,
+  existing,
 }: {
   companyId: string;
   ledgers: Ledger[];
   branches: Branch[];
+  existing?: ExistingVoucher;
 }) {
   const router = useRouter();
-  const [voucherType, setVoucherType] = useState("payment");
-  const [branchId, setBranchId] = useState(branches[0]?.id ?? "");
-  const [date, setDate] = useState(() => new Date().toISOString().slice(0, 10));
-  const [narration, setNarration] = useState("");
-  const [reference, setReference] = useState("");
-  const [lines, setLines] = useState<Line[]>([emptyLine(), emptyLine()]);
+  const isEdit = Boolean(existing);
+  const [voucherType, setVoucherType] = useState(existing?.voucherType ?? "payment");
+  const [branchId, setBranchId] = useState(existing?.branchId ?? branches[0]?.id ?? "");
+  const [date, setDate] = useState(existing?.date ?? todayLocal);
+  const [narration, setNarration] = useState(existing?.narration ?? "");
+  const [reference, setReference] = useState(existing?.reference ?? "");
+  const [lines, setLines] = useState<Line[]>(
+    existing?.lines.length ? existing.lines : [emptyLine(), emptyLine()]
+  );
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -90,24 +119,36 @@ export function VoucherForm({
     }
 
     setBusy(true);
-    const { data, error } = await createClient().rpc("create_voucher", {
-      p_company_id: companyId,
-      p_branch_id: branchId,
-      p_voucher_type: voucherType,
-      p_voucher_date: date,
-      // Omitted keys fall through to the SQL defaults. supabase-js drops
-      // undefined from the body, and PostgREST matches the overload on exactly
-      // the names it receives — so these must be genuinely optional in SQL.
-      p_narration: narration.trim() || undefined,
-      p_reference_number: reference.trim() || undefined,
-      p_lines: filled.map((l, i) => ({
-        ledger_id: l.ledgerId,
-        debit_amount: l.side === "dr" ? Number(l.amount) : 0,
-        credit_amount: l.side === "cr" ? Number(l.amount) : 0,
-        narration: l.narration.trim() || null,
-        line_order: i,
-      })),
-    });
+    const supabase = createClient();
+
+    // Omitted keys fall through to the SQL defaults. supabase-js drops
+    // undefined from the body, and PostgREST matches the overload on exactly
+    // the names it receives — so these must be genuinely optional in SQL.
+    const payload = filled.map((l, i) => ({
+      ledger_id: l.ledgerId,
+      debit_amount: l.side === "dr" ? Number(l.amount) : 0,
+      credit_amount: l.side === "cr" ? Number(l.amount) : 0,
+      narration: l.narration.trim() || null,
+      line_order: i,
+    }));
+
+    const { error } = existing
+      ? await supabase.rpc("update_voucher", {
+          p_voucher_id: existing.id,
+          p_voucher_date: date,
+          p_lines: payload,
+          p_narration: narration.trim() || undefined,
+          p_reference_number: reference.trim() || undefined,
+        })
+      : await supabase.rpc("create_voucher", {
+          p_company_id: companyId,
+          p_branch_id: branchId,
+          p_voucher_type: voucherType,
+          p_voucher_date: date,
+          p_lines: payload,
+          p_narration: narration.trim() || undefined,
+          p_reference_number: reference.trim() || undefined,
+        });
 
     if (error) {
       setError(error.message);
@@ -115,9 +156,10 @@ export function VoucherForm({
       return;
     }
 
-    router.push(`/${companyId}/reports/daybook`);
+    router.push(
+      existing ? `/${companyId}/vouchers/${existing.id}` : `/${companyId}/reports/daybook`
+    );
     router.refresh();
-    void data;
   }
 
   const field =
@@ -131,7 +173,11 @@ export function VoucherForm({
           <select
             value={voucherType}
             onChange={(e) => setVoucherType(e.target.value)}
-            className={field}
+            // The voucher number encodes the type and the branch, so neither
+            // can change once one has been allocated. Renumbering silently
+            // would break a number already printed on a document.
+            disabled={isEdit}
+            className={field + (isEdit ? " opacity-60" : "")}
           >
             {VOUCHER_TYPES.map((t) => (
               <option key={t.value} value={t.value}>
@@ -157,7 +203,8 @@ export function VoucherForm({
           <select
             value={branchId}
             onChange={(e) => setBranchId(e.target.value)}
-            className={field}
+            disabled={isEdit}
+            className={field + (isEdit ? " opacity-60" : "")}
           >
             {branches.map((b) => (
               <option key={b.id} value={b.id}>
@@ -300,12 +347,21 @@ export function VoucherForm({
         </p>
       )}
 
+      {isEdit && (
+        <p className="mt-4 rounded-md border border-zinc-200 bg-zinc-50 px-3 py-2 text-xs text-zinc-600 dark:border-zinc-800 dark:bg-zinc-900 dark:text-zinc-400">
+          The date must stay inside financial year {existing!.financialYearLabel}.
+          This voucher&rsquo;s number belongs to that series and may already be
+          printed on a document sent to the other party — the database refuses
+          the move rather than renumbering behind you.
+        </p>
+      )}
+
       <button
         type="submit"
         disabled={busy || !totals.balanced}
         className="mt-5 rounded-md bg-emerald-800 px-4 py-2 text-sm font-medium text-white transition hover:bg-emerald-700 disabled:opacity-50 dark:bg-emerald-700 dark:hover:bg-emerald-600"
       >
-        {busy ? "Saving…" : "Save voucher"}
+        {busy ? "Saving…" : isEdit ? "Save changes" : "Save voucher"}
       </button>
     </form>
   );

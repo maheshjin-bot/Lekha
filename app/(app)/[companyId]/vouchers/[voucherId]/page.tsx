@@ -150,12 +150,18 @@ export default async function VoucherDetailPage({
         </p>
       )}
 
-      <p className="mt-8 rounded-md border border-zinc-200 bg-zinc-50 px-4 py-3 text-xs text-zinc-600 dark:border-zinc-800 dark:bg-zinc-900 dark:text-zinc-400 print:hidden">
-        Editing is not built yet. When it is, the date will be constrained to
-        financial year {voucher.financial_year_label} — this voucher&rsquo;s
-        number belongs to that series, and it may already be printed on a
-        document sent to the other party.
-      </p>
+      <div className="mt-8 flex flex-wrap items-center gap-4 print:hidden">
+        <Link
+          href={`/${companyId}/vouchers/${voucherId}/edit`}
+          className="rounded-md border border-zinc-300 px-3 py-1.5 text-sm transition hover:bg-zinc-100 dark:border-zinc-700 dark:hover:bg-zinc-800"
+        >
+          Edit voucher
+        </Link>
+        <span className="text-xs text-zinc-500">
+          The date can move within financial year {voucher.financial_year_label},
+          but not out of it.
+        </span>
+      </div>
     </main>
   );
 }
