@@ -11,6 +11,13 @@ const TITLE: Record<string, string> = {
   debit_note: "Debit Note",
 };
 
+const TAX_LABEL: Record<string, string> = {
+  cgst: "CGST",
+  sgst: "SGST",
+  igst: "IGST",
+  cess: "Cess",
+};
+
 export default async function PrintInvoicePage({
   params,
 }: PageProps<"/[companyId]/vouchers/[voucherId]/print">) {
@@ -20,7 +27,7 @@ export default async function PrintInvoicePage({
   const { data: voucher } = await supabase
     .from("vouchers")
     .select(
-      "id, voucher_number, voucher_type, voucher_date, narration, reference_number, reference_date, total_amount, party_ledger_id, branch_id"
+      "id, voucher_number, voucher_type, voucher_date, narration, reference_number, reference_date, total_amount, party_ledger_id, branch_id, place_of_supply, supply_type"
     )
     .eq("id", voucherId)
     .eq("company_id", companyId)
@@ -28,11 +35,11 @@ export default async function PrintInvoicePage({
 
   if (!voucher) notFound();
 
-  const [{ data: company }, { data: items }, { data: party }, { data: branch }] =
+  const [{ data: company }, { data: items }, { data: party }, { data: branch }, { data: taxMap }, { data: states }] =
     await Promise.all([
       supabase
         .from("companies")
-        .select("name, legal_name, pan, gstin:pan")
+        .select("name, legal_name, pan")
         .eq("id", companyId)
         .maybeSingle(),
       supabase
@@ -49,13 +56,40 @@ export default async function PrintInvoicePage({
         : Promise.resolve({ data: null }),
       supabase
         .from("branches")
-        .select("name, address_line1, address_line2, city, pincode, state_code")
+        .select("name, address_line1, address_line2, city, pincode, state_code, gst_registration_id, gst_registrations(gstin)")
         .eq("id", voucher.branch_id)
         .maybeSingle(),
+      // Reads what was actually posted rather than recomputing it, so the
+      // printed document can never disagree with the ledger it came from.
+      supabase
+        .from("tax_ledger_map")
+        .select("purpose, ledger_id")
+        .eq("company_id", companyId),
+      supabase.from("ref_states").select("code, name"),
     ]);
 
   const lines = items ?? [];
   const total = Number(voucher.total_amount);
+  const taxable = lines.reduce((n, l) => n + Number(l.amount), 0);
+
+  // Tax entries are whichever voucher_entries used a ledger that
+  // tax_ledger_map has on file for this company, keyed by purpose.
+  const { data: entries } = await supabase
+    .from("voucher_entries")
+    .select("ledger_id, debit_amount, credit_amount")
+    .eq("voucher_id", voucherId);
+
+  const purposeByLedger = new Map((taxMap ?? []).map((t) => [t.ledger_id, t.purpose]));
+  const taxByKind = new Map<string, number>();
+  for (const e of entries ?? []) {
+    const purpose = purposeByLedger.get(e.ledger_id);
+    if (!purpose) continue;
+    const kind = purpose.split("_")[1]; // output_cgst -> cgst
+    const amount = Number(e.debit_amount) || Number(e.credit_amount) || 0;
+    taxByKind.set(kind, (taxByKind.get(kind) ?? 0) + amount);
+  }
+
+  const stateName = (code: string | null) => states?.find((s) => s.code === code)?.name ?? code;
 
   return (
     <main className="mx-auto max-w-3xl px-6 py-10 print:max-w-none print:px-0 print:py-0">
@@ -81,10 +115,16 @@ export default async function PrintInvoicePage({
                   .join(", ") || branch.name}
               </div>
             )}
-            {company?.pan && (
+            {branch?.gst_registrations?.gstin ? (
               <div className="mt-1 text-xs">
-                PAN <span className="font-mono">{company.pan}</span>
+                GSTIN <span className="font-mono">{branch.gst_registrations.gstin}</span>
               </div>
+            ) : (
+              company?.pan && (
+                <div className="mt-1 text-xs">
+                  PAN <span className="font-mono">{company.pan}</span>
+                </div>
+              )
             )}
           </div>
 
@@ -115,6 +155,12 @@ export default async function PrintInvoicePage({
             <div className="text-[10px] uppercase tracking-wide text-zinc-500">Date</div>
             <div className="tabular-nums">{voucher.voucher_date}</div>
           </div>
+          {voucher.place_of_supply && (
+            <div>
+              <div className="text-[10px] uppercase tracking-wide text-zinc-500">Place of supply</div>
+              <div>{stateName(voucher.place_of_supply)}</div>
+            </div>
+          )}
           {voucher.reference_number && (
             <div>
               <div className="text-[10px] uppercase tracking-wide text-zinc-500">Reference</div>
@@ -161,6 +207,24 @@ export default async function PrintInvoicePage({
             ))}
           </tbody>
           <tfoot>
+            {taxByKind.size > 0 && (
+              <>
+                <tr>
+                  <td className="pt-2" colSpan={6}>
+                    Taxable value
+                  </td>
+                  <td className="pt-2 text-right tabular-nums">{formatINR(taxable)}</td>
+                </tr>
+                {[...taxByKind.entries()].map(([kind, amount]) => (
+                  <tr key={kind} className="text-zinc-700">
+                    <td className="py-0.5" colSpan={6}>
+                      {TAX_LABEL[kind] ?? kind.toUpperCase()}
+                    </td>
+                    <td className="py-0.5 text-right tabular-nums">{formatINR(amount)}</td>
+                  </tr>
+                ))}
+              </>
+            )}
             <tr className="border-t-2 border-zinc-900 font-semibold">
               <td className="py-2.5" colSpan={6}>
                 Total

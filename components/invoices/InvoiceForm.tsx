@@ -1,14 +1,22 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
 import { formatINR, sumPaise, toPaise } from "@/lib/utils/currency";
 
-type Item = { id: string; name: string; uom: string; sale_rate: number | null; purchase_rate: number | null };
-type Ledger = { id: string; name: string; ledger_role: string };
-type Branch = { id: string; code: string; name: string };
+type Item = {
+  id: string;
+  name: string;
+  uom: string;
+  sale_rate: number | null;
+  purchase_rate: number | null;
+  gst_rate_percent: number;
+};
+type Ledger = { id: string; name: string; ledger_role: string; state_code: string | null };
+type Branch = { id: string; code: string; name: string; registeredState: string | null };
 type Godown = { id: string; code: string; name: string };
+type StateOption = { code: string; name: string };
 
 const TYPES = [
   { value: "sales", label: "Sales invoice", party: "Customer", trading: "Sales ledger", roles: ["debtor", "cash_bank"] },
@@ -26,12 +34,16 @@ export function InvoiceForm({
   ledgers,
   branches,
   godowns,
+  gstOn,
+  states,
 }: {
   companyId: string;
   items: Item[];
   ledgers: Ledger[];
   branches: Branch[];
   godowns: Godown[];
+  gstOn: boolean;
+  states: StateOption[];
 }) {
   const router = useRouter();
   const [voucherType, setVoucherType] = useState<(typeof TYPES)[number]["value"]>("sales");
@@ -44,6 +56,8 @@ export function InvoiceForm({
   });
   const [partyId, setPartyId] = useState("");
   const [tradingId, setTradingId] = useState("");
+  const [placeOfSupply, setPlaceOfSupply] = useState("");
+  const [placeOfSupplyTouched, setPlaceOfSupplyTouched] = useState(false);
   const [reference, setReference] = useState("");
   const [narration, setNarration] = useState("");
   const [lines, setLines] = useState<Line[]>([emptyLine()]);
@@ -54,18 +68,60 @@ export function InvoiceForm({
   const isSale = voucherType === "sales" || voucherType === "credit_note";
 
   // The party side hard-filters by ledger role — a sale cannot be billed to a
-  // supplier. The trading side stays open, because a business may post to any
+  // supplier. The trading side stays open, since a business may post to any
   // of several income or expense ledgers.
   const partyLedgers = ledgers.filter((l) => (config.roles as readonly string[]).includes(l.ledger_role));
   const tradingLedgers = ledgers.filter((l) => l.ledger_role === (isSale ? "income" : "expense"));
 
-  const total = useMemo(
+  const branch = branches.find((b) => b.id === branchId);
+
+  // Place of supply defaults to the party's state on file — the same rule
+  // create_invoice applies server-side — but only until the user picks one
+  // themselves. A party with no recorded state leaves this blank, which is
+  // deliberate: guessing the wrong state here is worse than asking.
+  useEffect(() => {
+    if (placeOfSupplyTouched) return;
+    const party = ledgers.find((l) => l.id === partyId);
+    if (party?.state_code) setPlaceOfSupply(party.state_code);
+  }, [partyId, ledgers, placeOfSupplyTouched]);
+
+  const supplyType =
+    gstOn && branch?.registeredState && placeOfSupply
+      ? branch.registeredState === placeOfSupply
+        ? "intra"
+        : "inter"
+      : null;
+
+  const taxable = useMemo(
     () =>
       sumPaise(
         lines.map((l) => toPaise(Math.round((Number(l.quantity) || 0) * (Number(l.rate) || 0) * 100) / 100))
       ) / 100,
     [lines]
   );
+
+  // Mirrors create_invoice's per-line rounding exactly — computed here only
+  // to show the user what the server will post, not as the figure that gets
+  // submitted. The database is still the one that actually decides.
+  const tax = useMemo(() => {
+    if (!supplyType) return { cgst: 0, sgst: 0, igst: 0 };
+    let cgst = 0, sgst = 0, igst = 0;
+    for (const l of lines) {
+      const item = items.find((x) => x.id === l.itemId);
+      if (!item || !item.gst_rate_percent) continue;
+      const amount = Math.round((Number(l.quantity) || 0) * (Number(l.rate) || 0) * 100) / 100;
+      if (supplyType === "intra") {
+        const half = Math.round(((amount * item.gst_rate_percent) / 2 / 100) * 100) / 100;
+        cgst += half;
+        sgst += half;
+      } else {
+        igst += Math.round(((amount * item.gst_rate_percent) / 100) * 100) / 100;
+      }
+    }
+    return { cgst, sgst, igst };
+  }, [lines, items, supplyType]);
+
+  const grandTotal = taxable + tax.cgst + tax.sgst + tax.igst;
 
   function update(i: number, patch: Partial<Line>) {
     setLines((prev) =>
@@ -92,7 +148,8 @@ export function InvoiceForm({
     if (!filled.length) return setError("Add at least one item line.");
     if (!partyId) return setError(`Select a ${config.party.toLowerCase()}.`);
     if (!tradingId) return setError(`Select a ${config.trading.toLowerCase()}.`);
-    if (total <= 0) return setError("The invoice must come to more than zero.");
+    if (taxable <= 0) return setError("The invoice must come to more than zero.");
+    if (gstOn && !placeOfSupply) return setError("Select a place of supply.");
 
     setBusy(true);
     const { data, error } = await createClient().rpc("create_invoice", {
@@ -111,6 +168,7 @@ export function InvoiceForm({
       })),
       p_narration: narration.trim() || undefined,
       p_reference_number: reference.trim() || undefined,
+      p_place_of_supply: placeOfSupply || undefined,
     });
 
     if (error) {
@@ -168,6 +226,17 @@ export function InvoiceForm({
         </label>
 
         <label className="flex flex-col gap-1.5">
+          <span className="text-sm font-medium">Branch</span>
+          <select value={branchId} onChange={(e) => setBranchId(e.target.value)} className={field}>
+            {branches.map((b) => (
+              <option key={b.id} value={b.id}>
+                {b.code} — {b.name}
+              </option>
+            ))}
+          </select>
+        </label>
+
+        <label className="flex flex-col gap-1.5">
           <span className="text-sm font-medium">{config.party}</span>
           <select required value={partyId} onChange={(e) => setPartyId(e.target.value)} className={field}>
             <option value="">Select…</option>
@@ -201,17 +270,46 @@ export function InvoiceForm({
             ))}
           </select>
         </label>
+
+        {gstOn && (
+          <label className="flex flex-col gap-1.5">
+            <span className="text-sm font-medium">Place of supply</span>
+            <select
+              required
+              value={placeOfSupply}
+              onChange={(e) => {
+                setPlaceOfSupply(e.target.value);
+                setPlaceOfSupplyTouched(true);
+              }}
+              className={field}
+            >
+              <option value="">Select…</option>
+              {states.map((s) => (
+                <option key={s.code} value={s.code}>
+                  {s.name}
+                </option>
+              ))}
+            </select>
+            {!branch?.registeredState && (
+              <span className="text-xs text-amber-800 dark:text-amber-300">
+                This branch has no GST registration — tax cannot be computed
+                from it.
+              </span>
+            )}
+          </label>
+        )}
       </div>
 
       <div className="mt-6 overflow-x-auto rounded-lg border border-zinc-200 bg-white dark:border-zinc-800 dark:bg-zinc-900">
-        <table className="w-full min-w-[680px] text-sm">
+        <table className="w-full min-w-[720px] text-sm">
           <thead>
             <tr className="border-b border-zinc-200 text-left text-[11px] uppercase tracking-wide text-zinc-500 dark:border-zinc-800">
               <th className="px-3 py-2.5 font-medium">Item</th>
-              <th className="w-28 px-3 py-2.5 text-right font-medium">Qty</th>
+              <th className="w-24 px-3 py-2.5 text-right font-medium">Qty</th>
               <th className="w-16 px-3 py-2.5 font-medium">Unit</th>
-              <th className="w-32 px-3 py-2.5 text-right font-medium">Rate</th>
-              <th className="w-36 px-3 py-2.5 text-right font-medium">Amount</th>
+              <th className="w-28 px-3 py-2.5 text-right font-medium">Rate</th>
+              {gstOn && <th className="w-16 px-3 py-2.5 text-right font-medium">GST</th>}
+              <th className="w-32 px-3 py-2.5 text-right font-medium">Amount</th>
               <th className="w-10" />
             </tr>
           </thead>
@@ -254,6 +352,11 @@ export function InvoiceForm({
                       className={cell + " text-right tabular-nums"}
                     />
                   </td>
+                  {gstOn && (
+                    <td className="px-3 py-2 text-right text-xs tabular-nums text-zinc-500">
+                      {item ? `${item.gst_rate_percent}%` : "—"}
+                    </td>
+                  )}
                   <td className="px-3 py-2 text-right tabular-nums">{formatINR(amount)}</td>
                   <td className="px-2 py-2 text-center">
                     {lines.length > 1 && (
@@ -272,8 +375,8 @@ export function InvoiceForm({
             })}
           </tbody>
           <tfoot>
-            <tr className="border-t border-zinc-200 bg-zinc-50 font-medium dark:border-zinc-800 dark:bg-zinc-800/50">
-              <td className="px-3 py-2.5" colSpan={4}>
+            <tr className="border-t border-zinc-200 bg-zinc-50 dark:border-zinc-800 dark:bg-zinc-800/50">
+              <td className="px-3 py-2.5" colSpan={gstOn ? 5 : 4}>
                 <button
                   type="button"
                   onClick={() => setLines((p) => [...p, emptyLine()])}
@@ -282,9 +385,52 @@ export function InvoiceForm({
                   Add line
                 </button>
               </td>
-              <td className="px-3 py-2.5 text-right tabular-nums">{formatINR(total, { showZero: true })}</td>
+              <td className="px-3 py-2.5 text-right font-medium tabular-nums">
+                {formatINR(taxable, { showZero: true })}
+              </td>
               <td />
             </tr>
+            {gstOn && supplyType && (tax.cgst > 0 || tax.sgst > 0 || tax.igst > 0) && (
+              <>
+                {supplyType === "intra" ? (
+                  <>
+                    <tr className="text-xs text-zinc-600 dark:text-zinc-400">
+                      <td className="px-3 py-1" colSpan={5}>
+                        CGST
+                      </td>
+                      <td className="px-3 py-1 text-right tabular-nums">{formatINR(tax.cgst)}</td>
+                      <td />
+                    </tr>
+                    <tr className="text-xs text-zinc-600 dark:text-zinc-400">
+                      <td className="px-3 py-1" colSpan={5}>
+                        SGST
+                      </td>
+                      <td className="px-3 py-1 text-right tabular-nums">{formatINR(tax.sgst)}</td>
+                      <td />
+                    </tr>
+                  </>
+                ) : (
+                  <tr className="text-xs text-zinc-600 dark:text-zinc-400">
+                    <td className="px-3 py-1" colSpan={5}>
+                      IGST
+                    </td>
+                    <td className="px-3 py-1 text-right tabular-nums">
+                      {formatINR(tax.igst)}
+                    </td>
+                    <td />
+                  </tr>
+                )}
+                <tr className="border-t-2 border-zinc-300 font-semibold dark:border-zinc-700">
+                  <td className="px-3 py-2.5" colSpan={5}>
+                    Total
+                  </td>
+                  <td className="px-3 py-2.5 text-right tabular-nums">
+                    {formatINR(grandTotal, { showZero: true })}
+                  </td>
+                  <td />
+                </tr>
+              </>
+            )}
           </tfoot>
         </table>
       </div>
@@ -306,13 +452,13 @@ export function InvoiceForm({
       )}
 
       <p className="mt-5 text-xs text-zinc-500">
-        Saving records the stock movement and the ledger entries together, in one
-        transaction — never one without the other.
+        Saving records the stock movement, the tax and the ledger entries
+        together, in one transaction — never any of them without the others.
       </p>
 
       <button
         type="submit"
-        disabled={busy || total <= 0}
+        disabled={busy || taxable <= 0}
         className="mt-3 rounded-md bg-emerald-800 px-4 py-2 text-sm font-medium text-white transition hover:bg-emerald-700 disabled:opacity-50 dark:bg-emerald-700 dark:hover:bg-emerald-600"
       >
         {busy ? "Saving…" : `Save ${config.label.toLowerCase()}`}

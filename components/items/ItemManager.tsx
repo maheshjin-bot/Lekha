@@ -16,8 +16,13 @@ type Item = {
   opening_quantity: number;
   opening_value: number;
   sale_rate: number | null;
+  gst_rate_percent: number;
   is_active: boolean;
 };
+
+// The rates actually notified for goods and services — not every percentage
+// in between, so a typo like 12.5 does not sit unnoticed on an invoice.
+const GST_RATES = [0, 0.25, 3, 5, 12, 18, 28];
 
 export function ItemManager({
   companyId,
@@ -36,6 +41,7 @@ export function ItemManager({
   const [openingQty, setOpeningQty] = useState("0");
   const [openingValue, setOpeningValue] = useState("0");
   const [saleRate, setSaleRate] = useState("");
+  const [gstRate, setGstRate] = useState("18");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -60,6 +66,7 @@ export function ItemManager({
         opening_quantity: isService ? 0 : Number(openingQty) || 0,
         opening_value: isService ? 0 : Number(openingValue) || 0,
         sale_rate: saleRate.trim() ? Number(saleRate) : null,
+        gst_rate_percent: Number(gstRate) || 0,
       });
 
     if (error) {
@@ -91,6 +98,7 @@ export function ItemManager({
                 <th className="px-4 py-2.5 font-medium">HSN / SAC</th>
                 <th className="px-4 py-2.5 font-medium">Unit</th>
                 <th className="px-4 py-2.5 text-right font-medium">Opening</th>
+                <th className="px-4 py-2.5 text-right font-medium">GST</th>
                 <th className="px-4 py-2.5 text-right font-medium">Sale rate</th>
               </tr>
             </thead>
@@ -127,6 +135,9 @@ export function ItemManager({
                     ) : (
                       <span className="text-zinc-400">—</span>
                     )}
+                  </td>
+                  <td className="px-4 py-2.5 text-right tabular-nums">
+                    {it.gst_rate_percent > 0 ? `${it.gst_rate_percent}%` : <span className="text-zinc-400">—</span>}
                   </td>
                   <td className="px-4 py-2.5 text-right tabular-nums">
                     {it.sale_rate ? formatINR(it.sale_rate) : <span className="text-zinc-400">—</span>}
@@ -223,6 +234,17 @@ export function ItemManager({
               )}
             </>
           )}
+
+          <label className="flex flex-col gap-1.5">
+            <span className="text-sm font-medium">GST rate</span>
+            <select value={gstRate} onChange={(e) => setGstRate(e.target.value)} className={field}>
+              {GST_RATES.map((r) => (
+                <option key={r} value={r}>
+                  {r}%{r === 0 ? " — Nil / exempt" : ""}
+                </option>
+              ))}
+            </select>
+          </label>
 
           <label className="flex flex-col gap-1.5">
             <span className="text-sm font-medium">

@@ -739,10 +739,12 @@ export type Database = {
       items: {
         Row: {
           category: string | null
+          cess_rate_percent: number
           code: string | null
           company_id: string
           created_at: string
           created_by: string | null
+          gst_rate_percent: number
           hsn_sac: string | null
           id: string
           is_active: boolean
@@ -759,10 +761,12 @@ export type Database = {
         }
         Insert: {
           category?: string | null
+          cess_rate_percent?: number
           code?: string | null
           company_id: string
           created_at?: string
           created_by?: string | null
+          gst_rate_percent?: number
           hsn_sac?: string | null
           id?: string
           is_active?: boolean
@@ -779,10 +783,12 @@ export type Database = {
         }
         Update: {
           category?: string | null
+          cess_rate_percent?: number
           code?: string | null
           company_id?: string
           created_at?: string
           created_by?: string | null
+          gst_rate_percent?: number
           hsn_sac?: string | null
           id?: string
           is_active?: boolean
@@ -1450,10 +1456,12 @@ export type Database = {
           is_deleted: boolean
           narration: string | null
           party_ledger_id: string | null
+          place_of_supply: string | null
           rate_source: string | null
           reference_date: string | null
           reference_number: string | null
           sequence_number: number
+          supply_type: string | null
           total_amount: number
           txn_currency: string
           updated_at: string
@@ -1473,10 +1481,12 @@ export type Database = {
           is_deleted?: boolean
           narration?: string | null
           party_ledger_id?: string | null
+          place_of_supply?: string | null
           rate_source?: string | null
           reference_date?: string | null
           reference_number?: string | null
           sequence_number: number
+          supply_type?: string | null
           total_amount?: number
           txn_currency?: string
           updated_at?: string
@@ -1496,10 +1506,12 @@ export type Database = {
           is_deleted?: boolean
           narration?: string | null
           party_ledger_id?: string | null
+          place_of_supply?: string | null
           rate_source?: string | null
           reference_date?: string | null
           reference_number?: string | null
           sequence_number?: number
+          supply_type?: string | null
           total_amount?: number
           txn_currency?: string
           updated_at?: string
@@ -1530,6 +1542,13 @@ export type Database = {
             referencedRelation: "ledgers"
             referencedColumns: ["id", "company_id"]
           },
+          {
+            foreignKeyName: "vouchers_place_of_supply_fkey"
+            columns: ["place_of_supply"]
+            isOneToOne: false
+            referencedRelation: "ref_states"
+            referencedColumns: ["code"]
+          },
         ]
       }
     }
@@ -1537,6 +1556,17 @@ export type Database = {
       [_ in never]: never
     }
     Functions: {
+      add_gst_registration: {
+        Args: {
+          p_branch_id?: string
+          p_company_id: string
+          p_filing_frequency?: string
+          p_gstin: string
+          p_registered_from: string
+          p_registration_type?: string
+        }
+        Returns: string
+      }
       create_company: {
         Args: {
           p_book_beginning_date: string
@@ -1557,6 +1587,7 @@ export type Database = {
           p_items: Json
           p_narration?: string
           p_party_ledger_id: string
+          p_place_of_supply?: string
           p_reference_date?: string
           p_reference_number?: string
           p_trading_ledger_id: string

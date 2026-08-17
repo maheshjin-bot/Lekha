@@ -11,7 +11,7 @@ export default async function ItemsPage({
     supabase
       .from("items")
       .select(
-        "id, code, name, item_type, hsn_sac, uom, maintain_stock, opening_quantity, opening_value, sale_rate, is_active"
+        "id, code, name, item_type, hsn_sac, uom, maintain_stock, opening_quantity, opening_value, sale_rate, gst_rate_percent, is_active"
       )
       .eq("company_id", companyId)
       .order("name"),

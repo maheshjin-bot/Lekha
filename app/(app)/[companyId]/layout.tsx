@@ -26,6 +26,7 @@ export default async function CompanyLayout({
     { href: `/${companyId}/ledgers`, label: "Ledgers" },
     { href: `/${companyId}/items`, label: "Items" },
     { href: `/${companyId}/godowns`, label: "Godowns" },
+    { href: `/${companyId}/registrations`, label: "GST" },
     { href: `/${companyId}/invoices/new`, label: "New invoice" },
     { href: `/${companyId}/vouchers/new`, label: "New voucher" },
     { href: `/${companyId}/import`, label: "Import" },
