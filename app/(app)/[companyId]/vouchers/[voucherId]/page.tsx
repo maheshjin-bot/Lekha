@@ -148,6 +148,12 @@ export default async function VoucherDetailPage({
         >
           Edit voucher
         </Link>
+        <Link
+          href={`/${companyId}/vouchers/${voucherId}/print`}
+          className="rounded-md border border-zinc-300 px-3 py-1.5 text-sm transition hover:bg-zinc-100 dark:border-zinc-700 dark:hover:bg-zinc-800"
+        >
+          Print
+        </Link>
         <span className="text-xs text-zinc-500">
           The date can move within financial year {voucher.financial_year_label},
           but not out of it.
