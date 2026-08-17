@@ -501,16 +501,21 @@ export type Database = {
         };
         Returns: undefined;
       };
+      // Required arguments first, then defaulted ones. PostgREST resolves an
+      // RPC by the exact set of argument names in the request body, and
+      // supabase-js drops undefined keys — so anything a caller may legitimately
+      // omit must have a SQL default, and Postgres requires every parameter
+      // after the first defaulted one to be defaulted too.
       create_voucher: {
         Args: {
           p_company_id: string;
           p_branch_id: string;
           p_voucher_type: string;
           p_voucher_date: string;
+          p_lines: Json;
           p_narration?: string;
           p_reference_number?: string;
           p_reference_date?: string;
-          p_lines: Json;
           p_party_ledger_id?: string;
           p_txn_currency?: string;
           p_exchange_rate?: number;
@@ -522,14 +527,15 @@ export type Database = {
         Args: {
           p_voucher_id: string;
           p_voucher_date: string;
+          p_lines: Json;
           p_narration?: string;
           p_reference_number?: string;
           p_reference_date?: string;
-          p_lines: Json;
           p_party_ledger_id?: string;
         };
         Returns: string;
       };
+      delete_company: { Args: { p_company_id: string }; Returns: undefined };
       find_duplicate_bills: {
         Args: {
           p_company_id: string;

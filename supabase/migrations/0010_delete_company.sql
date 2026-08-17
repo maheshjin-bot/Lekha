@@ -47,3 +47,11 @@ $$;
 
 revoke execute on function public.delete_company(uuid) from public, anon;
 grant execute on function public.delete_company(uuid) to authenticated;
+
+-- ----------------------------------------------------------------------------
+-- Note on 0011
+-- ----------------------------------------------------------------------------
+-- create_voucher and update_voucher took narration and the reference fields as
+-- required positional arguments ahead of p_lines, so they could not be given
+-- defaults and a client without a reference number could not call them at all.
+-- Corrected in 0011.

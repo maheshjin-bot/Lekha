@@ -95,9 +95,11 @@ export function VoucherForm({
       p_branch_id: branchId,
       p_voucher_type: voucherType,
       p_voucher_date: date,
+      // Omitted keys fall through to the SQL defaults. supabase-js drops
+      // undefined from the body, and PostgREST matches the overload on exactly
+      // the names it receives — so these must be genuinely optional in SQL.
       p_narration: narration.trim() || undefined,
       p_reference_number: reference.trim() || undefined,
-      p_reference_date: undefined,
       p_lines: filled.map((l, i) => ({
         ledger_id: l.ledgerId,
         debit_amount: l.side === "dr" ? Number(l.amount) : 0,
