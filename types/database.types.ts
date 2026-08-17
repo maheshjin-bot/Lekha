@@ -404,6 +404,7 @@ export type Database = {
           id: string
           iec: string | null
           incorporation_date: string | null
+          inventory_valuation_method: string
           is_active: boolean
           legal_name: string | null
           lock_date: string | null
@@ -426,6 +427,7 @@ export type Database = {
           id?: string
           iec?: string | null
           incorporation_date?: string | null
+          inventory_valuation_method?: string
           is_active?: boolean
           legal_name?: string | null
           lock_date?: string | null
@@ -448,6 +450,7 @@ export type Database = {
           id?: string
           iec?: string | null
           incorporation_date?: string | null
+          inventory_valuation_method?: string
           is_active?: boolean
           legal_name?: string | null
           lock_date?: string | null
@@ -616,6 +619,60 @@ export type Database = {
           },
         ]
       }
+      godowns: {
+        Row: {
+          address: string | null
+          branch_id: string
+          code: string
+          company_id: string
+          created_at: string
+          id: string
+          is_active: boolean
+          is_default: boolean
+          name: string
+          updated_at: string
+        }
+        Insert: {
+          address?: string | null
+          branch_id: string
+          code: string
+          company_id: string
+          created_at?: string
+          id?: string
+          is_active?: boolean
+          is_default?: boolean
+          name: string
+          updated_at?: string
+        }
+        Update: {
+          address?: string | null
+          branch_id?: string
+          code?: string
+          company_id?: string
+          created_at?: string
+          id?: string
+          is_active?: boolean
+          is_default?: boolean
+          name?: string
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "godowns_branch_id_company_id_fkey"
+            columns: ["branch_id", "company_id"]
+            isOneToOne: false
+            referencedRelation: "branches"
+            referencedColumns: ["id", "company_id"]
+          },
+          {
+            foreignKeyName: "godowns_company_id_fkey"
+            columns: ["company_id"]
+            isOneToOne: false
+            referencedRelation: "companies"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       gst_registrations: {
         Row: {
           company_id: string
@@ -675,6 +732,84 @@ export type Database = {
             columns: ["state_code"]
             isOneToOne: false
             referencedRelation: "ref_states"
+            referencedColumns: ["code"]
+          },
+        ]
+      }
+      items: {
+        Row: {
+          category: string | null
+          code: string | null
+          company_id: string
+          created_at: string
+          created_by: string | null
+          hsn_sac: string | null
+          id: string
+          is_active: boolean
+          item_type: string
+          maintain_stock: boolean
+          name: string
+          opening_quantity: number
+          opening_value: number
+          purchase_rate: number | null
+          reorder_level: number | null
+          sale_rate: number | null
+          uom: string
+          updated_at: string
+        }
+        Insert: {
+          category?: string | null
+          code?: string | null
+          company_id: string
+          created_at?: string
+          created_by?: string | null
+          hsn_sac?: string | null
+          id?: string
+          is_active?: boolean
+          item_type?: string
+          maintain_stock?: boolean
+          name: string
+          opening_quantity?: number
+          opening_value?: number
+          purchase_rate?: number | null
+          reorder_level?: number | null
+          sale_rate?: number | null
+          uom?: string
+          updated_at?: string
+        }
+        Update: {
+          category?: string | null
+          code?: string | null
+          company_id?: string
+          created_at?: string
+          created_by?: string | null
+          hsn_sac?: string | null
+          id?: string
+          is_active?: boolean
+          item_type?: string
+          maintain_stock?: boolean
+          name?: string
+          opening_quantity?: number
+          opening_value?: number
+          purchase_rate?: number | null
+          reorder_level?: number | null
+          sale_rate?: number | null
+          uom?: string
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "items_company_id_fkey"
+            columns: ["company_id"]
+            isOneToOne: false
+            referencedRelation: "companies"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "items_uom_fkey"
+            columns: ["uom"]
+            isOneToOne: false
+            referencedRelation: "ref_uom"
             referencedColumns: ["code"]
           },
         ]
@@ -986,6 +1121,24 @@ export type Database = {
         }
         Relationships: []
       }
+      ref_uom: {
+        Row: {
+          code: string
+          decimals: number
+          name: string
+        }
+        Insert: {
+          code: string
+          decimals?: number
+          name: string
+        }
+        Update: {
+          code?: string
+          decimals?: number
+          name?: string
+        }
+        Relationships: []
+      }
       statutory_rules: {
         Row: {
           attrs: Json
@@ -1140,6 +1293,99 @@ export type Database = {
           },
           {
             foreignKeyName: "voucher_entries_voucher_id_company_id_fkey"
+            columns: ["voucher_id", "company_id"]
+            isOneToOne: false
+            referencedRelation: "vouchers"
+            referencedColumns: ["id", "company_id"]
+          },
+        ]
+      }
+      voucher_items: {
+        Row: {
+          amount: number
+          branch_id: string
+          company_id: string
+          created_at: string
+          description: string | null
+          direction: string
+          godown_id: string
+          hsn_sac: string | null
+          id: string
+          item_id: string
+          line_order: number
+          quantity: number
+          rate: number
+          uom: string
+          updated_at: string
+          voucher_id: string
+        }
+        Insert: {
+          amount?: number
+          branch_id: string
+          company_id: string
+          created_at?: string
+          description?: string | null
+          direction: string
+          godown_id: string
+          hsn_sac?: string | null
+          id?: string
+          item_id: string
+          line_order?: number
+          quantity: number
+          rate?: number
+          uom: string
+          updated_at?: string
+          voucher_id: string
+        }
+        Update: {
+          amount?: number
+          branch_id?: string
+          company_id?: string
+          created_at?: string
+          description?: string | null
+          direction?: string
+          godown_id?: string
+          hsn_sac?: string | null
+          id?: string
+          item_id?: string
+          line_order?: number
+          quantity?: number
+          rate?: number
+          uom?: string
+          updated_at?: string
+          voucher_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "voucher_items_branch_id_company_id_fkey"
+            columns: ["branch_id", "company_id"]
+            isOneToOne: false
+            referencedRelation: "branches"
+            referencedColumns: ["id", "company_id"]
+          },
+          {
+            foreignKeyName: "voucher_items_godown_id_company_id_fkey"
+            columns: ["godown_id", "company_id"]
+            isOneToOne: false
+            referencedRelation: "godowns"
+            referencedColumns: ["id", "company_id"]
+          },
+          {
+            foreignKeyName: "voucher_items_item_id_company_id_fkey"
+            columns: ["item_id", "company_id"]
+            isOneToOne: false
+            referencedRelation: "items"
+            referencedColumns: ["id", "company_id"]
+          },
+          {
+            foreignKeyName: "voucher_items_uom_fkey"
+            columns: ["uom"]
+            isOneToOne: false
+            referencedRelation: "ref_uom"
+            referencedColumns: ["code"]
+          },
+          {
+            foreignKeyName: "voucher_items_voucher_id_company_id_fkey"
             columns: ["voucher_id", "company_id"]
             isOneToOne: false
             referencedRelation: "vouchers"
@@ -1463,6 +1709,20 @@ export type Database = {
           ledger_name: string
           nature: string
           section: string
+        }[]
+      }
+      get_stock_summary: {
+        Args: { p_as_at?: string; p_company_id: string; p_godown_id?: string }
+        Returns: {
+          average_rate: number
+          closing_quantity: number
+          closing_value: number
+          hsn_sac: string
+          item_id: string
+          item_name: string
+          quantity_in: number
+          quantity_out: number
+          uom: string
         }[]
       }
       get_trial_balance: {

@@ -24,6 +24,7 @@ export default async function CompanyLayout({
   const nav = [
     { href: `/${companyId}`, label: "Overview" },
     { href: `/${companyId}/ledgers`, label: "Ledgers" },
+    { href: `/${companyId}/items`, label: "Items" },
     { href: `/${companyId}/vouchers/new`, label: "New voucher" },
     { href: `/${companyId}/import`, label: "Import" },
     { href: `/${companyId}/reports/daybook`, label: "Daybook" },
@@ -31,6 +32,7 @@ export default async function CompanyLayout({
     { href: `/${companyId}/reports/trial-balance`, label: "Trial balance" },
     { href: `/${companyId}/reports/profit-loss`, label: "P&L" },
     { href: `/${companyId}/reports/balance-sheet`, label: "Balance sheet" },
+    { href: `/${companyId}/reports/stock`, label: "Stock" },
   ];
 
   return (
