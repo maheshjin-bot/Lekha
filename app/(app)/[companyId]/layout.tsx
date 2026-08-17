@@ -25,6 +25,7 @@ export default async function CompanyLayout({
     { href: `/${companyId}`, label: "Overview" },
     { href: `/${companyId}/ledgers`, label: "Ledgers" },
     { href: `/${companyId}/items`, label: "Items" },
+    { href: `/${companyId}/godowns`, label: "Godowns" },
     { href: `/${companyId}/invoices/new`, label: "New invoice" },
     { href: `/${companyId}/vouchers/new`, label: "New voucher" },
     { href: `/${companyId}/import`, label: "Import" },
@@ -34,6 +35,7 @@ export default async function CompanyLayout({
     { href: `/${companyId}/reports/profit-loss`, label: "P&L" },
     { href: `/${companyId}/reports/balance-sheet`, label: "Balance sheet" },
     { href: `/${companyId}/reports/stock`, label: "Stock" },
+    { href: `/${companyId}/reports/outstanding`, label: "Outstanding" },
   ];
 
   return (

@@ -1712,6 +1712,20 @@ export type Database = {
           voucher_type: string
         }[]
       }
+      get_party_outstanding: {
+        Args: { p_as_at?: string; p_company_id: string; p_role?: string }
+        Returns: {
+          days_0_30: number
+          days_31_60: number
+          days_61_90: number
+          days_over_90: number
+          ledger_id: string
+          ledger_name: string
+          not_due: number
+          oldest_date: string
+          outstanding: number
+        }[]
+      }
       get_profit_and_loss: {
         Args: {
           p_branch_id?: string

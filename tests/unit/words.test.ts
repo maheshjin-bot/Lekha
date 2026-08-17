@@ -1,66 +1,62 @@
 /**
- * Amount in words. Every bank and assessing officer reads this line, and it is
- * the first thing anyone notices when it disagrees with the figures beside it.
+ * Amount in words. A tax invoice must carry it, and a customer reads the words
+ * before the figures — so a wrong conversion is the most visible error the
+ * document can contain.
+ *
+ * The Indian system groups as crore / lakh / thousand, not million / billion.
  */
 import { describe, expect, it } from "vitest";
-import { amountInWords, numberToIndianWords } from "@/lib/utils/words";
+import { amountInWords, numberToWords } from "@/lib/utils/words";
 
-describe("numberToIndianWords", () => {
+describe("numberToWords", () => {
   it("handles the small cases", () => {
-    expect(numberToIndianWords(0)).toBe("Zero");
-    expect(numberToIndianWords(7)).toBe("Seven");
-    expect(numberToIndianWords(15)).toBe("Fifteen");
-    expect(numberToIndianWords(20)).toBe("Twenty");
-    expect(numberToIndianWords(42)).toBe("Forty Two");
-    expect(numberToIndianWords(100)).toBe("One Hundred");
-    expect(numberToIndianWords(101)).toBe("One Hundred One");
-    expect(numberToIndianWords(999)).toBe("Nine Hundred Ninety Nine");
+    expect(numberToWords(0)).toBe("Zero");
+    expect(numberToWords(7)).toBe("Seven");
+    expect(numberToWords(15)).toBe("Fifteen");
+    expect(numberToWords(40)).toBe("Forty");
+    expect(numberToWords(42)).toBe("Forty Two");
+    expect(numberToWords(100)).toBe("One Hundred");
+    expect(numberToWords(101)).toBe("One Hundred One");
   });
 
-  it("groups the Indian way, not the western way", () => {
-    // The whole point: 100000 is One Lakh, never Hundred Thousand.
-    expect(numberToIndianWords(1000)).toBe("One Thousand");
-    expect(numberToIndianWords(99999)).toBe("Ninety Nine Thousand Nine Hundred Ninety Nine");
-    expect(numberToIndianWords(100000)).toBe("One Lakh");
-    expect(numberToIndianWords(1234567)).toBe(
-      "Twelve Lakh Thirty Four Thousand Five Hundred Sixty Seven"
-    );
-    expect(numberToIndianWords(10000000)).toBe("One Crore");
-    expect(numberToIndianWords(123456789)).toBe(
-      "Twelve Crore Thirty Four Lakh Fifty Six Thousand Seven Hundred Eighty Nine"
+  it("groups by lakh and crore, not by million", () => {
+    expect(numberToWords(1000)).toBe("One Thousand");
+    expect(numberToWords(100000)).toBe("One Lakh");
+    expect(numberToWords(1000000)).toBe("Ten Lakh");
+    expect(numberToWords(10000000)).toBe("One Crore");
+    expect(numberToWords(12345678)).toBe(
+      "One Crore Twenty Three Lakh Forty Five Thousand Six Hundred Seventy Eight"
     );
   });
 
-  it("keeps grouping in crores past a hundred", () => {
-    expect(numberToIndianWords(1000000000)).toBe("One Hundred Crore");
+  it("does not emit empty groups", () => {
+    // 1,00,00,001 — no lakh, no thousand, no hundred.
+    expect(numberToWords(10000001)).toBe("One Crore One");
+    expect(numberToWords(100000)).toBe("One Lakh");
   });
 });
 
 describe("amountInWords", () => {
-  it("reads a whole amount", () => {
+  it("spells rupees and paise separately", () => {
     expect(amountInWords(1000)).toBe("Rupees One Thousand Only");
-  });
-
-  it("includes paise when there are any", () => {
-    expect(amountInWords(1234.56)).toBe(
-      "Rupees One Thousand Two Hundred Thirty Four and Fifty Six Paise Only"
+    expect(amountInWords(1000.5)).toBe("Rupees One Thousand and Fifty Paise Only");
+    expect(amountInWords(123045.45)).toBe(
+      "Rupees One Lakh Twenty Three Thousand Forty Five and Forty Five Paise Only"
     );
   });
 
-  it("omits paise when there are none", () => {
-    expect(amountInWords(500.0)).toBe("Rupees Five Hundred Only");
-  });
-
-  it("rounds paise rather than truncating", () => {
-    // Truncating is how the words end up a paisa adrift from the figures
-    // printed beside them on the same document.
+  it("rounds the whole amount before splitting rupees from paise", () => {
+    // Flooring the rupees and rounding the remainder separately lets the two
+    // disagree — 99.999 produced "Ninety Nine and One Hundred Paise", which is
+    // not an amount. The words must agree with the numerals beside them.
+    expect(amountInWords(99.999)).toBe("Rupees One Hundred Only");
     expect(amountInWords(0.005)).toBe("Rupees Zero and One Paise Only");
-    expect(amountInWords(99.994)).toBe("Rupees Ninety Nine and Ninety Nine Paise Only");
-    expect(amountInWords(99.996)).toBe("Rupees One Hundred Only");
+    expect(amountInWords(0.994)).toBe("Rupees Zero and Ninety Nine Paise Only");
+    expect(amountInWords(0.996)).toBe("Rupees One Only");
   });
 
   it("handles zero and negatives", () => {
     expect(amountInWords(0)).toBe("Rupees Zero Only");
-    expect(amountInWords(-250.5)).toBe("Minus Rupees Two Hundred Fifty and Fifty Paise Only");
+    expect(amountInWords(-500)).toBe("Minus Rupees Five Hundred Only");
   });
 });
