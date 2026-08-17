@@ -318,6 +318,73 @@ export type Database = {
         }
         Relationships: []
       }
+      bank_statement_lines: {
+        Row: {
+          company_id: string
+          created_at: string
+          credit_amount: number
+          debit_amount: number
+          description: string | null
+          id: string
+          ledger_id: string
+          matched_at: string | null
+          matched_by: string | null
+          matched_entry_id: string | null
+          reference: string | null
+          txn_date: string
+        }
+        Insert: {
+          company_id: string
+          created_at?: string
+          credit_amount?: number
+          debit_amount?: number
+          description?: string | null
+          id?: string
+          ledger_id: string
+          matched_at?: string | null
+          matched_by?: string | null
+          matched_entry_id?: string | null
+          reference?: string | null
+          txn_date: string
+        }
+        Update: {
+          company_id?: string
+          created_at?: string
+          credit_amount?: number
+          debit_amount?: number
+          description?: string | null
+          id?: string
+          ledger_id?: string
+          matched_at?: string | null
+          matched_by?: string | null
+          matched_entry_id?: string | null
+          reference?: string | null
+          txn_date?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "bank_statement_lines_company_id_fkey"
+            columns: ["company_id"]
+            isOneToOne: false
+            referencedRelation: "companies"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "bank_statement_lines_ledger_id_company_id_fkey"
+            columns: ["ledger_id", "company_id"]
+            isOneToOne: false
+            referencedRelation: "ledgers"
+            referencedColumns: ["id", "company_id"]
+          },
+          {
+            foreignKeyName: "bank_statement_lines_matched_entry_id_fkey"
+            columns: ["matched_entry_id"]
+            isOneToOne: false
+            referencedRelation: "voucher_entries"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       branches: {
         Row: {
           address_line1: string | null
@@ -1567,6 +1634,10 @@ export type Database = {
         }
         Returns: string
       }
+      auto_match_bank_lines: {
+        Args: { p_company_id: string; p_ledger_id: string }
+        Returns: number
+      }
       create_company: {
         Args: {
           p_book_beginning_date: string
@@ -1664,6 +1735,16 @@ export type Database = {
           ledger_name: string
           nature: string
           side: string
+        }[]
+      }
+      get_bank_reconciliation_summary: {
+        Args: { p_as_at?: string; p_company_id: string; p_ledger_id: string }
+        Returns: {
+          book_balance: number
+          unmatched_book_count: number
+          unmatched_book_total: number
+          unmatched_statement_count: number
+          unmatched_statement_total: number
         }[]
       }
       get_company_modules: {
@@ -1806,6 +1887,10 @@ export type Database = {
           period_debit: number
         }[]
       }
+      match_bank_line: {
+        Args: { p_statement_line_id: string; p_voucher_entry_id: string }
+        Returns: undefined
+      }
       resolve_statutory_rule: {
         Args: {
           p_as_at: string
@@ -1826,6 +1911,10 @@ export type Database = {
           p_from_date?: string
           p_module_code: string
         }
+        Returns: undefined
+      }
+      unmatch_bank_line: {
+        Args: { p_statement_line_id: string }
         Returns: undefined
       }
       update_voucher: {
