@@ -1320,6 +1320,14 @@ export type Database = {
         }
         Returns: string
       }
+      create_vouchers_bulk: {
+        Args: { p_company_id: string; p_groups: Json }
+        Returns: {
+          error_message: string
+          group_key: string
+          voucher_id: string
+        }[]
+      }
       delete_company: { Args: { p_company_id: string }; Returns: undefined }
       find_duplicate_bills: {
         Args: {
