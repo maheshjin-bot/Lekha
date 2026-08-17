@@ -1,7 +1,12 @@
-// Generated from the live schema. Regenerate after every migration:
+// GENERATED FILE — do not edit by hand.
+//
+// Regenerate after every migration:
 //   supabase gen types typescript --project-id msgzicwfdoxaswgmevyg > types/database.types.ts
-// Hand-editing this file guarantees drift between what TypeScript believes and
-// what Postgres enforces, which is the worst of both worlds.
+//
+// This was hand-maintained for a while and drifted three times: missing the
+// voucher tables entirely, missing the report functions, and carrying empty
+// Relationships so embedded selects like ledgers(name) could not resolve.
+// Each drift surfaced as a confusing type error far from its cause.
 
 export type Json =
   | string
@@ -9,665 +14,1632 @@ export type Json =
   | boolean
   | null
   | { [key: string]: Json | undefined }
-  | Json[];
+  | Json[]
 
 export type Database = {
-  __InternalSupabase: { PostgrestVersion: "14.15" };
+  // Allows to automatically instantiate createClient with right options
+  // instead of createClient<Database, { PostgrestVersion: 'XX' }>(URL, KEY)
+  __InternalSupabase: {
+    PostgrestVersion: "14.15"
+  }
   public: {
     Tables: {
       account_groups: {
         Row: {
-          company_id: string;
-          created_at: string;
-          id: string;
-          is_system: boolean;
-          ledger_role: string;
-          name: string;
-          nature: string;
-          normal_balance: string;
-          parent_group_id: string | null;
-          sort_order: number;
-          statement: string | null;
-          updated_at: string;
-        };
+          company_id: string
+          created_at: string
+          id: string
+          is_system: boolean
+          ledger_role: string
+          name: string
+          nature: string
+          normal_balance: string
+          parent_group_id: string | null
+          sort_order: number
+          statement: string | null
+          updated_at: string
+        }
         Insert: {
-          company_id: string;
-          id?: string;
-          is_system?: boolean;
-          ledger_role?: string;
-          name: string;
-          nature: string;
-          normal_balance: string;
-          parent_group_id?: string | null;
-          sort_order?: number;
-        };
-        Update: Partial<Database["public"]["Tables"]["account_groups"]["Insert"]>;
-        Relationships: [];
-      };
-      branches: {
-        Row: {
-          address_line1: string | null;
-          address_line2: string | null;
-          city: string | null;
-          code: string;
-          company_id: string;
-          created_at: string;
-          gst_registration_id: string | null;
-          id: string;
-          is_active: boolean;
-          is_head_office: boolean;
-          name: string;
-          pincode: string | null;
-          state_code: string;
-          updated_at: string;
-        };
-        Insert: {
-          address_line1?: string | null;
-          address_line2?: string | null;
-          city?: string | null;
-          code: string;
-          company_id: string;
-          gst_registration_id?: string | null;
-          id?: string;
-          is_active?: boolean;
-          is_head_office?: boolean;
-          name: string;
-          pincode?: string | null;
-          state_code: string;
-        };
-        Update: Partial<Database["public"]["Tables"]["branches"]["Insert"]>;
-        Relationships: [];
-      };
-      companies: {
-        Row: {
-          base_currency: string;
-          book_beginning_date: string;
-          cin: string | null;
-          compliance_mode: string;
-          created_at: string;
-          created_by: string | null;
-          entity_type: string;
-          financial_year_start_month: number;
-          id: string;
-          iec: string | null;
-          incorporation_date: string | null;
-          is_active: boolean;
-          legal_name: string | null;
-          lock_date: string | null;
-          name: string;
-          pan: string | null;
-          tan: string | null;
-          udyam_category: string | null;
-          udyam_number: string | null;
-          updated_at: string;
-        };
-        Insert: {
-          book_beginning_date: string;
-          cin?: string | null;
-          compliance_mode?: string;
-          entity_type: string;
-          financial_year_start_month?: number;
-          id?: string;
-          iec?: string | null;
-          incorporation_date?: string | null;
-          legal_name?: string | null;
-          lock_date?: string | null;
-          name: string;
-          pan?: string | null;
-          tan?: string | null;
-        };
-        Update: Partial<Database["public"]["Tables"]["companies"]["Insert"]>;
-        Relationships: [];
-      };
-      company_invites: {
-        Row: {
-          accepted_at: string | null;
-          accepted_by: string | null;
-          company_id: string;
-          created_at: string;
-          email: string;
-          expires_at: string;
-          id: string;
-          invited_by: string;
-          role: string;
-          status: string;
-          token: string;
-        };
-        Insert: {
-          company_id: string;
-          email: string;
-          invited_by: string;
-          role: string;
-          status?: string;
-        };
-        Update: Partial<Database["public"]["Tables"]["company_invites"]["Insert"]>;
-        Relationships: [];
-      };
-      company_members: {
-        Row: {
-          company_id: string;
-          created_at: string;
-          id: string;
-          invited_by: string | null;
-          role: string;
-          status: string;
-          updated_at: string;
-          user_id: string;
-        };
-        Insert: {
-          company_id: string;
-          invited_by?: string | null;
-          role: string;
-          status?: string;
-          user_id: string;
-        };
-        Update: Partial<Database["public"]["Tables"]["company_members"]["Insert"]>;
-        Relationships: [];
-      };
-      company_modules: {
-        Row: {
-          company_id: string;
-          config: Json;
-          created_at: string;
-          effective_from: string;
-          effective_to: string | null;
-          enabled_by: string | null;
-          id: string;
-          licensed: boolean;
-          locked_reason: string | null;
-          module_code: string;
-          updated_at: string;
-        };
-        Insert: {
-          company_id: string;
-          effective_from: string;
-          effective_to?: string | null;
-          module_code: string;
-        };
-        Update: Partial<Database["public"]["Tables"]["company_modules"]["Insert"]>;
-        Relationships: [];
-      };
-      gst_registrations: {
-        Row: {
-          company_id: string;
-          created_at: string;
-          filing_frequency: string;
-          gstin: string;
-          id: string;
-          is_active: boolean;
-          legal_name: string | null;
-          registered_from: string;
-          registered_to: string | null;
-          registration_type: string;
-          state_code: string;
-          trade_name: string | null;
-          updated_at: string;
-        };
-        Insert: {
-          company_id: string;
-          filing_frequency?: string;
-          gstin: string;
-          registered_from: string;
-          registration_type?: string;
-          state_code: string;
-        };
-        Update: Partial<Database["public"]["Tables"]["gst_registrations"]["Insert"]>;
-        Relationships: [];
-      };
-      ledgers: {
-        Row: {
-          company_id: string;
-          created_at: string;
-          default_currency: string;
-          group_id: string;
-          gstin: string | null;
-          id: string;
-          is_active: boolean;
-          name: string;
-          opening_balance_amount: number;
-          opening_balance_type: string;
-          pan: string | null;
-          party_type: string | null;
-          state_code: string | null;
-          updated_at: string;
-        };
-        Insert: {
-          company_id: string;
-          group_id: string;
-          gstin?: string | null;
-          name: string;
-          opening_balance_amount?: number;
-          opening_balance_type?: string;
-          party_type?: string | null;
-        };
-        Update: Partial<Database["public"]["Tables"]["ledgers"]["Insert"]>;
-        Relationships: [];
-      };
-      member_branches: {
-        Row: {
-          branch_id: string;
-          company_id: string;
-          company_member_id: string;
-          created_at: string;
-          id: string;
-        };
-        Insert: {
-          branch_id: string;
-          company_id: string;
-          company_member_id: string;
-        };
-        Update: Partial<Database["public"]["Tables"]["member_branches"]["Insert"]>;
-        Relationships: [];
-      };
-      profiles: {
-        Row: {
-          avatar_url: string | null;
-          created_at: string;
-          full_name: string | null;
-          id: string;
-        };
-        Insert: { avatar_url?: string | null; full_name?: string | null; id: string };
-        Update: Partial<Database["public"]["Tables"]["profiles"]["Insert"]>;
-        Relationships: [];
-      };
-      ref_entity_types: {
-        Row: {
-          code: string;
-          governing_act: string | null;
-          interest_on_capital_cap_percent: number | null;
-          itr_form: string;
-          name: string;
-          presumptive_allowed: boolean;
-          remuneration_section: string | null;
-          roc_applicable: boolean;
-          roc_forms: string[] | null;
-          sort_order: number;
-          special_provisions: string[] | null;
-          statement_format: string;
-          statutory_audit_note: string | null;
-          statutory_audit_rule: string;
-          tax_audit_report_form: string;
-        };
-        Insert: never;
-        Update: never;
-        Relationships: [];
-      };
-      ref_modules: {
-        Row: {
-          activates_when: Json | null;
-          code: string;
-          depends_on: string[];
-          description: string | null;
-          name: string;
-          sort_order: number;
-          tier: string;
-        };
-        Insert: never;
-        Update: never;
-        Relationships: [];
-      };
-      ref_states: {
-        Row: {
-          code: string;
-          intra_state_component: string;
-          is_active: boolean;
-          jurisdiction: string;
-          name: string;
-          obsolete_note: string | null;
-        };
-        Insert: never;
-        Update: never;
-        Relationships: [];
-      };
-      statutory_rules: {
-        Row: {
-          attrs: Json;
-          authority: string | null;
-          created_at: string;
-          domain: string;
-          effective_from: string;
-          effective_to: string | null;
-          id: string;
-          notes: string | null;
-          rule_key: string;
-          scope: Json;
-          value: number | null;
-        };
-        Insert: never;
-        Update: never;
-        Relationships: [];
-      };
-      vouchers: {
-        Row: {
-          branch_id: string;
-          company_id: string;
-          created_at: string;
-          created_by: string | null;
-          exchange_rate: number;
-          financial_year_label: string;
-          id: string;
-          is_deleted: boolean;
-          narration: string | null;
-          party_ledger_id: string | null;
-          rate_source: string | null;
-          reference_date: string | null;
-          reference_number: string | null;
-          sequence_number: number;
-          total_amount: number;
-          txn_currency: string;
-          updated_at: string;
-          updated_by: string | null;
-          voucher_date: string;
-          voucher_number: string;
-          voucher_type: string;
-        };
-        // Vouchers are created through create_voucher(), never inserted
-        // directly — the RPC allocates the number and stamps the FY label.
-        Insert: never;
-        Update: { is_deleted?: boolean };
-        Relationships: [];
-      };
-      voucher_entries: {
-        Row: {
-          branch_id: string;
-          company_id: string;
-          created_at: string;
-          credit_amount: number;
-          debit_amount: number;
-          dimensions: Json;
-          fc_amount: number | null;
-          id: string;
-          ledger_id: string;
-          line_order: number;
-          narration: string | null;
-          updated_at: string;
-          voucher_id: string;
-        };
-        Insert: never;
-        Update: never;
-        Relationships: [];
-      };
-      voucher_number_sequences: {
-        Row: {
-          branch_id: string;
-          company_id: string;
-          financial_year_label: string;
-          next_number: number;
-          padding: number;
-          prefix: string;
-          voucher_type: string;
-        };
-        Insert: never;
-        Update: never;
-        Relationships: [];
-      };
+          company_id: string
+          created_at?: string
+          id?: string
+          is_system?: boolean
+          ledger_role?: string
+          name: string
+          nature: string
+          normal_balance: string
+          parent_group_id?: string | null
+          sort_order?: number
+          statement?: string | null
+          updated_at?: string
+        }
+        Update: {
+          company_id?: string
+          created_at?: string
+          id?: string
+          is_system?: boolean
+          ledger_role?: string
+          name?: string
+          nature?: string
+          normal_balance?: string
+          parent_group_id?: string | null
+          sort_order?: number
+          statement?: string | null
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "account_groups_company_id_fkey"
+            columns: ["company_id"]
+            isOneToOne: false
+            referencedRelation: "companies"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "account_groups_parent_group_id_company_id_fkey"
+            columns: ["parent_group_id", "company_id"]
+            isOneToOne: false
+            referencedRelation: "account_groups"
+            referencedColumns: ["id", "company_id"]
+          },
+        ]
+      }
       audit_log: {
         Row: {
-          after_data: Json | null;
-          before_data: Json | null;
-          changed_at: string;
-          changed_by: string | null;
-          company_id: string;
-          derived_note: string | null;
-          id: string;
-          operation: string;
-          record_id: string | null;
-          table_name: string;
-        };
-        Insert: never;
-        Update: never;
-        Relationships: [];
-      };
+          after_data: Json | null
+          before_data: Json | null
+          changed_at: string
+          changed_by: string | null
+          company_id: string
+          derived_note: string | null
+          id: string
+          operation: string
+          record_id: string | null
+          table_name: string
+        }
+        Insert: {
+          after_data?: Json | null
+          before_data?: Json | null
+          changed_at?: string
+          changed_by?: string | null
+          company_id: string
+          derived_note?: string | null
+          id?: string
+          operation: string
+          record_id?: string | null
+          table_name: string
+        }
+        Update: {
+          after_data?: Json | null
+          before_data?: Json | null
+          changed_at?: string
+          changed_by?: string | null
+          company_id?: string
+          derived_note?: string | null
+          id?: string
+          operation?: string
+          record_id?: string | null
+          table_name?: string
+        }
+        Relationships: []
+      }
+      audit_log_2026_07: {
+        Row: {
+          after_data: Json | null
+          before_data: Json | null
+          changed_at: string
+          changed_by: string | null
+          company_id: string
+          derived_note: string | null
+          id: string
+          operation: string
+          record_id: string | null
+          table_name: string
+        }
+        Insert: {
+          after_data?: Json | null
+          before_data?: Json | null
+          changed_at?: string
+          changed_by?: string | null
+          company_id: string
+          derived_note?: string | null
+          id?: string
+          operation: string
+          record_id?: string | null
+          table_name: string
+        }
+        Update: {
+          after_data?: Json | null
+          before_data?: Json | null
+          changed_at?: string
+          changed_by?: string | null
+          company_id?: string
+          derived_note?: string | null
+          id?: string
+          operation?: string
+          record_id?: string | null
+          table_name?: string
+        }
+        Relationships: []
+      }
+      audit_log_2026_08: {
+        Row: {
+          after_data: Json | null
+          before_data: Json | null
+          changed_at: string
+          changed_by: string | null
+          company_id: string
+          derived_note: string | null
+          id: string
+          operation: string
+          record_id: string | null
+          table_name: string
+        }
+        Insert: {
+          after_data?: Json | null
+          before_data?: Json | null
+          changed_at?: string
+          changed_by?: string | null
+          company_id: string
+          derived_note?: string | null
+          id?: string
+          operation: string
+          record_id?: string | null
+          table_name: string
+        }
+        Update: {
+          after_data?: Json | null
+          before_data?: Json | null
+          changed_at?: string
+          changed_by?: string | null
+          company_id?: string
+          derived_note?: string | null
+          id?: string
+          operation?: string
+          record_id?: string | null
+          table_name?: string
+        }
+        Relationships: []
+      }
+      audit_log_2026_09: {
+        Row: {
+          after_data: Json | null
+          before_data: Json | null
+          changed_at: string
+          changed_by: string | null
+          company_id: string
+          derived_note: string | null
+          id: string
+          operation: string
+          record_id: string | null
+          table_name: string
+        }
+        Insert: {
+          after_data?: Json | null
+          before_data?: Json | null
+          changed_at?: string
+          changed_by?: string | null
+          company_id: string
+          derived_note?: string | null
+          id?: string
+          operation: string
+          record_id?: string | null
+          table_name: string
+        }
+        Update: {
+          after_data?: Json | null
+          before_data?: Json | null
+          changed_at?: string
+          changed_by?: string | null
+          company_id?: string
+          derived_note?: string | null
+          id?: string
+          operation?: string
+          record_id?: string | null
+          table_name?: string
+        }
+        Relationships: []
+      }
+      audit_log_2026_10: {
+        Row: {
+          after_data: Json | null
+          before_data: Json | null
+          changed_at: string
+          changed_by: string | null
+          company_id: string
+          derived_note: string | null
+          id: string
+          operation: string
+          record_id: string | null
+          table_name: string
+        }
+        Insert: {
+          after_data?: Json | null
+          before_data?: Json | null
+          changed_at?: string
+          changed_by?: string | null
+          company_id: string
+          derived_note?: string | null
+          id?: string
+          operation: string
+          record_id?: string | null
+          table_name: string
+        }
+        Update: {
+          after_data?: Json | null
+          before_data?: Json | null
+          changed_at?: string
+          changed_by?: string | null
+          company_id?: string
+          derived_note?: string | null
+          id?: string
+          operation?: string
+          record_id?: string | null
+          table_name?: string
+        }
+        Relationships: []
+      }
+      audit_log_default: {
+        Row: {
+          after_data: Json | null
+          before_data: Json | null
+          changed_at: string
+          changed_by: string | null
+          company_id: string
+          derived_note: string | null
+          id: string
+          operation: string
+          record_id: string | null
+          table_name: string
+        }
+        Insert: {
+          after_data?: Json | null
+          before_data?: Json | null
+          changed_at?: string
+          changed_by?: string | null
+          company_id: string
+          derived_note?: string | null
+          id?: string
+          operation: string
+          record_id?: string | null
+          table_name: string
+        }
+        Update: {
+          after_data?: Json | null
+          before_data?: Json | null
+          changed_at?: string
+          changed_by?: string | null
+          company_id?: string
+          derived_note?: string | null
+          id?: string
+          operation?: string
+          record_id?: string | null
+          table_name?: string
+        }
+        Relationships: []
+      }
+      branches: {
+        Row: {
+          address_line1: string | null
+          address_line2: string | null
+          city: string | null
+          code: string
+          company_id: string
+          created_at: string
+          gst_registration_id: string | null
+          id: string
+          is_active: boolean
+          is_head_office: boolean
+          name: string
+          pincode: string | null
+          state_code: string
+          updated_at: string
+        }
+        Insert: {
+          address_line1?: string | null
+          address_line2?: string | null
+          city?: string | null
+          code: string
+          company_id: string
+          created_at?: string
+          gst_registration_id?: string | null
+          id?: string
+          is_active?: boolean
+          is_head_office?: boolean
+          name: string
+          pincode?: string | null
+          state_code: string
+          updated_at?: string
+        }
+        Update: {
+          address_line1?: string | null
+          address_line2?: string | null
+          city?: string | null
+          code?: string
+          company_id?: string
+          created_at?: string
+          gst_registration_id?: string | null
+          id?: string
+          is_active?: boolean
+          is_head_office?: boolean
+          name?: string
+          pincode?: string | null
+          state_code?: string
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "branches_company_id_fkey"
+            columns: ["company_id"]
+            isOneToOne: false
+            referencedRelation: "companies"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "branches_gst_registration_id_company_id_state_code_fkey"
+            columns: ["gst_registration_id", "company_id", "state_code"]
+            isOneToOne: false
+            referencedRelation: "gst_registrations"
+            referencedColumns: ["id", "company_id", "state_code"]
+          },
+          {
+            foreignKeyName: "branches_state_code_fkey"
+            columns: ["state_code"]
+            isOneToOne: false
+            referencedRelation: "ref_states"
+            referencedColumns: ["code"]
+          },
+        ]
+      }
+      companies: {
+        Row: {
+          base_currency: string
+          book_beginning_date: string
+          cin: string | null
+          compliance_mode: string
+          created_at: string
+          created_by: string | null
+          entity_type: string
+          financial_year_start_month: number
+          id: string
+          iec: string | null
+          incorporation_date: string | null
+          is_active: boolean
+          legal_name: string | null
+          lock_date: string | null
+          name: string
+          pan: string | null
+          tan: string | null
+          udyam_category: string | null
+          udyam_number: string | null
+          updated_at: string
+        }
+        Insert: {
+          base_currency?: string
+          book_beginning_date: string
+          cin?: string | null
+          compliance_mode?: string
+          created_at?: string
+          created_by?: string | null
+          entity_type: string
+          financial_year_start_month?: number
+          id?: string
+          iec?: string | null
+          incorporation_date?: string | null
+          is_active?: boolean
+          legal_name?: string | null
+          lock_date?: string | null
+          name: string
+          pan?: string | null
+          tan?: string | null
+          udyam_category?: string | null
+          udyam_number?: string | null
+          updated_at?: string
+        }
+        Update: {
+          base_currency?: string
+          book_beginning_date?: string
+          cin?: string | null
+          compliance_mode?: string
+          created_at?: string
+          created_by?: string | null
+          entity_type?: string
+          financial_year_start_month?: number
+          id?: string
+          iec?: string | null
+          incorporation_date?: string | null
+          is_active?: boolean
+          legal_name?: string | null
+          lock_date?: string | null
+          name?: string
+          pan?: string | null
+          tan?: string | null
+          udyam_category?: string | null
+          udyam_number?: string | null
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "companies_entity_type_fkey"
+            columns: ["entity_type"]
+            isOneToOne: false
+            referencedRelation: "ref_entity_types"
+            referencedColumns: ["code"]
+          },
+        ]
+      }
+      company_invites: {
+        Row: {
+          accepted_at: string | null
+          accepted_by: string | null
+          company_id: string
+          created_at: string
+          email: string
+          expires_at: string
+          id: string
+          invited_by: string
+          role: string
+          status: string
+          token: string
+        }
+        Insert: {
+          accepted_at?: string | null
+          accepted_by?: string | null
+          company_id: string
+          created_at?: string
+          email: string
+          expires_at?: string
+          id?: string
+          invited_by: string
+          role: string
+          status?: string
+          token?: string
+        }
+        Update: {
+          accepted_at?: string | null
+          accepted_by?: string | null
+          company_id?: string
+          created_at?: string
+          email?: string
+          expires_at?: string
+          id?: string
+          invited_by?: string
+          role?: string
+          status?: string
+          token?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "company_invites_company_id_fkey"
+            columns: ["company_id"]
+            isOneToOne: false
+            referencedRelation: "companies"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      company_members: {
+        Row: {
+          company_id: string
+          created_at: string
+          id: string
+          invited_by: string | null
+          role: string
+          status: string
+          updated_at: string
+          user_id: string
+        }
+        Insert: {
+          company_id: string
+          created_at?: string
+          id?: string
+          invited_by?: string | null
+          role: string
+          status?: string
+          updated_at?: string
+          user_id: string
+        }
+        Update: {
+          company_id?: string
+          created_at?: string
+          id?: string
+          invited_by?: string | null
+          role?: string
+          status?: string
+          updated_at?: string
+          user_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "company_members_company_id_fkey"
+            columns: ["company_id"]
+            isOneToOne: false
+            referencedRelation: "companies"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      company_modules: {
+        Row: {
+          company_id: string
+          config: Json
+          created_at: string
+          effective_from: string
+          effective_to: string | null
+          enabled_by: string | null
+          id: string
+          licensed: boolean
+          locked_reason: string | null
+          module_code: string
+          updated_at: string
+        }
+        Insert: {
+          company_id: string
+          config?: Json
+          created_at?: string
+          effective_from: string
+          effective_to?: string | null
+          enabled_by?: string | null
+          id?: string
+          licensed?: boolean
+          locked_reason?: string | null
+          module_code: string
+          updated_at?: string
+        }
+        Update: {
+          company_id?: string
+          config?: Json
+          created_at?: string
+          effective_from?: string
+          effective_to?: string | null
+          enabled_by?: string | null
+          id?: string
+          licensed?: boolean
+          locked_reason?: string | null
+          module_code?: string
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "company_modules_company_id_fkey"
+            columns: ["company_id"]
+            isOneToOne: false
+            referencedRelation: "companies"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "company_modules_module_code_fkey"
+            columns: ["module_code"]
+            isOneToOne: false
+            referencedRelation: "ref_modules"
+            referencedColumns: ["code"]
+          },
+        ]
+      }
+      gst_registrations: {
+        Row: {
+          company_id: string
+          created_at: string
+          filing_frequency: string
+          gstin: string
+          id: string
+          is_active: boolean
+          legal_name: string | null
+          registered_from: string
+          registered_to: string | null
+          registration_type: string
+          state_code: string
+          trade_name: string | null
+          updated_at: string
+        }
+        Insert: {
+          company_id: string
+          created_at?: string
+          filing_frequency?: string
+          gstin: string
+          id?: string
+          is_active?: boolean
+          legal_name?: string | null
+          registered_from: string
+          registered_to?: string | null
+          registration_type?: string
+          state_code: string
+          trade_name?: string | null
+          updated_at?: string
+        }
+        Update: {
+          company_id?: string
+          created_at?: string
+          filing_frequency?: string
+          gstin?: string
+          id?: string
+          is_active?: boolean
+          legal_name?: string | null
+          registered_from?: string
+          registered_to?: string | null
+          registration_type?: string
+          state_code?: string
+          trade_name?: string | null
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "gst_registrations_company_id_fkey"
+            columns: ["company_id"]
+            isOneToOne: false
+            referencedRelation: "companies"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "gst_registrations_state_code_fkey"
+            columns: ["state_code"]
+            isOneToOne: false
+            referencedRelation: "ref_states"
+            referencedColumns: ["code"]
+          },
+        ]
+      }
+      ledgers: {
+        Row: {
+          address: string | null
+          city: string | null
+          company_id: string
+          contact_person: string | null
+          created_at: string
+          created_by: string | null
+          credit_days: number | null
+          credit_limit: number | null
+          default_currency: string
+          default_tds_section: string | null
+          email: string | null
+          group_id: string
+          gst_registration_type: string | null
+          gstin: string | null
+          id: string
+          is_active: boolean
+          is_tds_deductee: boolean
+          ldc_amount_cap: number | null
+          ldc_number: string | null
+          ldc_rate: number | null
+          ldc_valid_from: string | null
+          ldc_valid_to: string | null
+          msme_category: string | null
+          msme_payment_days: number | null
+          name: string
+          notes: string | null
+          opening_balance_amount: number
+          opening_balance_type: string
+          pan: string | null
+          party_type: string | null
+          phone: string | null
+          pincode: string | null
+          state_code: string | null
+          udyam_number: string | null
+          updated_at: string
+        }
+        Insert: {
+          address?: string | null
+          city?: string | null
+          company_id: string
+          contact_person?: string | null
+          created_at?: string
+          created_by?: string | null
+          credit_days?: number | null
+          credit_limit?: number | null
+          default_currency?: string
+          default_tds_section?: string | null
+          email?: string | null
+          group_id: string
+          gst_registration_type?: string | null
+          gstin?: string | null
+          id?: string
+          is_active?: boolean
+          is_tds_deductee?: boolean
+          ldc_amount_cap?: number | null
+          ldc_number?: string | null
+          ldc_rate?: number | null
+          ldc_valid_from?: string | null
+          ldc_valid_to?: string | null
+          msme_category?: string | null
+          msme_payment_days?: number | null
+          name: string
+          notes?: string | null
+          opening_balance_amount?: number
+          opening_balance_type?: string
+          pan?: string | null
+          party_type?: string | null
+          phone?: string | null
+          pincode?: string | null
+          state_code?: string | null
+          udyam_number?: string | null
+          updated_at?: string
+        }
+        Update: {
+          address?: string | null
+          city?: string | null
+          company_id?: string
+          contact_person?: string | null
+          created_at?: string
+          created_by?: string | null
+          credit_days?: number | null
+          credit_limit?: number | null
+          default_currency?: string
+          default_tds_section?: string | null
+          email?: string | null
+          group_id?: string
+          gst_registration_type?: string | null
+          gstin?: string | null
+          id?: string
+          is_active?: boolean
+          is_tds_deductee?: boolean
+          ldc_amount_cap?: number | null
+          ldc_number?: string | null
+          ldc_rate?: number | null
+          ldc_valid_from?: string | null
+          ldc_valid_to?: string | null
+          msme_category?: string | null
+          msme_payment_days?: number | null
+          name?: string
+          notes?: string | null
+          opening_balance_amount?: number
+          opening_balance_type?: string
+          pan?: string | null
+          party_type?: string | null
+          phone?: string | null
+          pincode?: string | null
+          state_code?: string | null
+          udyam_number?: string | null
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "ledgers_company_id_fkey"
+            columns: ["company_id"]
+            isOneToOne: false
+            referencedRelation: "companies"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "ledgers_group_id_company_id_fkey"
+            columns: ["group_id", "company_id"]
+            isOneToOne: false
+            referencedRelation: "account_groups"
+            referencedColumns: ["id", "company_id"]
+          },
+          {
+            foreignKeyName: "ledgers_state_code_fkey"
+            columns: ["state_code"]
+            isOneToOne: false
+            referencedRelation: "ref_states"
+            referencedColumns: ["code"]
+          },
+        ]
+      }
+      member_branches: {
+        Row: {
+          branch_id: string
+          company_id: string
+          company_member_id: string
+          created_at: string
+          id: string
+        }
+        Insert: {
+          branch_id: string
+          company_id: string
+          company_member_id: string
+          created_at?: string
+          id?: string
+        }
+        Update: {
+          branch_id?: string
+          company_id?: string
+          company_member_id?: string
+          created_at?: string
+          id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "member_branches_branch_id_company_id_fkey"
+            columns: ["branch_id", "company_id"]
+            isOneToOne: false
+            referencedRelation: "branches"
+            referencedColumns: ["id", "company_id"]
+          },
+          {
+            foreignKeyName: "member_branches_company_member_id_company_id_fkey"
+            columns: ["company_member_id", "company_id"]
+            isOneToOne: false
+            referencedRelation: "company_members"
+            referencedColumns: ["id", "company_id"]
+          },
+        ]
+      }
+      profiles: {
+        Row: {
+          avatar_url: string | null
+          created_at: string
+          full_name: string | null
+          id: string
+        }
+        Insert: {
+          avatar_url?: string | null
+          created_at?: string
+          full_name?: string | null
+          id: string
+        }
+        Update: {
+          avatar_url?: string | null
+          created_at?: string
+          full_name?: string | null
+          id?: string
+        }
+        Relationships: []
+      }
+      ref_entity_types: {
+        Row: {
+          code: string
+          governing_act: string | null
+          interest_on_capital_cap_percent: number | null
+          itr_form: string
+          name: string
+          presumptive_allowed: boolean
+          remuneration_section: string | null
+          roc_applicable: boolean
+          roc_forms: string[] | null
+          sort_order: number
+          special_provisions: string[] | null
+          statement_format: string
+          statutory_audit_note: string | null
+          statutory_audit_rule: string
+          tax_audit_report_form: string
+        }
+        Insert: {
+          code: string
+          governing_act?: string | null
+          interest_on_capital_cap_percent?: number | null
+          itr_form: string
+          name: string
+          presumptive_allowed?: boolean
+          remuneration_section?: string | null
+          roc_applicable?: boolean
+          roc_forms?: string[] | null
+          sort_order?: number
+          special_provisions?: string[] | null
+          statement_format: string
+          statutory_audit_note?: string | null
+          statutory_audit_rule: string
+          tax_audit_report_form: string
+        }
+        Update: {
+          code?: string
+          governing_act?: string | null
+          interest_on_capital_cap_percent?: number | null
+          itr_form?: string
+          name?: string
+          presumptive_allowed?: boolean
+          remuneration_section?: string | null
+          roc_applicable?: boolean
+          roc_forms?: string[] | null
+          sort_order?: number
+          special_provisions?: string[] | null
+          statement_format?: string
+          statutory_audit_note?: string | null
+          statutory_audit_rule?: string
+          tax_audit_report_form?: string
+        }
+        Relationships: []
+      }
+      ref_modules: {
+        Row: {
+          activates_when: Json | null
+          code: string
+          depends_on: string[]
+          description: string | null
+          name: string
+          sort_order: number
+          tier: string
+        }
+        Insert: {
+          activates_when?: Json | null
+          code: string
+          depends_on?: string[]
+          description?: string | null
+          name: string
+          sort_order?: number
+          tier: string
+        }
+        Update: {
+          activates_when?: Json | null
+          code?: string
+          depends_on?: string[]
+          description?: string | null
+          name?: string
+          sort_order?: number
+          tier?: string
+        }
+        Relationships: []
+      }
+      ref_states: {
+        Row: {
+          code: string
+          intra_state_component: string
+          is_active: boolean
+          jurisdiction: string
+          name: string
+          obsolete_note: string | null
+        }
+        Insert: {
+          code: string
+          intra_state_component: string
+          is_active?: boolean
+          jurisdiction: string
+          name: string
+          obsolete_note?: string | null
+        }
+        Update: {
+          code?: string
+          intra_state_component?: string
+          is_active?: boolean
+          jurisdiction?: string
+          name?: string
+          obsolete_note?: string | null
+        }
+        Relationships: []
+      }
+      statutory_rules: {
+        Row: {
+          attrs: Json
+          authority: string | null
+          created_at: string
+          domain: string
+          effective_from: string
+          effective_to: string | null
+          id: string
+          notes: string | null
+          rule_key: string
+          scope: Json
+          value: number | null
+        }
+        Insert: {
+          attrs?: Json
+          authority?: string | null
+          created_at?: string
+          domain: string
+          effective_from: string
+          effective_to?: string | null
+          id?: string
+          notes?: string | null
+          rule_key: string
+          scope?: Json
+          value?: number | null
+        }
+        Update: {
+          attrs?: Json
+          authority?: string | null
+          created_at?: string
+          domain?: string
+          effective_from?: string
+          effective_to?: string | null
+          id?: string
+          notes?: string | null
+          rule_key?: string
+          scope?: Json
+          value?: number | null
+        }
+        Relationships: []
+      }
       tax_ledger_map: {
         Row: {
-          company_id: string;
-          created_at: string;
-          gst_registration_id: string | null;
-          id: string;
-          ledger_id: string;
-          purpose: string;
-        };
+          company_id: string
+          created_at: string
+          gst_registration_id: string | null
+          id: string
+          ledger_id: string
+          purpose: string
+        }
         Insert: {
-          company_id: string;
-          gst_registration_id?: string | null;
-          ledger_id: string;
-          purpose: string;
-        };
-        Update: Partial<Database["public"]["Tables"]["tax_ledger_map"]["Insert"]>;
-        Relationships: [];
-      };
-    };
-    Views: Record<never, never>;
+          company_id: string
+          created_at?: string
+          gst_registration_id?: string | null
+          id?: string
+          ledger_id: string
+          purpose: string
+        }
+        Update: {
+          company_id?: string
+          created_at?: string
+          gst_registration_id?: string | null
+          id?: string
+          ledger_id?: string
+          purpose?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "tax_ledger_map_company_id_fkey"
+            columns: ["company_id"]
+            isOneToOne: false
+            referencedRelation: "companies"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "tax_ledger_map_gst_registration_id_company_id_fkey"
+            columns: ["gst_registration_id", "company_id"]
+            isOneToOne: false
+            referencedRelation: "gst_registrations"
+            referencedColumns: ["id", "company_id"]
+          },
+          {
+            foreignKeyName: "tax_ledger_map_ledger_id_company_id_fkey"
+            columns: ["ledger_id", "company_id"]
+            isOneToOne: false
+            referencedRelation: "ledgers"
+            referencedColumns: ["id", "company_id"]
+          },
+        ]
+      }
+      voucher_entries: {
+        Row: {
+          branch_id: string
+          company_id: string
+          created_at: string
+          credit_amount: number
+          debit_amount: number
+          dimensions: Json
+          fc_amount: number | null
+          id: string
+          ledger_id: string
+          line_order: number
+          narration: string | null
+          updated_at: string
+          voucher_id: string
+        }
+        Insert: {
+          branch_id: string
+          company_id: string
+          created_at?: string
+          credit_amount?: number
+          debit_amount?: number
+          dimensions?: Json
+          fc_amount?: number | null
+          id?: string
+          ledger_id: string
+          line_order?: number
+          narration?: string | null
+          updated_at?: string
+          voucher_id: string
+        }
+        Update: {
+          branch_id?: string
+          company_id?: string
+          created_at?: string
+          credit_amount?: number
+          debit_amount?: number
+          dimensions?: Json
+          fc_amount?: number | null
+          id?: string
+          ledger_id?: string
+          line_order?: number
+          narration?: string | null
+          updated_at?: string
+          voucher_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "voucher_entries_branch_id_company_id_fkey"
+            columns: ["branch_id", "company_id"]
+            isOneToOne: false
+            referencedRelation: "branches"
+            referencedColumns: ["id", "company_id"]
+          },
+          {
+            foreignKeyName: "voucher_entries_ledger_id_company_id_fkey"
+            columns: ["ledger_id", "company_id"]
+            isOneToOne: false
+            referencedRelation: "ledgers"
+            referencedColumns: ["id", "company_id"]
+          },
+          {
+            foreignKeyName: "voucher_entries_voucher_id_company_id_fkey"
+            columns: ["voucher_id", "company_id"]
+            isOneToOne: false
+            referencedRelation: "vouchers"
+            referencedColumns: ["id", "company_id"]
+          },
+        ]
+      }
+      voucher_number_sequences: {
+        Row: {
+          branch_id: string
+          company_id: string
+          financial_year_label: string
+          next_number: number
+          padding: number
+          prefix: string
+          voucher_type: string
+        }
+        Insert: {
+          branch_id: string
+          company_id: string
+          financial_year_label: string
+          next_number?: number
+          padding?: number
+          prefix: string
+          voucher_type: string
+        }
+        Update: {
+          branch_id?: string
+          company_id?: string
+          financial_year_label?: string
+          next_number?: number
+          padding?: number
+          prefix?: string
+          voucher_type?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "voucher_number_sequences_branch_id_company_id_fkey"
+            columns: ["branch_id", "company_id"]
+            isOneToOne: false
+            referencedRelation: "branches"
+            referencedColumns: ["id", "company_id"]
+          },
+          {
+            foreignKeyName: "voucher_number_sequences_company_id_fkey"
+            columns: ["company_id"]
+            isOneToOne: false
+            referencedRelation: "companies"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      vouchers: {
+        Row: {
+          branch_id: string
+          company_id: string
+          created_at: string
+          created_by: string | null
+          exchange_rate: number
+          financial_year_label: string
+          id: string
+          is_deleted: boolean
+          narration: string | null
+          party_ledger_id: string | null
+          rate_source: string | null
+          reference_date: string | null
+          reference_number: string | null
+          sequence_number: number
+          total_amount: number
+          txn_currency: string
+          updated_at: string
+          updated_by: string | null
+          voucher_date: string
+          voucher_number: string
+          voucher_type: string
+        }
+        Insert: {
+          branch_id: string
+          company_id: string
+          created_at?: string
+          created_by?: string | null
+          exchange_rate?: number
+          financial_year_label: string
+          id?: string
+          is_deleted?: boolean
+          narration?: string | null
+          party_ledger_id?: string | null
+          rate_source?: string | null
+          reference_date?: string | null
+          reference_number?: string | null
+          sequence_number: number
+          total_amount?: number
+          txn_currency?: string
+          updated_at?: string
+          updated_by?: string | null
+          voucher_date: string
+          voucher_number: string
+          voucher_type: string
+        }
+        Update: {
+          branch_id?: string
+          company_id?: string
+          created_at?: string
+          created_by?: string | null
+          exchange_rate?: number
+          financial_year_label?: string
+          id?: string
+          is_deleted?: boolean
+          narration?: string | null
+          party_ledger_id?: string | null
+          rate_source?: string | null
+          reference_date?: string | null
+          reference_number?: string | null
+          sequence_number?: number
+          total_amount?: number
+          txn_currency?: string
+          updated_at?: string
+          updated_by?: string | null
+          voucher_date?: string
+          voucher_number?: string
+          voucher_type?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "vouchers_branch_id_company_id_fkey"
+            columns: ["branch_id", "company_id"]
+            isOneToOne: false
+            referencedRelation: "branches"
+            referencedColumns: ["id", "company_id"]
+          },
+          {
+            foreignKeyName: "vouchers_company_id_fkey"
+            columns: ["company_id"]
+            isOneToOne: false
+            referencedRelation: "companies"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "vouchers_party_ledger_id_company_id_fkey"
+            columns: ["party_ledger_id", "company_id"]
+            isOneToOne: false
+            referencedRelation: "ledgers"
+            referencedColumns: ["id", "company_id"]
+          },
+        ]
+      }
+    }
+    Views: {
+      [_ in never]: never
+    }
     Functions: {
       create_company: {
         Args: {
-          p_book_beginning_date: string;
-          p_compliance_mode?: string;
-          p_entity_type: string;
-          p_financial_year_start_month?: number;
-          p_name: string;
-          p_pan?: string;
-          p_state_code: string;
-        };
-        Returns: string;
-      };
-      get_company_modules: {
-        Args: { p_as_at?: string; p_company_id: string };
-        Returns: {
-          active: boolean;
-          can_toggle: boolean;
-          code: string;
-          depends_on: string[];
-          description: string;
-          licensed: boolean;
-          locked_reason: string;
-          name: string;
-          tier: string;
-        }[];
-      };
-      get_company_profile: {
-        Args: { p_company_id: string };
-        Returns: {
-          company_id: string;
-          compliance_mode: string;
-          entity_name: string;
-          entity_type: string;
-          financial_year_start_month: number;
-          has_iec: boolean;
-          has_pan: boolean;
-          has_tan: boolean;
-          itr_form: string;
-          name: string;
-          presumptive_allowed: boolean;
-          remuneration_section: string;
-          roc_applicable: boolean;
-          roc_forms: string[];
-          special_provisions: string[];
-          statement_format: string;
-          statutory_audit_rule: string;
-          tax_audit_report_form: string;
-        }[];
-      };
-      resolve_statutory_rule: {
-        Args: { p_as_at: string; p_domain: string; p_rule_key: string; p_scope?: Json };
-        Returns: { attrs: Json; authority: string; value: number }[];
-      };
-      set_module: {
-        Args: {
-          p_company_id: string;
-          p_enabled: boolean;
-          p_from_date?: string;
-          p_module_code: string;
-        };
-        Returns: undefined;
-      };
-      // Required arguments first, then defaulted ones. PostgREST resolves an
-      // RPC by the exact set of argument names in the request body, and
-      // supabase-js drops undefined keys — so anything a caller may legitimately
-      // omit must have a SQL default, and Postgres requires every parameter
-      // after the first defaulted one to be defaulted too.
+          p_book_beginning_date: string
+          p_compliance_mode?: string
+          p_entity_type: string
+          p_financial_year_start_month?: number
+          p_name: string
+          p_pan?: string
+          p_state_code: string
+        }
+        Returns: string
+      }
       create_voucher: {
         Args: {
-          p_company_id: string;
-          p_branch_id: string;
-          p_voucher_type: string;
-          p_voucher_date: string;
-          p_lines: Json;
-          p_narration?: string;
-          p_reference_number?: string;
-          p_reference_date?: string;
-          p_party_ledger_id?: string;
-          p_txn_currency?: string;
-          p_exchange_rate?: number;
-          p_rate_source?: string;
-        };
-        Returns: string;
-      };
-      update_voucher: {
-        Args: {
-          p_voucher_id: string;
-          p_voucher_date: string;
-          p_lines: Json;
-          p_narration?: string;
-          p_reference_number?: string;
-          p_reference_date?: string;
-          p_party_ledger_id?: string;
-        };
-        Returns: string;
-      };
-      delete_company: { Args: { p_company_id: string }; Returns: undefined };
+          p_branch_id: string
+          p_company_id: string
+          p_exchange_rate?: number
+          p_lines: Json
+          p_narration?: string
+          p_party_ledger_id?: string
+          p_rate_source?: string
+          p_reference_date?: string
+          p_reference_number?: string
+          p_txn_currency?: string
+          p_voucher_date: string
+          p_voucher_type: string
+        }
+        Returns: string
+      }
+      delete_company: { Args: { p_company_id: string }; Returns: undefined }
       find_duplicate_bills: {
         Args: {
-          p_company_id: string;
-          p_party_ledger_id: string;
-          p_reference_number: string;
-          p_exclude_voucher_id?: string;
-        };
+          p_company_id: string
+          p_exclude_voucher_id?: string
+          p_party_ledger_id: string
+          p_reference_number: string
+        }
         Returns: {
-          id: string;
-          voucher_number: string;
-          voucher_date: string;
-          total_amount: number;
-        }[];
-      };
-      get_trial_balance: {
-        Args: {
-          p_company_id: string;
-          p_from: string;
-          p_to: string;
-          p_branch_id?: string;
-        };
-        Returns: {
-          ledger_id: string;
-          ledger_name: string;
-          group_name: string;
-          nature: string;
-          opening_debit: number;
-          opening_credit: number;
-          period_debit: number;
-          period_credit: number;
-          closing_debit: number;
-          closing_credit: number;
-        }[];
-      };
-      get_daybook: {
-        Args: {
-          p_company_id: string;
-          p_from: string;
-          p_to: string;
-          p_branch_id?: string;
-        };
-        Returns: {
-          voucher_id: string;
-          voucher_date: string;
-          voucher_type: string;
-          voucher_number: string;
-          branch_code: string;
-          narration: string | null;
-          reference_number: string | null;
-          total_amount: number;
-          party_name: string | null;
-          line_count: number;
-        }[];
-      };
-      get_ledger_statement: {
-        Args: {
-          p_company_id: string;
-          p_ledger_id: string;
-          p_from: string;
-          p_to: string;
-          p_branch_id?: string;
-        };
-        Returns: {
-          voucher_id: string;
-          voucher_date: string;
-          voucher_number: string;
-          voucher_type: string;
-          narration: string | null;
-          contra_ledgers: string | null;
-          debit_amount: number;
-          credit_amount: number;
-          running_balance: number;
-        }[];
-      };
-      get_profit_and_loss: {
-        Args: {
-          p_company_id: string;
-          p_from: string;
-          p_to: string;
-          p_branch_id?: string;
-        };
-        Returns: {
-          section: string;
-          nature: string;
-          group_name: string;
-          ledger_name: string;
-          amount: number;
-        }[];
-      };
-      get_balance_sheet: {
-        Args: { p_company_id: string; p_as_at: string; p_branch_id?: string };
-        Returns: {
-          side: string;
-          nature: string;
-          group_name: string;
-          ledger_name: string;
-          amount: number;
-        }[];
-      };
+          id: string
+          total_amount: number
+          voucher_date: string
+          voucher_number: string
+        }[]
+      }
       get_audit_trail: {
         Args: {
-          p_company_id: string;
-          p_from?: string;
-          p_to?: string;
-          p_table_name?: string;
-          p_limit?: number;
-        };
+          p_company_id: string
+          p_from?: string
+          p_limit?: number
+          p_table_name?: string
+          p_to?: string
+        }
         Returns: {
-          id: string;
-          table_name: string;
-          record_id: string;
-          operation: string;
-          changed_fields: string[] | null;
-          derived_note: string | null;
-          changed_by: string | null;
-          changed_by_name: string | null;
-          changed_at: string;
-        }[];
-      };
-    };
-    Enums: Record<never, never>;
-    CompositeTypes: Record<never, never>;
-  };
-};
+          changed_at: string
+          changed_by: string
+          changed_by_name: string
+          changed_fields: string[]
+          derived_note: string
+          id: string
+          operation: string
+          record_id: string
+          table_name: string
+        }[]
+      }
+      get_balance_sheet: {
+        Args: { p_as_at: string; p_branch_id?: string; p_company_id: string }
+        Returns: {
+          amount: number
+          group_name: string
+          ledger_name: string
+          nature: string
+          side: string
+        }[]
+      }
+      get_company_modules: {
+        Args: { p_as_at?: string; p_company_id: string }
+        Returns: {
+          active: boolean
+          can_toggle: boolean
+          code: string
+          depends_on: string[]
+          description: string
+          licensed: boolean
+          locked_reason: string
+          name: string
+          tier: string
+        }[]
+      }
+      get_company_profile: {
+        Args: { p_company_id: string }
+        Returns: {
+          company_id: string
+          compliance_mode: string
+          entity_name: string
+          entity_type: string
+          financial_year_start_month: number
+          has_iec: boolean
+          has_pan: boolean
+          has_tan: boolean
+          itr_form: string
+          name: string
+          presumptive_allowed: boolean
+          remuneration_section: string
+          roc_applicable: boolean
+          roc_forms: string[]
+          special_provisions: string[]
+          statement_format: string
+          statutory_audit_rule: string
+          tax_audit_report_form: string
+        }[]
+      }
+      get_daybook: {
+        Args: {
+          p_branch_id?: string
+          p_company_id: string
+          p_from: string
+          p_to: string
+        }
+        Returns: {
+          branch_code: string
+          line_count: number
+          narration: string
+          party_name: string
+          reference_number: string
+          total_amount: number
+          voucher_date: string
+          voucher_id: string
+          voucher_number: string
+          voucher_type: string
+        }[]
+      }
+      get_ledger_statement: {
+        Args: {
+          p_branch_id?: string
+          p_company_id: string
+          p_from: string
+          p_ledger_id: string
+          p_to: string
+        }
+        Returns: {
+          contra_ledgers: string
+          credit_amount: number
+          debit_amount: number
+          narration: string
+          running_balance: number
+          voucher_date: string
+          voucher_id: string
+          voucher_number: string
+          voucher_type: string
+        }[]
+      }
+      get_profit_and_loss: {
+        Args: {
+          p_branch_id?: string
+          p_company_id: string
+          p_from: string
+          p_to: string
+        }
+        Returns: {
+          amount: number
+          group_name: string
+          ledger_name: string
+          nature: string
+          section: string
+        }[]
+      }
+      get_trial_balance: {
+        Args: {
+          p_branch_id?: string
+          p_company_id: string
+          p_from: string
+          p_to: string
+        }
+        Returns: {
+          closing_credit: number
+          closing_debit: number
+          group_name: string
+          ledger_id: string
+          ledger_name: string
+          nature: string
+          opening_credit: number
+          opening_debit: number
+          period_credit: number
+          period_debit: number
+        }[]
+      }
+      resolve_statutory_rule: {
+        Args: {
+          p_as_at: string
+          p_domain: string
+          p_rule_key: string
+          p_scope?: Json
+        }
+        Returns: {
+          attrs: Json
+          authority: string
+          value: number
+        }[]
+      }
+      set_module: {
+        Args: {
+          p_company_id: string
+          p_enabled: boolean
+          p_from_date?: string
+          p_module_code: string
+        }
+        Returns: undefined
+      }
+      update_voucher: {
+        Args: {
+          p_lines: Json
+          p_narration?: string
+          p_party_ledger_id?: string
+          p_reference_date?: string
+          p_reference_number?: string
+          p_voucher_date: string
+          p_voucher_id: string
+        }
+        Returns: string
+      }
+    }
+    Enums: {
+      [_ in never]: never
+    }
+    CompositeTypes: {
+      [_ in never]: never
+    }
+  }
+}
 
-type PublicSchema = Database["public"];
+type DatabaseWithoutInternals = Omit<Database, "__InternalSupabase">
 
-export type Tables<T extends keyof PublicSchema["Tables"]> =
-  PublicSchema["Tables"][T]["Row"];
-export type TablesInsert<T extends keyof PublicSchema["Tables"]> =
-  PublicSchema["Tables"][T]["Insert"];
-export type TablesUpdate<T extends keyof PublicSchema["Tables"]> =
-  PublicSchema["Tables"][T]["Update"];
-export type FunctionReturns<T extends keyof PublicSchema["Functions"]> =
-  PublicSchema["Functions"][T]["Returns"];
+type DefaultSchema = DatabaseWithoutInternals[Extract<keyof Database, "public">]
+
+export type Tables<
+  DefaultSchemaTableNameOrOptions extends
+    | keyof (DefaultSchema["Tables"] & DefaultSchema["Views"])
+    | { schema: keyof DatabaseWithoutInternals },
+  TableName extends DefaultSchemaTableNameOrOptions extends {
+    schema: keyof DatabaseWithoutInternals
+  }
+    ? keyof (DatabaseWithoutInternals[DefaultSchemaTableNameOrOptions["schema"]]["Tables"] &
+        DatabaseWithoutInternals[DefaultSchemaTableNameOrOptions["schema"]]["Views"])
+    : never = never,
+> = DefaultSchemaTableNameOrOptions extends {
+  schema: keyof DatabaseWithoutInternals
+}
+  ? (DatabaseWithoutInternals[DefaultSchemaTableNameOrOptions["schema"]]["Tables"] &
+      DatabaseWithoutInternals[DefaultSchemaTableNameOrOptions["schema"]]["Views"])[TableName] extends {
+      Row: infer R
+    }
+    ? R
+    : never
+  : DefaultSchemaTableNameOrOptions extends keyof (DefaultSchema["Tables"] &
+        DefaultSchema["Views"])
+    ? (DefaultSchema["Tables"] &
+        DefaultSchema["Views"])[DefaultSchemaTableNameOrOptions] extends {
+        Row: infer R
+      }
+      ? R
+      : never
+    : never
+
+export type TablesInsert<
+  DefaultSchemaTableNameOrOptions extends
+    | keyof DefaultSchema["Tables"]
+    | { schema: keyof DatabaseWithoutInternals },
+  TableName extends DefaultSchemaTableNameOrOptions extends {
+    schema: keyof DatabaseWithoutInternals
+  }
+    ? keyof DatabaseWithoutInternals[DefaultSchemaTableNameOrOptions["schema"]]["Tables"]
+    : never = never,
+> = DefaultSchemaTableNameOrOptions extends {
+  schema: keyof DatabaseWithoutInternals
+}
+  ? DatabaseWithoutInternals[DefaultSchemaTableNameOrOptions["schema"]]["Tables"][TableName] extends {
+      Insert: infer I
+    }
+    ? I
+    : never
+  : DefaultSchemaTableNameOrOptions extends keyof DefaultSchema["Tables"]
+    ? DefaultSchema["Tables"][DefaultSchemaTableNameOrOptions] extends {
+        Insert: infer I
+      }
+      ? I
+      : never
+    : never
+
+export type TablesUpdate<
+  DefaultSchemaTableNameOrOptions extends
+    | keyof DefaultSchema["Tables"]
+    | { schema: keyof DatabaseWithoutInternals },
+  TableName extends DefaultSchemaTableNameOrOptions extends {
+    schema: keyof DatabaseWithoutInternals
+  }
+    ? keyof DatabaseWithoutInternals[DefaultSchemaTableNameOrOptions["schema"]]["Tables"]
+    : never = never,
+> = DefaultSchemaTableNameOrOptions extends {
+  schema: keyof DatabaseWithoutInternals
+}
+  ? DatabaseWithoutInternals[DefaultSchemaTableNameOrOptions["schema"]]["Tables"][TableName] extends {
+      Update: infer U
+    }
+    ? U
+    : never
+  : DefaultSchemaTableNameOrOptions extends keyof DefaultSchema["Tables"]
+    ? DefaultSchema["Tables"][DefaultSchemaTableNameOrOptions] extends {
+        Update: infer U
+      }
+      ? U
+      : never
+    : never
+
+export type Enums<
+  DefaultSchemaEnumNameOrOptions extends
+    | keyof DefaultSchema["Enums"]
+    | { schema: keyof DatabaseWithoutInternals },
+  EnumName extends DefaultSchemaEnumNameOrOptions extends {
+    schema: keyof DatabaseWithoutInternals
+  }
+    ? keyof DatabaseWithoutInternals[DefaultSchemaEnumNameOrOptions["schema"]]["Enums"]
+    : never = never,
+> = DefaultSchemaEnumNameOrOptions extends {
+  schema: keyof DatabaseWithoutInternals
+}
+  ? DatabaseWithoutInternals[DefaultSchemaEnumNameOrOptions["schema"]]["Enums"][EnumName]
+  : DefaultSchemaEnumNameOrOptions extends keyof DefaultSchema["Enums"]
+    ? DefaultSchema["Enums"][DefaultSchemaEnumNameOrOptions]
+    : never
+
+export type CompositeTypes<
+  PublicCompositeTypeNameOrOptions extends
+    | keyof DefaultSchema["CompositeTypes"]
+    | { schema: keyof DatabaseWithoutInternals },
+  CompositeTypeName extends PublicCompositeTypeNameOrOptions extends {
+    schema: keyof DatabaseWithoutInternals
+  }
+    ? keyof DatabaseWithoutInternals[PublicCompositeTypeNameOrOptions["schema"]]["CompositeTypes"]
+    : never = never,
+> = PublicCompositeTypeNameOrOptions extends {
+  schema: keyof DatabaseWithoutInternals
+}
+  ? DatabaseWithoutInternals[PublicCompositeTypeNameOrOptions["schema"]]["CompositeTypes"][CompositeTypeName]
+  : PublicCompositeTypeNameOrOptions extends keyof DefaultSchema["CompositeTypes"]
+    ? DefaultSchema["CompositeTypes"][PublicCompositeTypeNameOrOptions]
+    : never
+
+export const Constants = {
+  public: {
+    Enums: {},
+  },
+} as const

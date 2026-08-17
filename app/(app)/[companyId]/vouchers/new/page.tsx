@@ -26,8 +26,7 @@ export default async function NewVoucherPage({
   const flatLedgers = (ledgers ?? []).map((l) => ({
     id: l.id,
     name: l.name,
-    group_name:
-      (l as unknown as { account_groups?: { name: string } }).account_groups?.name ?? null,
+    group_name: l.account_groups?.name ?? null,
   }));
 
   return (

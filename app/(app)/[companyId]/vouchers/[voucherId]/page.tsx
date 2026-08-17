@@ -33,26 +33,19 @@ export default async function VoucherDetailPage({
 
   if (!voucher) notFound();
 
-  // Two queries rather than an embedded select. The generated types carry
-  // Relationships metadata that resolves `ledgers(name)`; this file's
-  // hand-maintained copy does not, and hand-maintaining it would drift from
-  // the schema. A lookup map costs one round trip and cannot go stale.
-  const [{ data: entries }, { data: branch }, { data: ledgerRows }] =
-    await Promise.all([
-      supabase
-        .from("voucher_entries")
-        .select("id, ledger_id, debit_amount, credit_amount, narration, line_order")
-        .eq("voucher_id", voucherId)
-        .order("line_order"),
-      supabase
-        .from("branches")
-        .select("code, name")
-        .eq("id", voucher.branch_id)
-        .maybeSingle(),
-      supabase.from("ledgers").select("id, name").eq("company_id", companyId),
-    ]);
+  const [{ data: entries }, { data: branch }] = await Promise.all([
+    supabase
+      .from("voucher_entries")
+      .select("id, debit_amount, credit_amount, narration, line_order, ledgers(name)")
+      .eq("voucher_id", voucherId)
+      .order("line_order"),
+    supabase
+      .from("branches")
+      .select("code, name")
+      .eq("id", voucher.branch_id)
+      .maybeSingle(),
+  ]);
 
-  const ledgerName = new Map((ledgerRows ?? []).map((l) => [l.id, l.name]));
   const lines = entries ?? [];
   const dr = lines.reduce((n, l) => n + Number(l.debit_amount), 0);
   const cr = lines.reduce((n, l) => n + Number(l.credit_amount), 0);
@@ -105,9 +98,7 @@ export default async function VoucherDetailPage({
                 key={l.id}
                 className="border-b border-zinc-100 last:border-0 dark:border-zinc-800/60"
               >
-                <td className="px-4 py-2 font-medium">
-                  {ledgerName.get(l.ledger_id) ?? "—"}
-                </td>
+                <td className="px-4 py-2 font-medium">{l.ledgers?.name ?? "—"}</td>
                 <td className="px-4 py-2 text-zinc-600 dark:text-zinc-400">
                   {l.narration ?? "—"}
                 </td>
