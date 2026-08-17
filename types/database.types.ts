@@ -337,6 +337,87 @@ export type Database = {
         Update: never;
         Relationships: [];
       };
+      vouchers: {
+        Row: {
+          branch_id: string;
+          company_id: string;
+          created_at: string;
+          created_by: string | null;
+          exchange_rate: number;
+          financial_year_label: string;
+          id: string;
+          is_deleted: boolean;
+          narration: string | null;
+          party_ledger_id: string | null;
+          rate_source: string | null;
+          reference_date: string | null;
+          reference_number: string | null;
+          sequence_number: number;
+          total_amount: number;
+          txn_currency: string;
+          updated_at: string;
+          updated_by: string | null;
+          voucher_date: string;
+          voucher_number: string;
+          voucher_type: string;
+        };
+        // Vouchers are created through create_voucher(), never inserted
+        // directly — the RPC allocates the number and stamps the FY label.
+        Insert: never;
+        Update: { is_deleted?: boolean };
+        Relationships: [];
+      };
+      voucher_entries: {
+        Row: {
+          branch_id: string;
+          company_id: string;
+          created_at: string;
+          credit_amount: number;
+          debit_amount: number;
+          dimensions: Json;
+          fc_amount: number | null;
+          id: string;
+          ledger_id: string;
+          line_order: number;
+          narration: string | null;
+          updated_at: string;
+          voucher_id: string;
+        };
+        Insert: never;
+        Update: never;
+        Relationships: [];
+      };
+      voucher_number_sequences: {
+        Row: {
+          branch_id: string;
+          company_id: string;
+          financial_year_label: string;
+          next_number: number;
+          padding: number;
+          prefix: string;
+          voucher_type: string;
+        };
+        Insert: never;
+        Update: never;
+        Relationships: [];
+      };
+      audit_log: {
+        Row: {
+          after_data: Json | null;
+          before_data: Json | null;
+          changed_at: string;
+          changed_by: string | null;
+          company_id: string;
+          derived_note: string | null;
+          id: string;
+          operation: string;
+          record_id: string | null;
+          table_name: string;
+        };
+        Insert: never;
+        Update: never;
+        Relationships: [];
+      };
       tax_ledger_map: {
         Row: {
           company_id: string;

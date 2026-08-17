@@ -1,3 +1,4 @@
+import Link from "next/link";
 import { createClient } from "@/lib/supabase/server";
 import { formatINR } from "@/lib/utils/currency";
 import { defaultPeriod } from "@/lib/utils/period";
@@ -83,7 +84,12 @@ export default async function DaybookPage({
                   {r.voucher_date}
                 </td>
                 <td className="whitespace-nowrap px-4 py-2 font-mono text-xs">
-                  {r.voucher_number}
+                  <Link
+                    href={`/${companyId}/vouchers/${r.voucher_id}`}
+                    className="text-emerald-800 underline underline-offset-4 dark:text-emerald-400"
+                  >
+                    {r.voucher_number}
+                  </Link>
                 </td>
                 <td className="whitespace-nowrap px-4 py-2">
                   {TYPE_LABEL[r.voucher_type] ?? r.voucher_type}
