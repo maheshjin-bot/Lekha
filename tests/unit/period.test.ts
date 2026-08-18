@@ -99,4 +99,40 @@ describe("defaultPeriod", () => {
     vi.setSystemTime(new Date("2026-08-17T02:00:00+05:30"));
     expect(defaultPeriod(4).to).toBe("2026-08-17");
   });
+
+  it("does not drop today one minute before the 05:30 IST threshold", () => {
+    // 05:30 IST is 00:00 UTC — the exact instant a toISOString()-based "today"
+    // catches up with the local date. One minute on the near side is the
+    // tightest reproduction of the drop-a-day bug: UTC is still reporting
+    // yesterday for another sixty seconds.
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-08-17T05:29:00+05:30"));
+    expect(defaultPeriod(4).to).toBe("2026-08-17");
+  });
+
+  it("still reports today one minute after the 05:30 IST threshold", () => {
+    // The other side of the same instant, so the boundary is bracketed rather
+    // than assumed: a fix that merely shifts the drop earlier or later would
+    // pass one of these two tests and fail the other.
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-08-17T05:31:00+05:30"));
+    expect(defaultPeriod(4).to).toBe("2026-08-17");
+  });
+
+  it("never runs backwards at the exact FY-rollover instant of 05:30 IST on 1 April", () => {
+    // The two danger windows this file exists to guard against — the daily
+    // 00:00-05:30 IST UTC/local mismatch and the 1 April FY rollover —
+    // overlap for 5.5 hours once a year. 05:29 IST on 1 April is the worst
+    // instant of the year for this bug: the FY has turned locally, and UTC
+    // still disagrees, right up until the threshold above.
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-04-01T05:29:00+05:30"));
+    const p = defaultPeriod(4);
+    expect(
+      p.from <= p.to,
+      `period runs backwards: from ${p.from} to ${p.to} (label: ${p.label})`
+    ).toBe(true);
+    expect(p.to).toBe("2026-04-01");
+    expect(p.from).toBe("2026-04-01");
+  });
 });
