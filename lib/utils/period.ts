@@ -93,3 +93,17 @@ export function defaultPeriod(
       : `${formatDate(from)} to ${formatDate(to)}`,
   };
 }
+
+/**
+ * The last day of the financial year before the one containing today — the
+ * natural default to suggest when closing books, since it is the most
+ * recent period that has fully finished. Same local-date-then-noon-UTC
+ * anchoring as defaultPeriod, for the same reason: a naive `new Date()` read
+ * through UTC fields is the bug this file exists to avoid.
+ */
+export function previousFinancialYearEnd(startMonth: number): string {
+  const reference = atNoonUTC(todayLocal());
+  const currentFyStart = financialYearStart(startMonth, reference);
+  const prevDay = new Date(currentFyStart.getTime() - 24 * 60 * 60 * 1000);
+  return isoUTC(prevDay);
+}
