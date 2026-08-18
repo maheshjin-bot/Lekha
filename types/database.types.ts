@@ -269,6 +269,357 @@ export type Database = {
         }
         Relationships: []
       }
+      audit_log_2026_11: {
+        Row: {
+          after_data: Json | null
+          before_data: Json | null
+          changed_at: string
+          changed_by: string | null
+          company_id: string
+          derived_note: string | null
+          id: string
+          operation: string
+          record_id: string | null
+          table_name: string
+        }
+        Insert: {
+          after_data?: Json | null
+          before_data?: Json | null
+          changed_at?: string
+          changed_by?: string | null
+          company_id: string
+          derived_note?: string | null
+          id?: string
+          operation: string
+          record_id?: string | null
+          table_name: string
+        }
+        Update: {
+          after_data?: Json | null
+          before_data?: Json | null
+          changed_at?: string
+          changed_by?: string | null
+          company_id?: string
+          derived_note?: string | null
+          id?: string
+          operation?: string
+          record_id?: string | null
+          table_name?: string
+        }
+        Relationships: []
+      }
+      audit_log_2026_12: {
+        Row: {
+          after_data: Json | null
+          before_data: Json | null
+          changed_at: string
+          changed_by: string | null
+          company_id: string
+          derived_note: string | null
+          id: string
+          operation: string
+          record_id: string | null
+          table_name: string
+        }
+        Insert: {
+          after_data?: Json | null
+          before_data?: Json | null
+          changed_at?: string
+          changed_by?: string | null
+          company_id: string
+          derived_note?: string | null
+          id?: string
+          operation: string
+          record_id?: string | null
+          table_name: string
+        }
+        Update: {
+          after_data?: Json | null
+          before_data?: Json | null
+          changed_at?: string
+          changed_by?: string | null
+          company_id?: string
+          derived_note?: string | null
+          id?: string
+          operation?: string
+          record_id?: string | null
+          table_name?: string
+        }
+        Relationships: []
+      }
+      audit_log_2027_01: {
+        Row: {
+          after_data: Json | null
+          before_data: Json | null
+          changed_at: string
+          changed_by: string | null
+          company_id: string
+          derived_note: string | null
+          id: string
+          operation: string
+          record_id: string | null
+          table_name: string
+        }
+        Insert: {
+          after_data?: Json | null
+          before_data?: Json | null
+          changed_at?: string
+          changed_by?: string | null
+          company_id: string
+          derived_note?: string | null
+          id?: string
+          operation: string
+          record_id?: string | null
+          table_name: string
+        }
+        Update: {
+          after_data?: Json | null
+          before_data?: Json | null
+          changed_at?: string
+          changed_by?: string | null
+          company_id?: string
+          derived_note?: string | null
+          id?: string
+          operation?: string
+          record_id?: string | null
+          table_name?: string
+        }
+        Relationships: []
+      }
+      audit_log_2027_02: {
+        Row: {
+          after_data: Json | null
+          before_data: Json | null
+          changed_at: string
+          changed_by: string | null
+          company_id: string
+          derived_note: string | null
+          id: string
+          operation: string
+          record_id: string | null
+          table_name: string
+        }
+        Insert: {
+          after_data?: Json | null
+          before_data?: Json | null
+          changed_at?: string
+          changed_by?: string | null
+          company_id: string
+          derived_note?: string | null
+          id?: string
+          operation: string
+          record_id?: string | null
+          table_name: string
+        }
+        Update: {
+          after_data?: Json | null
+          before_data?: Json | null
+          changed_at?: string
+          changed_by?: string | null
+          company_id?: string
+          derived_note?: string | null
+          id?: string
+          operation?: string
+          record_id?: string | null
+          table_name?: string
+        }
+        Relationships: []
+      }
+      audit_log_2027_03: {
+        Row: {
+          after_data: Json | null
+          before_data: Json | null
+          changed_at: string
+          changed_by: string | null
+          company_id: string
+          derived_note: string | null
+          id: string
+          operation: string
+          record_id: string | null
+          table_name: string
+        }
+        Insert: {
+          after_data?: Json | null
+          before_data?: Json | null
+          changed_at?: string
+          changed_by?: string | null
+          company_id: string
+          derived_note?: string | null
+          id?: string
+          operation: string
+          record_id?: string | null
+          table_name: string
+        }
+        Update: {
+          after_data?: Json | null
+          before_data?: Json | null
+          changed_at?: string
+          changed_by?: string | null
+          company_id?: string
+          derived_note?: string | null
+          id?: string
+          operation?: string
+          record_id?: string | null
+          table_name?: string
+        }
+        Relationships: []
+      }
+      audit_log_2027_04: {
+        Row: {
+          after_data: Json | null
+          before_data: Json | null
+          changed_at: string
+          changed_by: string | null
+          company_id: string
+          derived_note: string | null
+          id: string
+          operation: string
+          record_id: string | null
+          table_name: string
+        }
+        Insert: {
+          after_data?: Json | null
+          before_data?: Json | null
+          changed_at?: string
+          changed_by?: string | null
+          company_id: string
+          derived_note?: string | null
+          id?: string
+          operation: string
+          record_id?: string | null
+          table_name: string
+        }
+        Update: {
+          after_data?: Json | null
+          before_data?: Json | null
+          changed_at?: string
+          changed_by?: string | null
+          company_id?: string
+          derived_note?: string | null
+          id?: string
+          operation?: string
+          record_id?: string | null
+          table_name?: string
+        }
+        Relationships: []
+      }
+      audit_log_2027_05: {
+        Row: {
+          after_data: Json | null
+          before_data: Json | null
+          changed_at: string
+          changed_by: string | null
+          company_id: string
+          derived_note: string | null
+          id: string
+          operation: string
+          record_id: string | null
+          table_name: string
+        }
+        Insert: {
+          after_data?: Json | null
+          before_data?: Json | null
+          changed_at?: string
+          changed_by?: string | null
+          company_id: string
+          derived_note?: string | null
+          id?: string
+          operation: string
+          record_id?: string | null
+          table_name: string
+        }
+        Update: {
+          after_data?: Json | null
+          before_data?: Json | null
+          changed_at?: string
+          changed_by?: string | null
+          company_id?: string
+          derived_note?: string | null
+          id?: string
+          operation?: string
+          record_id?: string | null
+          table_name?: string
+        }
+        Relationships: []
+      }
+      audit_log_2027_06: {
+        Row: {
+          after_data: Json | null
+          before_data: Json | null
+          changed_at: string
+          changed_by: string | null
+          company_id: string
+          derived_note: string | null
+          id: string
+          operation: string
+          record_id: string | null
+          table_name: string
+        }
+        Insert: {
+          after_data?: Json | null
+          before_data?: Json | null
+          changed_at?: string
+          changed_by?: string | null
+          company_id: string
+          derived_note?: string | null
+          id?: string
+          operation: string
+          record_id?: string | null
+          table_name: string
+        }
+        Update: {
+          after_data?: Json | null
+          before_data?: Json | null
+          changed_at?: string
+          changed_by?: string | null
+          company_id?: string
+          derived_note?: string | null
+          id?: string
+          operation?: string
+          record_id?: string | null
+          table_name?: string
+        }
+        Relationships: []
+      }
+      audit_log_2027_07: {
+        Row: {
+          after_data: Json | null
+          before_data: Json | null
+          changed_at: string
+          changed_by: string | null
+          company_id: string
+          derived_note: string | null
+          id: string
+          operation: string
+          record_id: string | null
+          table_name: string
+        }
+        Insert: {
+          after_data?: Json | null
+          before_data?: Json | null
+          changed_at?: string
+          changed_by?: string | null
+          company_id: string
+          derived_note?: string | null
+          id?: string
+          operation: string
+          record_id?: string | null
+          table_name: string
+        }
+        Update: {
+          after_data?: Json | null
+          before_data?: Json | null
+          changed_at?: string
+          changed_by?: string | null
+          company_id?: string
+          derived_note?: string | null
+          id?: string
+          operation?: string
+          record_id?: string | null
+          table_name?: string
+        }
+        Relationships: []
+      }
       audit_log_default: {
         Row: {
           after_data: Json | null
