@@ -259,6 +259,76 @@ as $$
   );
 $$;
 
+-- Avoids a policy on company_members recursing into company_members' own RLS.
+create or replace function app_private.shares_company_with(p_user_id uuid)
+returns boolean
+language sql stable security definer set search_path = ''
+as $$
+  select exists (
+    select 1
+      from public.company_members mine
+      join public.company_members theirs on theirs.company_id = mine.company_id
+     where mine.user_id = auth.uid() and mine.status = 'active'
+       and theirs.user_id = p_user_id and theirs.status = 'active'
+  );
+$$;
+
+
+-- ----------------------------------------------------------------------------
+-- Row-level security
+-- ----------------------------------------------------------------------------
+alter table public.companies enable row level security;
+alter table public.profiles enable row level security;
+alter table public.company_members enable row level security;
+alter table public.company_invites enable row level security;
+
+-- Companies. No INSERT policy: creating one means you are not yet a member,
+-- so it goes through create_company(), which is security definer.
+create policy companies_read on public.companies
+  for select to authenticated
+  using ((select app_private.is_company_member(id)));
+
+create policy companies_update on public.companies
+  for update to authenticated
+  using ((select app_private.is_company_admin(id)))
+  with check ((select app_private.is_company_admin(id)));
+
+create policy companies_delete on public.companies
+  for delete to authenticated
+  using ((select app_private.is_company_admin(id)));
+
+-- Profiles: your own, plus anyone you share a company with, so member lists
+-- and audit trails can show names rather than UUIDs.
+create policy profiles_read on public.profiles
+  for select to authenticated
+  using (id = (select auth.uid()) or (select app_private.shares_company_with(id)));
+
+create policy profiles_update on public.profiles
+  for update to authenticated
+  using (id = (select auth.uid()))
+  with check (id = (select auth.uid()));
+
+create policy company_members_read on public.company_members
+  for select to authenticated
+  using ((select app_private.is_company_member(company_id)));
+
+create policy company_members_write on public.company_members
+  for all to authenticated
+  using ((select app_private.is_company_admin(company_id)))
+  with check ((select app_private.is_company_admin(company_id)));
+
+-- Invites are admin-only in both directions. A token is a bearer credential;
+-- redemption happens through a security-definer RPC that looks the token up
+-- server-side, never by letting a client read the invite table.
+create policy company_invites_read on public.company_invites
+  for select to authenticated
+  using ((select app_private.is_company_admin(company_id)));
+
+create policy company_invites_write on public.company_invites
+  for all to authenticated
+  using ((select app_private.is_company_admin(company_id)))
+  with check ((select app_private.is_company_admin(company_id)));
+
 
 -- ----------------------------------------------------------------------------
 -- Entity profile resolution
