@@ -8,10 +8,12 @@ export default async function NewVoucherPage({
   const { companyId } = await params;
   const supabase = await createClient();
 
-  const [{ data: ledgers }, { data: branches }] = await Promise.all([
+  const [{ data: ledgers }, { data: branches }, { data: tdsSections }] = await Promise.all([
     supabase
       .from("ledgers")
-      .select("id, name, account_groups(name)")
+      .select(
+        "id, name, account_groups(name), is_tds_deductee, default_tds_section, ldc_rate, ldc_valid_from, ldc_valid_to, ldc_amount_cap"
+      )
       .eq("company_id", companyId)
       .eq("is_active", true)
       .order("name"),
@@ -21,12 +23,23 @@ export default async function NewVoucherPage({
       .eq("company_id", companyId)
       .eq("is_active", true)
       .order("is_head_office", { ascending: false }),
+    supabase
+      .from("ref_tds_sections")
+      .select("section_code, description, rate_percent")
+      .eq("is_active", true)
+      .order("sort_order"),
   ]);
 
   const flatLedgers = (ledgers ?? []).map((l) => ({
     id: l.id,
     name: l.name,
     group_name: l.account_groups?.name ?? null,
+    is_tds_deductee: l.is_tds_deductee,
+    default_tds_section: l.default_tds_section,
+    ldc_rate: l.ldc_rate,
+    ldc_valid_from: l.ldc_valid_from,
+    ldc_valid_to: l.ldc_valid_to,
+    ldc_amount_cap: l.ldc_amount_cap,
   }));
 
   return (
@@ -53,6 +66,7 @@ export default async function NewVoucherPage({
           companyId={companyId}
           ledgers={flatLedgers}
           branches={branches ?? []}
+          tdsSections={tdsSections ?? []}
         />
       )}
     </main>

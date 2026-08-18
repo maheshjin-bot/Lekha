@@ -39,6 +39,7 @@ export default async function CompanyLayout({
     { href: `/${companyId}/reports/outstanding`, label: "Outstanding" },
     { href: `/${companyId}/reconciliation`, label: "Reconcile" },
     { href: `/${companyId}/year-end`, label: "Year-end" },
+    { href: `/${companyId}/settings`, label: "Settings" },
   ];
 
   return (

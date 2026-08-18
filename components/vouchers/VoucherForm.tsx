@@ -1,12 +1,23 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { Fragment, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
 import { formatINR, sumPaise, toPaise } from "@/lib/utils/currency";
 
-type Ledger = { id: string; name: string; group_name: string | null };
+type Ledger = {
+  id: string;
+  name: string;
+  group_name: string | null;
+  is_tds_deductee?: boolean;
+  default_tds_section?: string | null;
+  ldc_rate?: number | null;
+  ldc_valid_from?: string | null;
+  ldc_valid_to?: string | null;
+  ldc_amount_cap?: number | null;
+};
 type Branch = { id: string; code: string; name: string };
+type TdsSection = { section_code: string; description: string; rate_percent: number };
 
 const VOUCHER_TYPES = [
   { value: "receipt", label: "Receipt" },
@@ -19,7 +30,16 @@ const VOUCHER_TYPES = [
   { value: "debit_note", label: "Debit note" },
 ];
 
-type Line = { ledgerId: string; side: "dr" | "cr"; amount: string; narration: string };
+type Line = {
+  ledgerId: string;
+  side: "dr" | "cr";
+  amount: string;
+  narration: string;
+  // Set once a TDS split has been applied to this line, so the hint doesn't
+  // immediately re-trigger on the now-smaller net amount and offer to split
+  // an already-split line again.
+  tdsSplit?: boolean;
+};
 
 const emptyLine = (): Line => ({ ledgerId: "", side: "dr", amount: "", narration: "" });
 
@@ -47,15 +67,62 @@ function todayLocal(): string {
   return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
 }
 
+/**
+ * The TDS a voucher line would attract, if any — informational only. This
+ * never checks whether the deductee's annual threshold has been crossed
+ * (the app doesn't track running totals per deductee), so it always offers
+ * a split; whether to take it is the preparer's call, same as Tally and
+ * every other package that doesn't do full deductee-ledger aggregation.
+ *
+ * Mirrors app_private.round_rupee (0001): TDS rounds to the nearest whole
+ * rupee, not the nearest paisa.
+ */
+function tdsSuggestion(
+  ledger: Ledger | undefined,
+  amount: number,
+  tdsSections: TdsSection[],
+  today: string
+): { sectionCode: string; rate: number; usingLdc: boolean; tdsAmount: number; netAmount: number } | null {
+  if (!ledger?.is_tds_deductee || !ledger.default_tds_section || !(amount > 0)) return null;
+  const section = tdsSections.find((s) => s.section_code === ledger.default_tds_section);
+  if (!section) return null;
+
+  // A valid, in-window, in-cap LDC overrides the section rate for the whole
+  // line amount — the simplification this app makes rather than splitting
+  // an amount that crosses the cap into two differently-taxed portions.
+  let rate = section.rate_percent;
+  let usingLdc = false;
+  if (ledger.ldc_rate != null && ledger.ldc_valid_from && ledger.ldc_valid_to) {
+    const inWindow = today >= ledger.ldc_valid_from && today <= ledger.ldc_valid_to;
+    const inCap = ledger.ldc_amount_cap == null || amount <= ledger.ldc_amount_cap;
+    if (inWindow && inCap) {
+      rate = ledger.ldc_rate;
+      usingLdc = true;
+    }
+  }
+
+  const tdsAmount = Math.round(amount * rate) / 100;
+  if (tdsAmount <= 0) return null;
+  return {
+    sectionCode: ledger.default_tds_section,
+    rate,
+    usingLdc,
+    tdsAmount,
+    netAmount: amount - tdsAmount,
+  };
+}
+
 export function VoucherForm({
   companyId,
   ledgers,
   branches,
+  tdsSections = [],
   existing,
 }: {
   companyId: string;
   ledgers: Ledger[];
   branches: Branch[];
+  tdsSections?: TdsSection[];
   existing?: ExistingVoucher;
 }) {
   const router = useRouter();
@@ -84,7 +151,16 @@ export function VoucherForm({
   }, [lines]);
 
   function update(i: number, patch: Partial<Line>) {
-    setLines((prev) => prev.map((l, idx) => (idx === i ? { ...l, ...patch } : l)));
+    setLines((prev) =>
+      prev.map((l, idx) => {
+        if (idx !== i) return l;
+        // Picking a different ledger (or re-entering an amount) means any
+        // prior split no longer describes this line — let the hint
+        // re-evaluate against whatever is here now.
+        const clearsSplit = "ledgerId" in patch || "amount" in patch;
+        return { ...l, ...patch, ...(clearsSplit ? { tdsSplit: false } : {}) };
+      })
+    );
   }
 
   function addLine() {
@@ -93,6 +169,28 @@ export function VoucherForm({
 
   function removeLine(i: number) {
     setLines((prev) => (prev.length <= 2 ? prev : prev.filter((_, idx) => idx !== i)));
+  }
+
+  // Shrinks the deductee's line to the net amount and inserts a new TDS-payable
+  // line right after it, on the same side (crediting the deductee less means
+  // crediting something else more). The ledger for that new line is left for
+  // the preparer to pick — this app doesn't auto-select a "TDS Payable"
+  // ledger the way GST auto-posts through tax_ledger_map, since which ledger
+  // that should be varies far more than it does for a fixed GST rate account.
+  function splitLineForTds(i: number, suggestion: NonNullable<ReturnType<typeof tdsSuggestion>>) {
+    setLines((prev) => {
+      const line = prev[i];
+      const tdsLine: Line = {
+        ledgerId: "",
+        side: line.side,
+        amount: String(suggestion.tdsAmount),
+        narration: `TDS ${suggestion.sectionCode}${suggestion.usingLdc ? " (LDC rate)" : ""}`,
+      };
+      const next = [...prev];
+      next[i] = { ...line, amount: String(suggestion.netAmount), tdsSplit: true };
+      next.splice(i + 1, 0, tdsLine);
+      return next;
+    });
   }
 
   // Enter adds a row from the last one, which is what makes rapid entry
@@ -239,62 +337,100 @@ export function VoucherForm({
             </tr>
           </thead>
           <tbody>
-            {lines.map((line, i) => (
-              <tr key={i} className="border-b border-zinc-100 last:border-0 dark:border-zinc-800/60">
-                <td className="px-3 py-2">
-                  <select
-                    value={line.ledgerId}
-                    onChange={(e) => update(i, { ledgerId: e.target.value })}
-                    className="w-full rounded border border-transparent bg-transparent px-2 py-1.5 outline-none focus-visible:border-zinc-300 focus-visible:ring-2 focus-visible:ring-emerald-600 dark:focus-visible:border-zinc-700"
-                  >
-                    <option value="">Select a ledger…</option>
-                    {ledgers.map((l) => (
-                      <option key={l.id} value={l.id}>
-                        {l.name}
-                      </option>
-                    ))}
-                  </select>
-                </td>
-                <td className="px-3 py-2">
-                  <select
-                    value={line.side}
-                    onChange={(e) => update(i, { side: e.target.value as "dr" | "cr" })}
-                    className="w-full rounded border border-transparent bg-transparent px-2 py-1.5 font-medium outline-none focus-visible:border-zinc-300 focus-visible:ring-2 focus-visible:ring-emerald-600 dark:focus-visible:border-zinc-700"
-                  >
-                    <option value="dr">Dr</option>
-                    <option value="cr">Cr</option>
-                  </select>
-                </td>
-                <td className="px-3 py-2">
-                  <input
-                    inputMode="decimal"
-                    value={line.amount}
-                    onChange={(e) => update(i, { amount: e.target.value })}
-                    onKeyDown={(e) => onAmountKeyDown(e, i)}
-                    className="w-full rounded border border-transparent bg-transparent px-2 py-1.5 text-right tabular-nums outline-none focus-visible:border-zinc-300 focus-visible:ring-2 focus-visible:ring-emerald-600 dark:focus-visible:border-zinc-700"
-                  />
-                </td>
-                <td className="px-3 py-2">
-                  <input
-                    value={line.narration}
-                    onChange={(e) => update(i, { narration: e.target.value })}
-                    className="w-full rounded border border-transparent bg-transparent px-2 py-1.5 outline-none focus-visible:border-zinc-300 focus-visible:ring-2 focus-visible:ring-emerald-600 dark:focus-visible:border-zinc-700"
-                  />
-                </td>
-                <td className="px-2 py-2 text-center">
-                  {lines.length > 2 && (
-                    <button
-                      type="button"
-                      onClick={() => removeLine(i)}
-                      aria-label={`Remove line ${i + 1}`}
-                      className="rounded px-1.5 py-0.5 text-zinc-400 transition hover:bg-zinc-100 hover:text-zinc-700 dark:hover:bg-zinc-800"
-                    >
-                      ×
-                    </button>
+            {lines.map((line, i) => {
+              // Only the crediting side: booking a liability to a deductee —
+              // a journal or purchase voucher crediting them — is the point
+              // TDS is deducted, not a later payment clearing that liability.
+              // Skipped once already split, so the hint doesn't immediately
+              // reappear on the shrunk remainder and offer to split again.
+              const suggestion =
+                line.side === "cr" && !line.tdsSplit
+                  ? tdsSuggestion(
+                      ledgers.find((l) => l.id === line.ledgerId),
+                      Number(line.amount),
+                      tdsSections,
+                      date
+                    )
+                  : null;
+
+              return (
+                <Fragment key={i}>
+                  <tr className="border-b border-zinc-100 dark:border-zinc-800/60">
+                    <td className="px-3 py-2">
+                      <select
+                        value={line.ledgerId}
+                        onChange={(e) => update(i, { ledgerId: e.target.value })}
+                        className="w-full rounded border border-transparent bg-transparent px-2 py-1.5 outline-none focus-visible:border-zinc-300 focus-visible:ring-2 focus-visible:ring-emerald-600 dark:focus-visible:border-zinc-700"
+                      >
+                        <option value="">Select a ledger…</option>
+                        {ledgers.map((l) => (
+                          <option key={l.id} value={l.id}>
+                            {l.name}
+                          </option>
+                        ))}
+                      </select>
+                    </td>
+                    <td className="px-3 py-2">
+                      <select
+                        value={line.side}
+                        onChange={(e) => update(i, { side: e.target.value as "dr" | "cr" })}
+                        className="w-full rounded border border-transparent bg-transparent px-2 py-1.5 font-medium outline-none focus-visible:border-zinc-300 focus-visible:ring-2 focus-visible:ring-emerald-600 dark:focus-visible:border-zinc-700"
+                      >
+                        <option value="dr">Dr</option>
+                        <option value="cr">Cr</option>
+                      </select>
+                    </td>
+                    <td className="px-3 py-2">
+                      <input
+                        inputMode="decimal"
+                        value={line.amount}
+                        onChange={(e) => update(i, { amount: e.target.value })}
+                        onKeyDown={(e) => onAmountKeyDown(e, i)}
+                        className="w-full rounded border border-transparent bg-transparent px-2 py-1.5 text-right tabular-nums outline-none focus-visible:border-zinc-300 focus-visible:ring-2 focus-visible:ring-emerald-600 dark:focus-visible:border-zinc-700"
+                      />
+                    </td>
+                    <td className="px-3 py-2">
+                      <input
+                        value={line.narration}
+                        onChange={(e) => update(i, { narration: e.target.value })}
+                        className="w-full rounded border border-transparent bg-transparent px-2 py-1.5 outline-none focus-visible:border-zinc-300 focus-visible:ring-2 focus-visible:ring-emerald-600 dark:focus-visible:border-zinc-700"
+                      />
+                    </td>
+                    <td className="px-2 py-2 text-center">
+                      {lines.length > 2 && (
+                        <button
+                          type="button"
+                          onClick={() => removeLine(i)}
+                          aria-label={`Remove line ${i + 1}`}
+                          className="rounded px-1.5 py-0.5 text-zinc-400 transition hover:bg-zinc-100 hover:text-zinc-700 dark:hover:bg-zinc-800"
+                        >
+                          ×
+                        </button>
+                      )}
+                    </td>
+                  </tr>
+                  {suggestion && (
+                    <tr className="border-b border-zinc-100 bg-amber-50/60 dark:border-zinc-800/60 dark:bg-amber-950/20">
+                      <td colSpan={5} className="px-3 py-1.5 text-xs text-amber-900 dark:text-amber-200">
+                        Sec {suggestion.sectionCode}
+                        {suggestion.usingLdc ? " (LDC rate)" : ""} at {suggestion.rate}% →
+                        TDS {formatINR(suggestion.tdsAmount)}, net{" "}
+                        {formatINR(suggestion.netAmount)}. Doesn&rsquo;t check whether
+                        this deductee&rsquo;s threshold has been crossed — that&rsquo;s
+                        yours to confirm.{" "}
+                        <button
+                          type="button"
+                          onClick={() => splitLineForTds(i, suggestion)}
+                          className="ml-1 underline underline-offset-2 hover:text-amber-950 dark:hover:text-amber-100"
+                        >
+                          Split line
+                        </button>
+                      </td>
+                    </tr>
                   )}
-                </td>
-              </tr>
-            ))}
+                </Fragment>
+              );
+            })}
           </tbody>
           <tfoot>
             <tr className="border-t border-zinc-200 bg-zinc-50 text-sm font-medium dark:border-zinc-800 dark:bg-zinc-800/50">
