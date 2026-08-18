@@ -1349,6 +1349,13 @@ export type Database = {
             referencedColumns: ["id"]
           },
           {
+            foreignKeyName: "ledgers_default_tds_section_fkey"
+            columns: ["default_tds_section"]
+            isOneToOne: false
+            referencedRelation: "ref_tds_sections"
+            referencedColumns: ["section_code"]
+          },
+          {
             foreignKeyName: "ledgers_group_id_company_id_fkey"
             columns: ["group_id", "company_id"]
             isOneToOne: false
@@ -1532,6 +1539,42 @@ export type Database = {
           jurisdiction?: string
           name?: string
           obsolete_note?: string | null
+        }
+        Relationships: []
+      }
+      ref_tds_sections: {
+        Row: {
+          description: string
+          is_active: boolean
+          no_pan_rate_percent: number
+          rate_percent: number
+          section_code: string
+          sort_order: number
+          threshold_aggregate_rupees: number | null
+          threshold_note: string | null
+          threshold_single_rupees: number | null
+        }
+        Insert: {
+          description: string
+          is_active?: boolean
+          no_pan_rate_percent: number
+          rate_percent: number
+          section_code: string
+          sort_order: number
+          threshold_aggregate_rupees?: number | null
+          threshold_note?: string | null
+          threshold_single_rupees?: number | null
+        }
+        Update: {
+          description?: string
+          is_active?: boolean
+          no_pan_rate_percent?: number
+          rate_percent?: number
+          section_code?: string
+          sort_order?: number
+          threshold_aggregate_rupees?: number | null
+          threshold_note?: string | null
+          threshold_single_rupees?: number | null
         }
         Relationships: []
       }
