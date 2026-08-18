@@ -1,13 +1,3 @@
-// GENERATED FILE — do not edit by hand.
-//
-// Regenerate after every migration:
-//   supabase gen types typescript --project-id msgzicwfdoxaswgmevyg > types/database.types.ts
-//
-// This was hand-maintained for a while and drifted three times: missing the
-// voucher tables entirely, missing the report functions, and carrying empty
-// Relationships so embedded selects like ledgers(name) could not resolve.
-// Each drift surfaced as a confusing type error far from its cause.
-
 export type Json =
   | string
   | number
@@ -1638,6 +1628,10 @@ export type Database = {
         Args: { p_company_id: string; p_ledger_id: string }
         Returns: number
       }
+      close_period: {
+        Args: { p_company_id: string; p_lock_date: string }
+        Returns: undefined
+      }
       create_company: {
         Args: {
           p_book_beginning_date: string
@@ -1889,6 +1883,10 @@ export type Database = {
       }
       match_bank_line: {
         Args: { p_statement_line_id: string; p_voucher_entry_id: string }
+        Returns: undefined
+      }
+      reopen_period: {
+        Args: { p_company_id: string; p_new_lock_date?: string }
         Returns: undefined
       }
       resolve_statutory_rule: {
