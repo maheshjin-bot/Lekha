@@ -37,6 +37,7 @@ export default async function CompanyLayout({
     { href: `/${companyId}/reports/balance-sheet`, label: "Balance sheet" },
     { href: `/${companyId}/reports/stock`, label: "Stock" },
     { href: `/${companyId}/reports/outstanding`, label: "Outstanding" },
+    { href: `/${companyId}/reports/msme`, label: "MSME dues" },
     { href: `/${companyId}/reconciliation`, label: "Reconcile" },
     { href: `/${companyId}/year-end`, label: "Year-end" },
     { href: `/${companyId}/settings`, label: "Settings" },

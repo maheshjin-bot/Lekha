@@ -14,6 +14,9 @@ type Ledger = {
   is_active: boolean;
   is_tds_deductee: boolean;
   default_tds_section: string | null;
+  udyam_number: string | null;
+  msme_category: string | null;
+  msme_payment_days: number | null;
 };
 
 type Group = {
@@ -26,18 +29,23 @@ type Group = {
 
 type TdsSection = { section_code: string; description: string; rate_percent: number };
 
+// Mirrors app_private.is_valid_udyam exactly.
+const UDYAM_PATTERN = /^UDYAM-[A-Z]{2}-[0-9]{2}-[0-9]{7}$/;
+
 export function LedgerManager({
   companyId,
   initialLedgers,
   groups,
   tdsSections,
   tdsOn,
+  msmeOn,
 }: {
   companyId: string;
   initialLedgers: Ledger[];
   groups: Group[];
   tdsSections: TdsSection[];
   tdsOn: boolean;
+  msmeOn: boolean;
 }) {
   const router = useRouter();
   const [name, setName] = useState("");
@@ -50,12 +58,17 @@ export function LedgerManager({
   const [openingType, setOpeningType] = useState<"debit" | "credit">("debit");
   const [isTdsDeductee, setIsTdsDeductee] = useState(false);
   const [tdsSection, setTdsSection] = useState("");
+  const [isMsme, setIsMsme] = useState(false);
+  const [udyam, setUdyam] = useState("");
+  const [msmeCategory, setMsmeCategory] = useState("");
+  const [msmePaymentDays, setMsmePaymentDays] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   const groupName = (id: string) => groups.find((g) => g.id === id)?.name ?? "—";
   const sectionRate = (code: string | null) =>
     tdsSections.find((s) => s.section_code === code)?.rate_percent;
+  const udyamLooksValid = udyam.length === 0 || UDYAM_PATTERN.test(udyam);
 
   async function onSubmit(e: React.FormEvent) {
     e.preventDefault();
@@ -70,6 +83,9 @@ export function LedgerManager({
       opening_balance_type: openingType,
       is_tds_deductee: isTdsDeductee,
       default_tds_section: isTdsDeductee ? tdsSection || null : null,
+      udyam_number: isMsme ? udyam.trim() || null : null,
+      msme_category: isMsme ? msmeCategory || null : null,
+      msme_payment_days: isMsme && msmePaymentDays ? Number(msmePaymentDays) : null,
     });
 
     if (error) {
@@ -82,6 +98,10 @@ export function LedgerManager({
     setOpening("0");
     setIsTdsDeductee(false);
     setTdsSection("");
+    setIsMsme(false);
+    setUdyam("");
+    setMsmeCategory("");
+    setMsmePaymentDays("");
     setBusy(false);
     router.refresh();
   }
@@ -99,13 +119,17 @@ export function LedgerManager({
                 <th className="px-4 py-2.5 font-medium">Ledger</th>
                 <th className="px-4 py-2.5 font-medium">Group</th>
                 {tdsOn && <th className="px-4 py-2.5 font-medium">TDS</th>}
+                {msmeOn && <th className="px-4 py-2.5 font-medium">MSME</th>}
                 <th className="px-4 py-2.5 text-right font-medium">Opening</th>
               </tr>
             </thead>
             <tbody>
               {initialLedgers.length === 0 && (
                 <tr>
-                  <td colSpan={tdsOn ? 4 : 3} className="px-4 py-10 text-center text-zinc-500">
+                  <td
+                    colSpan={3 + (tdsOn ? 1 : 0) + (msmeOn ? 1 : 0)}
+                    className="px-4 py-10 text-center text-zinc-500"
+                  >
                     No ledgers yet. Create one on the right.
                   </td>
                 </tr>
@@ -129,6 +153,20 @@ export function LedgerManager({
                               {sectionRate(l.default_tds_section)}%
                             </span>
                           )}
+                        </span>
+                      ) : (
+                        <span className="text-zinc-400">—</span>
+                      )}
+                    </td>
+                  )}
+                  {msmeOn && (
+                    <td className="px-4 py-2.5 text-zinc-600 dark:text-zinc-400">
+                      {l.udyam_number ? (
+                        <span className="text-xs capitalize">
+                          {l.msme_category ?? "MSME"}
+                          <span className="ml-1 text-zinc-400">
+                            {l.msme_payment_days ?? 15}d
+                          </span>
                         </span>
                       ) : (
                         <span className="text-zinc-400">—</span>
@@ -244,6 +282,75 @@ export function LedgerManager({
                   uncommon case — left to a future edit surface rather than
                   crowding the create form; ledgers.ldc_* columns already
                   support it, this form just doesn't set them yet. */}
+            </div>
+          )}
+
+          {msmeOn && (
+            <div className="rounded-md border border-zinc-200 p-3 dark:border-zinc-800">
+              <label className="flex items-center gap-2 text-sm font-medium">
+                <input
+                  type="checkbox"
+                  checked={isMsme}
+                  onChange={(e) => {
+                    setIsMsme(e.target.checked);
+                    if (!e.target.checked) {
+                      setUdyam("");
+                      setMsmeCategory("");
+                      setMsmePaymentDays("");
+                    }
+                  }}
+                />
+                MSME supplier (Sec 43B(h))
+              </label>
+              {isMsme && (
+                <div className="mt-2 flex flex-col gap-2">
+                  <label className="flex flex-col gap-1.5">
+                    <span className="text-xs text-zinc-500">Udyam number</span>
+                    <input
+                      value={udyam}
+                      onChange={(e) => setUdyam(e.target.value.toUpperCase())}
+                      placeholder="UDYAM-XX-00-0000000"
+                      className={field + " font-mono uppercase"}
+                    />
+                    {udyam.length > 0 && !udyamLooksValid && (
+                      <span className="text-xs text-amber-800 dark:text-amber-300">
+                        That doesn&rsquo;t match the Udyam number format.
+                      </span>
+                    )}
+                  </label>
+                  <div className="grid grid-cols-2 gap-2">
+                    <label className="flex flex-col gap-1.5">
+                      <span className="text-xs text-zinc-500">Category</span>
+                      <select
+                        value={msmeCategory}
+                        onChange={(e) => setMsmeCategory(e.target.value)}
+                        className={field}
+                      >
+                        <option value="">Not set</option>
+                        <option value="micro">Micro</option>
+                        <option value="small">Small</option>
+                        <option value="medium">Medium</option>
+                      </select>
+                    </label>
+                    <label className="flex flex-col gap-1.5">
+                      <span className="text-xs text-zinc-500">
+                        Payment deadline (days)
+                      </span>
+                      <input
+                        inputMode="numeric"
+                        value={msmePaymentDays}
+                        onChange={(e) => setMsmePaymentDays(e.target.value)}
+                        placeholder="15"
+                        className={field}
+                      />
+                    </label>
+                  </div>
+                  <span className="text-xs text-zinc-500">
+                    45 days only applies with a written agreement — leave this
+                    blank to use the safer 15-day default.
+                  </span>
+                </div>
+              )}
             </div>
           )}
 

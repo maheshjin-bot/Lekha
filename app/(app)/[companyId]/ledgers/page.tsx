@@ -12,7 +12,7 @@ export default async function LedgersPage({
       supabase
         .from("ledgers")
         .select(
-          "id, name, group_id, opening_balance_amount, opening_balance_type, is_active, is_tds_deductee, default_tds_section"
+          "id, name, group_id, opening_balance_amount, opening_balance_type, is_active, is_tds_deductee, default_tds_section, udyam_number, msme_category, msme_payment_days"
         )
         .eq("company_id", companyId)
         .order("name"),
@@ -30,6 +30,7 @@ export default async function LedgersPage({
     ]);
 
   const tdsOn = (modules ?? []).some((m) => m.code === "tds" && m.active);
+  const msmeOn = (modules ?? []).some((m) => m.code === "msme" && m.active);
 
   return (
     <main className="mx-auto max-w-5xl px-6 py-10">
@@ -44,6 +45,7 @@ export default async function LedgersPage({
         groups={groups ?? []}
         tdsSections={tdsSections ?? []}
         tdsOn={tdsOn}
+        msmeOn={msmeOn}
       />
     </main>
   );

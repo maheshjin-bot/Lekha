@@ -9,7 +9,7 @@ export default async function SettingsPage({
 
   const { data: company } = await supabase
     .from("companies")
-    .select("id, name, pan, tan")
+    .select("id, name, pan, tan, udyam_number, udyam_category")
     .eq("id", companyId)
     .maybeSingle();
 
@@ -25,6 +25,8 @@ export default async function SettingsPage({
         companyId={companyId}
         pan={company?.pan ?? null}
         tan={company?.tan ?? null}
+        udyamNumber={company?.udyam_number ?? null}
+        udyamCategory={company?.udyam_category ?? null}
       />
     </main>
   );
