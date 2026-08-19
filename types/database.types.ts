@@ -804,6 +804,7 @@ export type Database = {
           base_currency: string
           book_beginning_date: string
           cin: string | null
+          company_tax_regime: string
           compliance_mode: string
           created_at: string
           created_by: string | null
@@ -827,6 +828,7 @@ export type Database = {
           base_currency?: string
           book_beginning_date: string
           cin?: string | null
+          company_tax_regime?: string
           compliance_mode?: string
           created_at?: string
           created_by?: string | null
@@ -850,6 +852,7 @@ export type Database = {
           base_currency?: string
           book_beginning_date?: string
           cin?: string | null
+          company_tax_regime?: string
           compliance_mode?: string
           created_at?: string
           created_by?: string | null
@@ -1628,6 +1631,27 @@ export type Database = {
         }
         Relationships: []
       }
+      ref_income_tax_slabs: {
+        Row: {
+          from_rupees: number
+          rate_percent: number
+          sort_order: number
+          to_rupees: number
+        }
+        Insert: {
+          from_rupees: number
+          rate_percent: number
+          sort_order: number
+          to_rupees: number
+        }
+        Update: {
+          from_rupees?: number
+          rate_percent?: number
+          sort_order?: number
+          to_rupees?: number
+        }
+        Relationships: []
+      }
       ref_modules: {
         Row: {
           activates_when: Json | null
@@ -2399,6 +2423,26 @@ export type Database = {
           net_book_value: number
           put_to_use_date: string
           residual_value_percent: number
+        }[]
+      }
+      get_income_tax_computation: {
+        Args: { p_company_id: string; p_fy_end: string; p_fy_start: string }
+        Returns: {
+          applicable: boolean
+          book_depreciation_addback: number
+          book_profit: number
+          cess: number
+          entity_type: string
+          msme_disallowance_addback: number
+          note: string
+          rebate_87a: number
+          regime_used: string
+          surcharge: number
+          tax_after_rebate: number
+          tax_before_rebate: number
+          tax_depreciation_deduction: number
+          taxable_income: number
+          total_tax: number
         }[]
       }
       get_ledger_statement: {
