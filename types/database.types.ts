@@ -808,6 +808,8 @@ export type Database = {
           compliance_mode: string
           created_at: string
           created_by: string | null
+          debtor_eligibility_days: number
+          debtor_margin_percent: number
           entity_type: string
           financial_year_start_month: number
           id: string
@@ -820,6 +822,7 @@ export type Database = {
           lock_date: string | null
           name: string
           pan: string | null
+          stock_margin_percent: number
           tan: string | null
           udyam_category: string | null
           udyam_number: string | null
@@ -833,6 +836,8 @@ export type Database = {
           compliance_mode?: string
           created_at?: string
           created_by?: string | null
+          debtor_eligibility_days?: number
+          debtor_margin_percent?: number
           entity_type: string
           financial_year_start_month?: number
           id?: string
@@ -845,6 +850,7 @@ export type Database = {
           lock_date?: string | null
           name: string
           pan?: string | null
+          stock_margin_percent?: number
           tan?: string | null
           udyam_category?: string | null
           udyam_number?: string | null
@@ -858,6 +864,8 @@ export type Database = {
           compliance_mode?: string
           created_at?: string
           created_by?: string | null
+          debtor_eligibility_days?: number
+          debtor_margin_percent?: number
           entity_type?: string
           financial_year_start_month?: number
           id?: string
@@ -870,6 +878,7 @@ export type Database = {
           lock_date?: string | null
           name?: string
           pan?: string | null
+          stock_margin_percent?: number
           tan?: string | null
           udyam_category?: string | null
           udyam_number?: string | null
@@ -2432,6 +2441,23 @@ export type Database = {
           voucher_id: string
           voucher_number: string
           voucher_type: string
+        }[]
+      }
+      get_drawing_power: {
+        Args: { p_as_at?: string; p_company_id: string }
+        Returns: {
+          closing_stock_value: number
+          debtor_eligibility_days: number
+          debtor_margin_percent: number
+          dp_from_debtors: number
+          dp_from_stock: number
+          eligible_debtors: number
+          ineligible_debtors: number
+          paid_stock: number
+          stock_margin_percent: number
+          sundry_creditors: number
+          total_debtors: number
+          total_drawing_power: number
         }[]
       }
       get_fixed_asset_register: {

@@ -29,6 +29,9 @@ export function CompanySettingsForm({
   udyamCategory,
   companyTaxRegime,
   isProfessional,
+  stockMarginPercent,
+  debtorMarginPercent,
+  debtorEligibilityDays,
 }: {
   companyId: string;
   entityType: string;
@@ -38,6 +41,9 @@ export function CompanySettingsForm({
   udyamCategory: string | null;
   companyTaxRegime: string;
   isProfessional: boolean;
+  stockMarginPercent: number;
+  debtorMarginPercent: number;
+  debtorEligibilityDays: number;
 }) {
   const router = useRouter();
   const [tanInput, setTanInput] = useState(tan ?? "");
@@ -60,6 +66,13 @@ export function CompanySettingsForm({
   const [professionalBusy, setProfessionalBusy] = useState(false);
   const [professionalError, setProfessionalError] = useState<string | null>(null);
   const [professionalSaved, setProfessionalSaved] = useState(false);
+
+  const [stockMarginInput, setStockMarginInput] = useState(String(stockMarginPercent));
+  const [debtorMarginInput, setDebtorMarginInput] = useState(String(debtorMarginPercent));
+  const [debtorEligibilityInput, setDebtorEligibilityInput] = useState(String(debtorEligibilityDays));
+  const [drawingPowerBusy, setDrawingPowerBusy] = useState(false);
+  const [drawingPowerError, setDrawingPowerError] = useState<string | null>(null);
+  const [drawingPowerSaved, setDrawingPowerSaved] = useState(false);
 
   // Structural pre-check only — app_private.is_valid_tan on the companies.tan
   // check constraint is the real gate; this just catches an obvious typo
@@ -148,6 +161,30 @@ export function CompanySettingsForm({
       return;
     }
     setProfessionalSaved(true);
+    router.refresh();
+  }
+
+  async function onDrawingPowerSubmit(e: React.FormEvent) {
+    e.preventDefault();
+    setDrawingPowerBusy(true);
+    setDrawingPowerError(null);
+    setDrawingPowerSaved(false);
+
+    const { error } = await createClient()
+      .from("companies")
+      .update({
+        stock_margin_percent: Number(stockMarginInput),
+        debtor_margin_percent: Number(debtorMarginInput),
+        debtor_eligibility_days: Number(debtorEligibilityInput),
+      })
+      .eq("id", companyId);
+
+    setDrawingPowerBusy(false);
+    if (error) {
+      setDrawingPowerError(error.message);
+      return;
+    }
+    setDrawingPowerSaved(true);
     router.refresh();
   }
 
@@ -369,6 +406,81 @@ export function CompanySettingsForm({
           </form>
         </section>
       )}
+
+      <section className="rounded-lg border border-border bg-surface p-5">
+        <h2 className="font-semibold">Bank facility (stock statement)</h2>
+        <p className="mt-1 text-sm text-ink-soft">
+          Feeds the Stock statement report&rsquo;s drawing power calculation.
+          Defaults to typical figures — confirm both margins and the debtor
+          eligibility window against your own CC/OD sanction letter, since
+          LEKHA cannot know what your bank actually agreed to.
+        </p>
+        <form onSubmit={onDrawingPowerSubmit} className="mt-4 flex flex-col gap-3">
+          <div className="grid grid-cols-2 gap-3">
+            <label className="flex flex-col gap-1.5">
+              <span className="text-sm font-medium">Stock margin %</span>
+              <input
+                type="number"
+                min={0}
+                max={100}
+                step="0.01"
+                value={stockMarginInput}
+                onChange={(e) => setStockMarginInput(e.target.value)}
+                className={field}
+              />
+            </label>
+            <label className="flex flex-col gap-1.5">
+              <span className="text-sm font-medium">Debtor margin %</span>
+              <input
+                type="number"
+                min={0}
+                max={100}
+                step="0.01"
+                value={debtorMarginInput}
+                onChange={(e) => setDebtorMarginInput(e.target.value)}
+                className={field}
+              />
+            </label>
+          </div>
+
+          <label className="flex flex-col gap-1.5">
+            <span className="text-sm font-medium">
+              Debtor eligibility window{" "}
+              <span className="font-normal text-ink-faint">
+                debtors older than this are excluded from drawing power entirely
+              </span>
+            </span>
+            <select
+              value={debtorEligibilityInput}
+              onChange={(e) => setDebtorEligibilityInput(e.target.value)}
+              className={field}
+            >
+              <option value="30">30 days</option>
+              <option value="60">60 days</option>
+              <option value="90">90 days</option>
+            </select>
+          </label>
+
+          {drawingPowerError && (
+            <p className="rounded-md bg-error-soft px-3 py-2 text-sm text-error">
+              {drawingPowerError}
+            </p>
+          )}
+          {drawingPowerSaved && !drawingPowerError && (
+            <p className="rounded-md bg-success-soft px-3 py-2 text-sm text-success">
+              Saved.
+            </p>
+          )}
+
+          <button
+            type="submit"
+            disabled={drawingPowerBusy}
+            className="mt-1 self-start rounded-lg bg-accent px-4 py-2 text-sm font-semibold text-accent-ink transition-colors hover:opacity-90 disabled:opacity-50"
+          >
+            {drawingPowerBusy ? "Saving…" : "Save"}
+          </button>
+        </form>
+      </section>
     </div>
   );
 }

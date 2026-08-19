@@ -11,7 +11,7 @@ export default async function SettingsPage({
   const { data: company } = await supabase
     .from("companies")
     .select(
-      "id, name, pan, tan, udyam_number, udyam_category, entity_type, company_tax_regime, is_professional"
+      "id, name, pan, tan, udyam_number, udyam_category, entity_type, company_tax_regime, is_professional, stock_margin_percent, debtor_margin_percent, debtor_eligibility_days"
     )
     .eq("id", companyId)
     .maybeSingle();
@@ -33,6 +33,9 @@ export default async function SettingsPage({
         udyamCategory={company?.udyam_category ?? null}
         companyTaxRegime={company?.company_tax_regime ?? "default_30"}
         isProfessional={company?.is_professional ?? false}
+        stockMarginPercent={Number(company?.stock_margin_percent ?? 25)}
+        debtorMarginPercent={Number(company?.debtor_margin_percent ?? 40)}
+        debtorEligibilityDays={Number(company?.debtor_eligibility_days ?? 90)}
       />
 
       <Link
