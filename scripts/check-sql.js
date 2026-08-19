@@ -53,17 +53,24 @@ function collect(dir) {
 
     const name = path.relative(ROOT, file).split(path.sep).join('/');
 
-    // A fresh WASM instance per file. The parser accumulates internal state
-    // across calls and faults after a handful of them — reusing one instance
-    // produced an emscripten crash on the fourth file that vanished when that
-    // same file was parsed first. Instantiation is cheap enough at this scale.
+    // A fresh WASM instance per file — AND a fresh instance per call within
+    // that file. The parser accumulates internal state across calls and
+    // faults after a handful of them: reusing one instance across files
+    // produced an emscripten crash on the fourth file that vanished when
+    // that same file was parsed first, and reusing one instance for both
+    // parse() and parsePlpgsql() on a single large multi-function file
+    // (0025_fixed_assets.sql, 5 plpgsql bodies) produced a silent bad parse
+    // — plpgsql.error came back as `{}` with no message, on SQL confirmed
+    // valid by parsePlpgsql() alone on its own fresh instance. Instantiation
+    // is cheap enough at this scale to pay for two instances per file rather
+    // than debug WASM state corruption again.
     let pg;
     let parsed;
     let plpgsql;
     try {
       pg = await mod.default();
       parsed = pg.parse(sql);
-      plpgsql = parsed.error ? null : pg.parsePlpgsql(sql);
+      plpgsql = parsed.error ? null : (await mod.default()).parsePlpgsql(sql);
     } catch (err) {
       failed++;
       console.error(`FAIL  ${name}  — parser crashed`);
