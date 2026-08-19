@@ -2492,6 +2492,54 @@ export type Database = {
           value_type: string
         }[]
       }
+      get_gst_input_register: {
+        Args: {
+          p_company_id: string
+          p_gst_registration_id?: string
+          p_period_end: string
+          p_period_start: string
+        }
+        Returns: {
+          cess: number
+          cgst: number
+          igst: number
+          invoice_value: number
+          party_gstin: string
+          party_name: string
+          place_of_supply: string
+          sgst: number
+          supply_type: string
+          taxable_value: number
+          voucher_date: string
+          voucher_id: string
+          voucher_number: string
+          voucher_type: string
+        }[]
+      }
+      get_gst_output_register: {
+        Args: {
+          p_company_id: string
+          p_gst_registration_id?: string
+          p_period_end: string
+          p_period_start: string
+        }
+        Returns: {
+          cess: number
+          cgst: number
+          igst: number
+          invoice_value: number
+          party_gstin: string
+          party_name: string
+          place_of_supply: string
+          sgst: number
+          supply_type: string
+          taxable_value: number
+          voucher_date: string
+          voucher_id: string
+          voucher_number: string
+          voucher_type: string
+        }[]
+      }
       get_income_tax_computation: {
         Args: { p_company_id: string; p_fy_end: string; p_fy_start: string }
         Returns: {
