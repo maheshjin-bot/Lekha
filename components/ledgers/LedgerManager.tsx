@@ -18,6 +18,7 @@ type Ledger = {
   udyam_number: string | null;
   msme_category: string | null;
   msme_payment_days: number | null;
+  is_partner_remuneration: boolean;
 };
 
 type Group = {
@@ -42,6 +43,7 @@ export function LedgerManager({
   tdsSections,
   tdsOn,
   msmeOn,
+  partnerRemunerationOn,
 }: {
   companyId: string;
   initialLedgers: Ledger[];
@@ -49,6 +51,7 @@ export function LedgerManager({
   tdsSections: TdsSection[];
   tdsOn: boolean;
   msmeOn: boolean;
+  partnerRemunerationOn: boolean;
 }) {
   const router = useRouter();
   const [name, setName] = useState("");
@@ -66,6 +69,7 @@ export function LedgerManager({
   const [udyam, setUdyam] = useState("");
   const [msmeCategory, setMsmeCategory] = useState("");
   const [msmePaymentDays, setMsmePaymentDays] = useState("");
+  const [isPartnerRemuneration, setIsPartnerRemuneration] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -92,6 +96,7 @@ export function LedgerManager({
       udyam_number: isMsme ? udyam.trim() || null : null,
       msme_category: isMsme ? msmeCategory || null : null,
       msme_payment_days: isMsme && msmePaymentDays ? Number(msmePaymentDays) : null,
+      is_partner_remuneration: isPartnerRemuneration,
     });
 
     if (error) {
@@ -109,25 +114,27 @@ export function LedgerManager({
     setUdyam("");
     setMsmeCategory("");
     setMsmePaymentDays("");
+    setIsPartnerRemuneration(false);
     setBusy(false);
     router.refresh();
   }
 
   const field =
-    "rounded-md border border-zinc-300 bg-white px-3 py-2 text-sm outline-none focus-visible:ring-2 focus-visible:ring-emerald-600 dark:border-zinc-700 dark:bg-zinc-900";
+    "rounded-lg border border-border-strong bg-surface px-3 py-2 text-sm text-ink outline-none focus-visible:border-accent focus-visible:ring-2 focus-visible:ring-accent/30";
 
   return (
     <div className="mt-8 grid gap-8 lg:grid-cols-[1fr_320px]">
       <section className="min-w-0">
-        <div className="overflow-x-auto rounded-lg border border-zinc-200 bg-white dark:border-zinc-800 dark:bg-zinc-900">
+        <div className="overflow-x-auto rounded-lg border border-border bg-surface">
           <table className="w-full min-w-[520px] text-sm">
             <thead>
-              <tr className="border-b border-zinc-200 text-left text-[11px] uppercase tracking-wide text-zinc-500 dark:border-zinc-800">
+              <tr className="border-b border-border text-left text-[11px] uppercase tracking-wide text-ink-faint">
                 <th className="px-4 py-2.5 font-medium">Ledger</th>
                 <th className="px-4 py-2.5 font-medium">Group</th>
                 <th className="px-4 py-2.5 font-medium">PAN</th>
                 {tdsOn && <th className="px-4 py-2.5 font-medium">TDS</th>}
                 {msmeOn && <th className="px-4 py-2.5 font-medium">MSME</th>}
+                {partnerRemunerationOn && <th className="px-4 py-2.5 font-medium">Sec 40(b)</th>}
                 <th className="px-4 py-2.5 text-right font-medium">Opening</th>
               </tr>
             </thead>
@@ -135,8 +142,8 @@ export function LedgerManager({
               {initialLedgers.length === 0 && (
                 <tr>
                   <td
-                    colSpan={4 + (tdsOn ? 1 : 0) + (msmeOn ? 1 : 0)}
-                    className="px-4 py-10 text-center text-zinc-500"
+                    colSpan={4 + (tdsOn ? 1 : 0) + (msmeOn ? 1 : 0) + (partnerRemunerationOn ? 1 : 0)}
+                    className="px-4 py-10 text-center text-ink-faint"
                   >
                     No ledgers yet. Create one on the right.
                   </td>
@@ -145,55 +152,64 @@ export function LedgerManager({
               {initialLedgers.map((l) => (
                 <tr
                   key={l.id}
-                  className="border-b border-zinc-100 last:border-0 dark:border-zinc-800/60"
+                  className="border-b border-border last:border-0"
                 >
                   <td className="px-4 py-2.5 font-medium">{l.name}</td>
-                  <td className="px-4 py-2.5 text-zinc-600 dark:text-zinc-400">
+                  <td className="px-4 py-2.5 text-ink-soft">
                     {groupName(l.group_id)}
                   </td>
-                  <td className="px-4 py-2.5 font-mono text-xs text-zinc-600 dark:text-zinc-400">
-                    {l.pan ?? <span className="text-zinc-400">—</span>}
+                  <td className="px-4 py-2.5 font-mono text-xs text-ink-soft">
+                    {l.pan ?? <span className="text-ink-faint">—</span>}
                   </td>
                   {tdsOn && (
-                    <td className="px-4 py-2.5 text-zinc-600 dark:text-zinc-400">
+                    <td className="px-4 py-2.5 text-ink-soft">
                       {l.is_tds_deductee ? (
                         <span className="font-mono text-xs">
                           {l.default_tds_section ?? "—"}
                           {sectionRate(l.default_tds_section) != null && (
-                            <span className="ml-1 text-zinc-400">
+                            <span className="ml-1 text-ink-faint">
                               {sectionRate(l.default_tds_section)}%
                             </span>
                           )}
                         </span>
                       ) : (
-                        <span className="text-zinc-400">—</span>
+                        <span className="text-ink-faint">—</span>
                       )}
                     </td>
                   )}
                   {msmeOn && (
-                    <td className="px-4 py-2.5 text-zinc-600 dark:text-zinc-400">
+                    <td className="px-4 py-2.5 text-ink-soft">
                       {l.udyam_number ? (
                         <span className="text-xs capitalize">
                           {l.msme_category ?? "MSME"}
-                          <span className="ml-1 text-zinc-400">
+                          <span className="ml-1 text-ink-faint">
                             {l.msme_payment_days ?? 15}d
                           </span>
                         </span>
                       ) : (
-                        <span className="text-zinc-400">—</span>
+                        <span className="text-ink-faint">—</span>
                       )}
                     </td>
                   )}
-                  <td className="px-4 py-2.5 text-right tabular-nums">
+                  {partnerRemunerationOn && (
+                    <td className="px-4 py-2.5 text-ink-soft">
+                      {l.is_partner_remuneration ? (
+                        <span className="text-xs">Remuneration</span>
+                      ) : (
+                        <span className="text-ink-faint">—</span>
+                      )}
+                    </td>
+                  )}
+                  <td className="px-4 py-2.5 text-right tabular-nums font-mono">
                     {l.opening_balance_amount > 0 ? (
                       <>
                         {formatINR(l.opening_balance_amount)}
-                        <span className="ml-1.5 text-[10px] uppercase text-zinc-500">
+                        <span className="ml-1.5 text-[10px] uppercase text-ink-faint">
                           {l.opening_balance_type === "debit" ? "Dr" : "Cr"}
                         </span>
                       </>
                     ) : (
-                      <span className="text-zinc-400">—</span>
+                      <span className="text-ink-faint">—</span>
                     )}
                   </td>
                 </tr>
@@ -203,7 +219,7 @@ export function LedgerManager({
         </div>
       </section>
 
-      <section className="rounded-lg border border-zinc-200 bg-white p-5 dark:border-zinc-800 dark:bg-zinc-900">
+      <section className="rounded-lg border border-border bg-surface p-5">
         <h2 className="font-semibold">New ledger</h2>
         <form onSubmit={onSubmit} className="mt-4 flex flex-col gap-3">
           <label className="flex flex-col gap-1.5">
@@ -219,7 +235,7 @@ export function LedgerManager({
           <label className="flex flex-col gap-1.5">
             <span className="text-sm font-medium">
               PAN{" "}
-              <span className="font-normal text-zinc-500">
+              <span className="font-normal text-ink-faint">
                 optional — sets the TCS no-PAN rate, shown on GST documents
               </span>
             </span>
@@ -231,7 +247,7 @@ export function LedgerManager({
               className={field + " font-mono uppercase"}
             />
             {pan.length > 0 && !panLooksValid && (
-              <span className="text-xs text-amber-800 dark:text-amber-300">
+              <span className="text-xs text-warning">
                 That doesn&rsquo;t match the PAN format (5 letters, 4 digits,
                 1 letter).
               </span>
@@ -278,7 +294,7 @@ export function LedgerManager({
           </div>
 
           {tdsOn && (
-            <div className="rounded-md border border-zinc-200 p-3 dark:border-zinc-800">
+            <div className="rounded-md border border-border p-3">
               <label className="flex items-center gap-2 text-sm font-medium">
                 <input
                   type="checkbox"
@@ -292,7 +308,7 @@ export function LedgerManager({
               </label>
               {isTdsDeductee && (
                 <label className="mt-2 flex flex-col gap-1.5">
-                  <span className="text-xs text-zinc-500">
+                  <span className="text-xs text-ink-faint">
                     Default section — a starting point offered when this ledger
                     is used in a voucher; the threshold is yours to check, not
                     checked automatically
@@ -319,7 +335,7 @@ export function LedgerManager({
           )}
 
           {msmeOn && (
-            <div className="rounded-md border border-zinc-200 p-3 dark:border-zinc-800">
+            <div className="rounded-md border border-border p-3">
               <label className="flex items-center gap-2 text-sm font-medium">
                 <input
                   type="checkbox"
@@ -338,7 +354,7 @@ export function LedgerManager({
               {isMsme && (
                 <div className="mt-2 flex flex-col gap-2">
                   <label className="flex flex-col gap-1.5">
-                    <span className="text-xs text-zinc-500">Udyam number</span>
+                    <span className="text-xs text-ink-faint">Udyam number</span>
                     <input
                       value={udyam}
                       onChange={(e) => setUdyam(e.target.value.toUpperCase())}
@@ -346,14 +362,14 @@ export function LedgerManager({
                       className={field + " font-mono uppercase"}
                     />
                     {udyam.length > 0 && !udyamLooksValid && (
-                      <span className="text-xs text-amber-800 dark:text-amber-300">
+                      <span className="text-xs text-warning">
                         That doesn&rsquo;t match the Udyam number format.
                       </span>
                     )}
                   </label>
                   <div className="grid grid-cols-2 gap-2">
                     <label className="flex flex-col gap-1.5">
-                      <span className="text-xs text-zinc-500">Category</span>
+                      <span className="text-xs text-ink-faint">Category</span>
                       <select
                         value={msmeCategory}
                         onChange={(e) => setMsmeCategory(e.target.value)}
@@ -366,7 +382,7 @@ export function LedgerManager({
                       </select>
                     </label>
                     <label className="flex flex-col gap-1.5">
-                      <span className="text-xs text-zinc-500">
+                      <span className="text-xs text-ink-faint">
                         Payment deadline (days)
                       </span>
                       <input
@@ -378,7 +394,7 @@ export function LedgerManager({
                       />
                     </label>
                   </div>
-                  <span className="text-xs text-zinc-500">
+                  <span className="text-xs text-ink-faint">
                     45 days only applies with a written agreement — leave this
                     blank to use the safer 15-day default.
                   </span>
@@ -387,8 +403,26 @@ export function LedgerManager({
             </div>
           )}
 
+          {partnerRemunerationOn && (
+            <div className="rounded-md border border-border p-3">
+              <label className="flex items-center gap-2 text-sm font-medium">
+                <input
+                  type="checkbox"
+                  checked={isPartnerRemuneration}
+                  onChange={(e) => setIsPartnerRemuneration(e.target.checked)}
+                />
+                Partner remuneration (Sec 40(b))
+              </label>
+              <span className="mt-1 block text-xs text-ink-faint">
+                Salary/bonus/commission paid to a working partner — the
+                income tax report tests what&rsquo;s posted here against the
+                slab ceiling and flags any excess.
+              </span>
+            </div>
+          )}
+
           {error && (
-            <p className="rounded-md bg-red-50 px-3 py-2 text-sm text-red-700 dark:bg-red-950 dark:text-red-300">
+            <p className="rounded-md bg-error-soft px-3 py-2 text-sm text-error">
               {error}
             </p>
           )}
@@ -396,7 +430,7 @@ export function LedgerManager({
           <button
             type="submit"
             disabled={busy}
-            className="mt-1 rounded-md bg-emerald-800 px-4 py-2 text-sm font-medium text-white transition hover:bg-emerald-700 disabled:opacity-50 dark:bg-emerald-700 dark:hover:bg-emerald-600"
+            className="mt-1 rounded-lg bg-accent px-4 py-2 text-sm font-semibold text-accent-ink transition-colors hover:opacity-90 disabled:opacity-50"
           >
             {busy ? "Adding…" : "Add ledger"}
           </button>

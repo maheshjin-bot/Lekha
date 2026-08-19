@@ -48,7 +48,7 @@ export default async function IncomeTaxPage({
   if (!result) {
     return (
       <ReportShell title="Income tax computation" period={period}>
-        <p className="px-4 py-12 text-center text-zinc-500">
+        <p className="px-4 py-12 text-center text-ink-faint">
           Company not found.
         </p>
       </ReportShell>
@@ -58,7 +58,7 @@ export default async function IncomeTaxPage({
   if (!result.applicable) {
     return (
       <ReportShell title="Income tax computation" period={period}>
-        <div className="m-4 rounded-md bg-blue-50 px-4 py-3 text-sm text-blue-900 dark:bg-blue-950 dark:text-blue-300">
+        <div className="m-4 rounded-md bg-blue-50 px-4 py-3 text-sm text-blue-900">
           <p className="font-semibold">Not applicable to this entity type</p>
           <p className="mt-1">{result.note}</p>
         </div>
@@ -70,6 +70,7 @@ export default async function IncomeTaxPage({
   const bookDepAddback = Number(result.book_depreciation_addback);
   const msmeAddback = Number(result.msme_disallowance_addback);
   const taxDep = Number(result.tax_depreciation_deduction);
+  const remunerationDisallowed = Number(result.partner_remuneration_disallowed ?? 0);
   const taxableIncome = Number(result.taxable_income);
   const taxBeforeRebate = Number(result.tax_before_rebate);
   const rebate87a = Number(result.rebate_87a);
@@ -88,62 +89,66 @@ export default async function IncomeTaxPage({
       }}
     >
       {result.regime_used && (
-        <p className="border-b border-zinc-200 px-4 py-2 text-xs text-zinc-500 dark:border-zinc-800">
+        <p className="border-b border-border px-4 py-2 text-xs text-ink-faint">
           Regime: {result.regime_used}
         </p>
       )}
 
       <table className="w-full min-w-[480px] text-sm">
         <thead>
-          <tr className="border-b border-zinc-200 text-left dark:border-zinc-800">
+          <tr className="border-b border-border text-left">
             <th className={th}>Component</th>
             <th className={th + " text-right"}>Amount</th>
           </tr>
         </thead>
         <tbody>
-          <tr className="border-b border-zinc-100 last:border-0 dark:border-zinc-800/60">
+          <tr className="border-b border-border last:border-0">
             <td className={td}>Book profit</td>
             <td className={num}>{formatINR(bookProfit, { showZero: true })}</td>
           </tr>
-          <tr className="border-b border-zinc-100 last:border-0 dark:border-zinc-800/60">
+          <tr className="border-b border-border last:border-0">
             <td className={td}>+ Book depreciation added back</td>
             <td className={num}>{formatINR(bookDepAddback, { showZero: true })}</td>
           </tr>
-          <tr className="border-b border-zinc-100 last:border-0 dark:border-zinc-800/60">
+          <tr className="border-b border-border last:border-0">
             <td className={td}>+ MSME dues disallowed (Sec 43B(h))</td>
             <td className={num}>{formatINR(msmeAddback, { showZero: true })}</td>
           </tr>
-          <tr className="border-b border-zinc-100 last:border-0 dark:border-zinc-800/60">
+          <tr className="border-b border-border last:border-0">
             <td className={td}>− Tax depreciation</td>
             <td className={num}>{formatINR(taxDep, { showZero: true })}</td>
           </tr>
-          <tr className="border-b border-zinc-200 bg-zinc-50 dark:border-zinc-800 dark:bg-zinc-800/40">
+          <tr className="border-b border-border last:border-0">
+            <td className={td}>+ Partner remuneration disallowed (Sec 40(b))</td>
+            <td className={num}>{formatINR(remunerationDisallowed, { showZero: true })}</td>
+          </tr>
+          <tr className="border-b border-border bg-bg">
             <td className={td + " font-semibold"}>Taxable income</td>
             <td className={num + " font-semibold"}>
               {formatINR(taxableIncome, { showZero: true })}
             </td>
           </tr>
-          <tr className="border-b border-zinc-100 last:border-0 dark:border-zinc-800/60">
+          <tr className="border-b border-border last:border-0">
             <td className={td}>Tax before rebate</td>
             <td className={num}>{formatINR(taxBeforeRebate, { showZero: true })}</td>
           </tr>
-          <tr className="border-b border-zinc-100 last:border-0 dark:border-zinc-800/60">
+          <tr className="border-b border-border last:border-0">
             <td className={td}>− Sec 87A rebate</td>
             <td className={num}>{formatINR(rebate87a, { showZero: true })}</td>
           </tr>
-          <tr className="border-b border-zinc-100 last:border-0 dark:border-zinc-800/60">
+          <tr className="border-b border-border last:border-0">
             <td className={td}>Tax after rebate</td>
             <td className={num}>{formatINR(taxAfterRebate, { showZero: true })}</td>
           </tr>
-          <tr className="border-b border-zinc-100 last:border-0 dark:border-zinc-800/60">
+          <tr className="border-b border-border last:border-0">
             <td className={td}>+ Surcharge</td>
             <td className={num}>{formatINR(surcharge, { showZero: true })}</td>
           </tr>
-          <tr className="border-b border-zinc-200 last:border-0 dark:border-zinc-800">
+          <tr className="border-b border-border last:border-0">
             <td className={td}>+ Cess (4%)</td>
             <td className={num}>{formatINR(cess, { showZero: true })}</td>
           </tr>
-          <tr className="bg-emerald-50 dark:bg-emerald-950/20">
+          <tr className="bg-success-soft">
             <td className={td + " text-base font-bold"}>Total tax</td>
             <td className={num + " text-base font-bold"}>
               {formatINR(totalTax, { showZero: true })}
@@ -152,19 +157,21 @@ export default async function IncomeTaxPage({
         </tbody>
       </table>
 
-      <p className="border-t border-zinc-200 px-4 py-3 text-xs text-zinc-500 dark:border-zinc-800">
+      <p className="border-t border-border px-4 py-3 text-xs text-ink-faint">
         {result.note}
       </p>
-      <p className="border-t border-zinc-200 px-4 py-3 text-xs text-zinc-500 dark:border-zinc-800">
+      <p className="border-t border-border px-4 py-3 text-xs text-ink-faint">
         This is a PGBP-bridge estimate — the walk from book profit to taxable
         business income and the resulting tax — governed by the Income-tax
         Act 1961 as amended (AY 2026-27), not the Income-tax Act 2025, which
         only governs income earned from 1 April 2026 onward. It excludes Sec
         40(a)/40A(3) TDS and cash-payment disallowances, general Sec 43B
-        (non-MSME) dues such as unpaid GST/PF/ESI/bonus, the Sec 40(b)
-        partner remuneration cap, and marginal relief at the Sec 87A rebate
-        and surcharge thresholds. Treat this as a starting estimate, not a
-        filed-return number.
+        (non-MSME) dues such as unpaid GST/PF/ESI/bonus, the separate Sec
+        40(b) interest-on-capital cap (12% p.a. — needs partner capital
+        balances this schema does not track; only the remuneration slab
+        ceiling above is computed), and marginal relief at the Sec 87A
+        rebate and surcharge thresholds. Treat this as a starting estimate,
+        not a filed-return number.
       </p>
     </ReportShell>
   );

@@ -1341,6 +1341,7 @@ export type Database = {
           gstin: string | null
           id: string
           is_active: boolean
+          is_partner_remuneration: boolean
           is_tds_deductee: boolean
           ldc_amount_cap: number | null
           ldc_number: string | null
@@ -1378,6 +1379,7 @@ export type Database = {
           gstin?: string | null
           id?: string
           is_active?: boolean
+          is_partner_remuneration?: boolean
           is_tds_deductee?: boolean
           ldc_amount_cap?: number | null
           ldc_number?: string | null
@@ -1415,6 +1417,7 @@ export type Database = {
           gstin?: string | null
           id?: string
           is_active?: boolean
+          is_partner_remuneration?: boolean
           is_tds_deductee?: boolean
           ldc_amount_cap?: number | null
           ldc_number?: string | null
@@ -2100,6 +2103,9 @@ export type Database = {
       }
       vouchers: {
         Row: {
+          approval_status: string
+          approved_at: string | null
+          approved_by: string | null
           branch_id: string
           company_id: string
           created_at: string
@@ -2125,6 +2131,9 @@ export type Database = {
           voucher_type: string
         }
         Insert: {
+          approval_status?: string
+          approved_at?: string | null
+          approved_by?: string | null
           branch_id: string
           company_id: string
           created_at?: string
@@ -2150,6 +2159,9 @@ export type Database = {
           voucher_type: string
         }
         Update: {
+          approval_status?: string
+          approved_at?: string | null
+          approved_by?: string | null
           branch_id?: string
           company_id?: string
           created_at?: string
@@ -2220,6 +2232,10 @@ export type Database = {
           p_registration_type?: string
         }
         Returns: string
+      }
+      approve_voucher: {
+        Args: { p_company_id: string; p_voucher_id: string }
+        Returns: undefined
       }
       auto_match_bank_lines: {
         Args: { p_company_id: string; p_ledger_id: string }
@@ -2435,6 +2451,8 @@ export type Database = {
           entity_type: string
           msme_disallowance_addback: number
           note: string
+          partner_remuneration_booked: number
+          partner_remuneration_disallowed: number
           rebate_87a: number
           regime_used: string
           surcharge: number
