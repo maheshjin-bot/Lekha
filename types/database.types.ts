@@ -1027,6 +1027,88 @@ export type Database = {
           },
         ]
       }
+      fixed_assets: {
+        Row: {
+          acquisition_date: string
+          asset_code: string | null
+          book_method: string
+          category_code: string
+          company_id: string
+          created_at: string
+          created_by: string | null
+          disposal_date: string | null
+          disposal_value: number | null
+          gross_value: number
+          id: string
+          is_active: boolean
+          it_block: string
+          name: string
+          put_to_use_date: string
+          residual_value_percent: number
+          updated_at: string
+        }
+        Insert: {
+          acquisition_date: string
+          asset_code?: string | null
+          book_method?: string
+          category_code: string
+          company_id: string
+          created_at?: string
+          created_by?: string | null
+          disposal_date?: string | null
+          disposal_value?: number | null
+          gross_value: number
+          id?: string
+          is_active?: boolean
+          it_block: string
+          name: string
+          put_to_use_date: string
+          residual_value_percent?: number
+          updated_at?: string
+        }
+        Update: {
+          acquisition_date?: string
+          asset_code?: string | null
+          book_method?: string
+          category_code?: string
+          company_id?: string
+          created_at?: string
+          created_by?: string | null
+          disposal_date?: string | null
+          disposal_value?: number | null
+          gross_value?: number
+          id?: string
+          is_active?: boolean
+          it_block?: string
+          name?: string
+          put_to_use_date?: string
+          residual_value_percent?: number
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "fixed_assets_category_code_fkey"
+            columns: ["category_code"]
+            isOneToOne: false
+            referencedRelation: "ref_depreciation_categories"
+            referencedColumns: ["category_code"]
+          },
+          {
+            foreignKeyName: "fixed_assets_company_id_fkey"
+            columns: ["company_id"]
+            isOneToOne: false
+            referencedRelation: "companies"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "fixed_assets_it_block_fkey"
+            columns: ["it_block"]
+            isOneToOne: false
+            referencedRelation: "ref_depreciation_blocks_it"
+            referencedColumns: ["block_code"]
+          },
+        ]
+      }
       godowns: {
         Row: {
           address: string | null
@@ -1438,6 +1520,57 @@ export type Database = {
           created_at?: string
           full_name?: string | null
           id?: string
+        }
+        Relationships: []
+      }
+      ref_depreciation_blocks_it: {
+        Row: {
+          block_code: string
+          description: string
+          is_active: boolean
+          rate_percent: number
+          sort_order: number
+        }
+        Insert: {
+          block_code: string
+          description: string
+          is_active?: boolean
+          rate_percent: number
+          sort_order: number
+        }
+        Update: {
+          block_code?: string
+          description?: string
+          is_active?: boolean
+          rate_percent?: number
+          sort_order?: number
+        }
+        Relationships: []
+      }
+      ref_depreciation_categories: {
+        Row: {
+          category_code: string
+          description: string
+          is_active: boolean
+          is_nesd: boolean
+          sort_order: number
+          useful_life_years: number
+        }
+        Insert: {
+          category_code: string
+          description: string
+          is_active?: boolean
+          is_nesd?: boolean
+          sort_order: number
+          useful_life_years: number
+        }
+        Update: {
+          category_code?: string
+          description?: string
+          is_active?: boolean
+          is_nesd?: boolean
+          sort_order?: number
+          useful_life_years?: number
         }
         Relationships: []
       }
@@ -2247,6 +2380,27 @@ export type Database = {
           voucher_type: string
         }[]
       }
+      get_fixed_asset_register: {
+        Args: { p_as_at?: string; p_company_id: string }
+        Returns: {
+          accumulated_depreciation: number
+          acquisition_date: string
+          asset_code: string
+          asset_id: string
+          book_method: string
+          category_code: string
+          category_description: string
+          disposal_date: string
+          disposal_value: number
+          gross_value: number
+          is_active: boolean
+          it_block: string
+          name: string
+          net_book_value: number
+          put_to_use_date: string
+          residual_value_percent: number
+        }[]
+      }
       get_ledger_statement: {
         Args: {
           p_branch_id?: string
@@ -2308,6 +2462,22 @@ export type Database = {
           quantity_in: number
           quantity_out: number
           uom: string
+        }[]
+      }
+      get_tax_depreciation_blocks: {
+        Args: { p_company_id: string; p_fy_end: string; p_fy_start: string }
+        Returns: {
+          additions: number
+          block_ceased: boolean
+          block_code: string
+          block_description: string
+          closing_wdv: number
+          depreciation_for_year: number
+          disposals: number
+          opening_wdv: number
+          rate_percent: number
+          short_term_capital_gain: number
+          short_term_capital_loss: number
         }[]
       }
       get_trial_balance: {
