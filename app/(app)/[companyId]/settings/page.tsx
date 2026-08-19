@@ -9,7 +9,7 @@ export default async function SettingsPage({
 
   const { data: company } = await supabase
     .from("companies")
-    .select("id, name, pan, tan, udyam_number, udyam_category")
+    .select("id, name, pan, tan, udyam_number, udyam_category, entity_type, company_tax_regime")
     .eq("id", companyId)
     .maybeSingle();
 
@@ -23,10 +23,12 @@ export default async function SettingsPage({
 
       <CompanySettingsForm
         companyId={companyId}
+        entityType={company?.entity_type ?? ""}
         pan={company?.pan ?? null}
         tan={company?.tan ?? null}
         udyamNumber={company?.udyam_number ?? null}
         udyamCategory={company?.udyam_category ?? null}
+        companyTaxRegime={company?.company_tax_regime ?? "default_30"}
       />
     </main>
   );

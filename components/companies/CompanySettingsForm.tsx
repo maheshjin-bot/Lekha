@@ -8,18 +8,24 @@ const TAN_PATTERN = /^[A-Z]{4}[0-9]{5}[A-Z]$/;
 // Mirrors app_private.is_valid_udyam exactly.
 const UDYAM_PATTERN = /^UDYAM-[A-Z]{2}-[0-9]{2}-[0-9]{7}$/;
 
+const COMPANY_ENTITY_TYPES = new Set(["opc", "pvt_ltd", "ltd"]);
+
 export function CompanySettingsForm({
   companyId,
+  entityType,
   pan,
   tan,
   udyamNumber,
   udyamCategory,
+  companyTaxRegime,
 }: {
   companyId: string;
+  entityType: string;
   pan: string | null;
   tan: string | null;
   udyamNumber: string | null;
   udyamCategory: string | null;
+  companyTaxRegime: string;
 }) {
   const router = useRouter();
   const [tanInput, setTanInput] = useState(tan ?? "");
@@ -32,6 +38,11 @@ export function CompanySettingsForm({
   const [udyamBusy, setUdyamBusy] = useState(false);
   const [udyamError, setUdyamError] = useState<string | null>(null);
   const [udyamSaved, setUdyamSaved] = useState(false);
+
+  const [taxRegimeInput, setTaxRegimeInput] = useState(companyTaxRegime);
+  const [taxRegimeBusy, setTaxRegimeBusy] = useState(false);
+  const [taxRegimeError, setTaxRegimeError] = useState<string | null>(null);
+  const [taxRegimeSaved, setTaxRegimeSaved] = useState(false);
 
   // Structural pre-check only — app_private.is_valid_tan on the companies.tan
   // check constraint is the real gate; this just catches an obvious typo
@@ -80,6 +91,26 @@ export function CompanySettingsForm({
       return;
     }
     setUdyamSaved(true);
+    router.refresh();
+  }
+
+  async function onTaxRegimeSubmit(e: React.FormEvent) {
+    e.preventDefault();
+    setTaxRegimeBusy(true);
+    setTaxRegimeError(null);
+    setTaxRegimeSaved(false);
+
+    const { error } = await createClient()
+      .from("companies")
+      .update({ company_tax_regime: taxRegimeInput })
+      .eq("id", companyId);
+
+    setTaxRegimeBusy(false);
+    if (error) {
+      setTaxRegimeError(error.message);
+      return;
+    }
+    setTaxRegimeSaved(true);
     router.refresh();
   }
 
@@ -201,6 +232,59 @@ export function CompanySettingsForm({
           </button>
         </form>
       </section>
+
+      {COMPANY_ENTITY_TYPES.has(entityType) && (
+        <section className="rounded-lg border border-zinc-200 bg-white p-5 dark:border-zinc-800 dark:bg-zinc-900">
+          <h2 className="font-semibold">Income tax regime</h2>
+          <p className="mt-1 text-sm text-zinc-600 dark:text-zinc-400">
+            Only relevant for companies — LEKHA cannot determine which rate
+            applies to you; the default is the higher, safer rate.
+          </p>
+          <form onSubmit={onTaxRegimeSubmit} className="mt-4 flex flex-col gap-3">
+            <label className="flex flex-col gap-1.5">
+              <span className="text-sm font-medium">Regime</span>
+              <select
+                value={taxRegimeInput}
+                onChange={(e) => setTaxRegimeInput(e.target.value)}
+                className={field}
+              >
+                <option value="default_30">
+                  Default (30%) — no concessional election
+                </option>
+                <option value="default_25">
+                  Default (25%) — confirmed FY 2023-24 turnover ≤ ₹400 crore
+                </option>
+                <option value="115baa">
+                  Sec 115BAA (22%) — irrevocable election, Form 10-IC
+                </option>
+                <option value="115bab">
+                  Sec 115BAB (15%) — new manufacturing company, irrevocable,
+                  Form 10-ID
+                </option>
+              </select>
+            </label>
+
+            {taxRegimeError && (
+              <p className="rounded-md bg-red-50 px-3 py-2 text-sm text-red-700 dark:bg-red-950 dark:text-red-300">
+                {taxRegimeError}
+              </p>
+            )}
+            {taxRegimeSaved && !taxRegimeError && (
+              <p className="rounded-md bg-emerald-50 px-3 py-2 text-sm text-emerald-800 dark:bg-emerald-950 dark:text-emerald-300">
+                Saved.
+              </p>
+            )}
+
+            <button
+              type="submit"
+              disabled={taxRegimeBusy}
+              className="mt-1 self-start rounded-md bg-emerald-800 px-4 py-2 text-sm font-medium text-white transition hover:bg-emerald-700 disabled:opacity-50 dark:bg-emerald-700 dark:hover:bg-emerald-600"
+            >
+              {taxRegimeBusy ? "Saving…" : "Save"}
+            </button>
+          </form>
+        </section>
+      )}
     </div>
   );
 }

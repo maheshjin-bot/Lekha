@@ -40,6 +40,7 @@ export default async function CompanyLayout({
     { href: `/${companyId}/reports/outstanding`, label: "Outstanding" },
     { href: `/${companyId}/reports/msme`, label: "MSME dues" },
     { href: `/${companyId}/reports/tax-depreciation`, label: "Tax depreciation" },
+    { href: `/${companyId}/reports/income-tax`, label: "Income tax" },
     { href: `/${companyId}/reports/compliance-calendar`, label: "Calendar" },
     { href: `/${companyId}/reconciliation`, label: "Reconcile" },
     { href: `/${companyId}/year-end`, label: "Year-end" },
