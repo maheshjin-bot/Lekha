@@ -2562,6 +2562,27 @@ export type Database = {
           total_tax: number
         }[]
       }
+      get_isd_distribution: {
+        Args: {
+          p_company_id: string
+          p_isd_registration_id: string
+          p_period_end: string
+          p_period_start: string
+        }
+        Returns: {
+          distributed_cess: number
+          distributed_cgst: number
+          distributed_igst: number
+          distributed_sgst: number
+          distributed_total: number
+          recipient_gstin: string
+          recipient_registration_id: string
+          recipient_state: string
+          recipient_turnover: number
+          same_state: boolean
+          turnover_ratio: number
+        }[]
+      }
       get_ledger_statement: {
         Args: {
           p_branch_id?: string
