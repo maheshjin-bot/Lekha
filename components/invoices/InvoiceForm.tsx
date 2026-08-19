@@ -12,11 +12,18 @@ type Item = {
   sale_rate: number | null;
   purchase_rate: number | null;
   gst_rate_percent: number;
+  default_tcs_section: string | null;
 };
-type Ledger = { id: string; name: string; ledger_role: string; state_code: string | null };
+type Ledger = { id: string; name: string; ledger_role: string; state_code: string | null; pan: string | null };
 type Branch = { id: string; code: string; name: string; registeredState: string | null };
 type Godown = { id: string; code: string; name: string };
 type StateOption = { code: string; name: string };
+type TcsSection = {
+  section_code: string;
+  rate_percent: number;
+  no_pan_rate_percent: number;
+  threshold_rupees: number | null;
+};
 
 const TYPES = [
   { value: "sales", label: "Sales invoice", party: "Customer", trading: "Sales ledger", roles: ["debtor", "cash_bank"] },
@@ -35,6 +42,8 @@ export function InvoiceForm({
   branches,
   godowns,
   gstOn,
+  tcsOn,
+  tcsSections,
   states,
 }: {
   companyId: string;
@@ -43,6 +52,8 @@ export function InvoiceForm({
   branches: Branch[];
   godowns: Godown[];
   gstOn: boolean;
+  tcsOn: boolean;
+  tcsSections: TcsSection[];
   states: StateOption[];
 }) {
   const router = useRouter();
@@ -121,7 +132,42 @@ export function InvoiceForm({
     return { cgst, sgst, igst };
   }, [lines, items, supplyType]);
 
-  const grandTotal = taxable + tax.cgst + tax.sgst + tax.igst;
+  // Mirrors create_invoice's TCS math exactly, for the same display-only
+  // reason as `tax` above. Only sales and credit notes ever carry TCS, only
+  // when the module is on, only for lines whose item names a section, and
+  // only above that section's threshold (if it has one) — on the line's own
+  // taxable amount, never the invoice total.
+  const tcs = useMemo(() => {
+    if (!tcsOn || !isSale) return 0;
+    const party = ledgers.find((l) => l.id === partyId);
+    const hasPan = !!party?.pan;
+    let total = 0;
+    for (const l of lines) {
+      const item = items.find((x) => x.id === l.itemId);
+      if (!item || !item.default_tcs_section) continue;
+      const section = tcsSections.find((s) => s.section_code === item.default_tcs_section);
+      if (!section) continue;
+      const amount = Math.round((Number(l.quantity) || 0) * (Number(l.rate) || 0) * 100) / 100;
+      if (section.threshold_rupees != null && amount <= section.threshold_rupees) continue;
+      // This line's own GST, computed inline rather than reused from `tax`
+      // above, since that memo only keeps invoice-wide totals.
+      let lineGst = 0;
+      if (supplyType && item.gst_rate_percent) {
+        if (supplyType === "intra") {
+          const half = Math.round(((amount * item.gst_rate_percent) / 2 / 100) * 100) / 100;
+          lineGst = half + half;
+        } else {
+          lineGst = Math.round(((amount * item.gst_rate_percent) / 100) * 100) / 100;
+        }
+      }
+      const base = amount + lineGst;
+      const rate = hasPan ? section.rate_percent : section.no_pan_rate_percent;
+      total += Math.round(((base * rate) / 100) * 100) / 100;
+    }
+    return total;
+  }, [tcsOn, isSale, lines, items, tcsSections, ledgers, partyId, supplyType]);
+
+  const grandTotal = taxable + tax.cgst + tax.sgst + tax.igst + tcs;
 
   function update(i: number, patch: Partial<Line>) {
     setLines((prev) =>
@@ -390,28 +436,28 @@ export function InvoiceForm({
               </td>
               <td />
             </tr>
-            {gstOn && supplyType && (tax.cgst > 0 || tax.sgst > 0 || tax.igst > 0) && (
+            {(tax.cgst > 0 || tax.sgst > 0 || tax.igst > 0 || tcs > 0) && (
               <>
                 {supplyType === "intra" ? (
                   <>
                     <tr className="text-xs text-zinc-600 dark:text-zinc-400">
-                      <td className="px-3 py-1" colSpan={5}>
+                      <td className="px-3 py-1" colSpan={gstOn ? 5 : 4}>
                         CGST
                       </td>
                       <td className="px-3 py-1 text-right tabular-nums">{formatINR(tax.cgst)}</td>
                       <td />
                     </tr>
                     <tr className="text-xs text-zinc-600 dark:text-zinc-400">
-                      <td className="px-3 py-1" colSpan={5}>
+                      <td className="px-3 py-1" colSpan={gstOn ? 5 : 4}>
                         SGST
                       </td>
                       <td className="px-3 py-1 text-right tabular-nums">{formatINR(tax.sgst)}</td>
                       <td />
                     </tr>
                   </>
-                ) : (
+                ) : supplyType === "inter" ? (
                   <tr className="text-xs text-zinc-600 dark:text-zinc-400">
-                    <td className="px-3 py-1" colSpan={5}>
+                    <td className="px-3 py-1" colSpan={gstOn ? 5 : 4}>
                       IGST
                     </td>
                     <td className="px-3 py-1 text-right tabular-nums">
@@ -419,9 +465,18 @@ export function InvoiceForm({
                     </td>
                     <td />
                   </tr>
+                ) : null}
+                {tcs > 0 && (
+                  <tr className="text-xs text-zinc-600 dark:text-zinc-400">
+                    <td className="px-3 py-1" colSpan={gstOn ? 5 : 4}>
+                      TCS
+                    </td>
+                    <td className="px-3 py-1 text-right tabular-nums">{formatINR(tcs)}</td>
+                    <td />
+                  </tr>
                 )}
                 <tr className="border-t-2 border-zinc-300 font-semibold dark:border-zinc-700">
-                  <td className="px-3 py-2.5" colSpan={5}>
+                  <td className="px-3 py-2.5" colSpan={gstOn ? 5 : 4}>
                     Total
                   </td>
                   <td className="px-3 py-2.5 text-right tabular-nums">

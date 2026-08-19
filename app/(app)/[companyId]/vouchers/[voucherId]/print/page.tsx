@@ -16,6 +16,7 @@ const TAX_LABEL: Record<string, string> = {
   sgst: "SGST",
   igst: "IGST",
   cess: "Cess",
+  tcs: "TCS",
 };
 
 export default async function PrintInvoicePage({

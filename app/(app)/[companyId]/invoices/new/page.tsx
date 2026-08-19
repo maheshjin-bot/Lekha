@@ -15,17 +15,18 @@ export default async function NewInvoicePage({
     { data: godowns },
     { data: modules },
     { data: states },
+    { data: tcsSections },
   ] = await Promise.all([
     supabase
       .from("items")
-      .select("id, name, uom, sale_rate, purchase_rate, gst_rate_percent")
+      .select("id, name, uom, sale_rate, purchase_rate, gst_rate_percent, default_tcs_section")
       .eq("company_id", companyId)
       .eq("is_active", true)
       .eq("maintain_stock", true)
       .order("name"),
     supabase
       .from("ledgers")
-      .select("id, name, state_code, account_groups(ledger_role)")
+      .select("id, name, state_code, pan, account_groups(ledger_role)")
       .eq("company_id", companyId)
       .eq("is_active", true)
       .order("name"),
@@ -46,6 +47,12 @@ export default async function NewInvoicePage({
       .order("is_default", { ascending: false }),
     supabase.rpc("get_company_modules", { p_company_id: companyId }),
     supabase.from("ref_states").select("code, name").order("name"),
+    // TCS rates/thresholds, for the client-side TCS preview — mirrors how
+    // ItemManager already sources this table for its own TCS picker.
+    supabase
+      .from("ref_tcs_sections")
+      .select("section_code, rate_percent, no_pan_rate_percent, threshold_rupees")
+      .eq("is_active", true),
   ]);
 
   const flatLedgers = (ledgers ?? []).map((l) => ({
@@ -53,6 +60,7 @@ export default async function NewInvoicePage({
     name: l.name,
     ledger_role: l.account_groups?.ledger_role ?? "other",
     state_code: l.state_code,
+    pan: l.pan,
   }));
 
   const flatBranches = (branches ?? []).map((b) => ({
@@ -63,6 +71,7 @@ export default async function NewInvoicePage({
   }));
 
   const gstOn = (modules ?? []).some((m) => m.code === "gst" && m.active);
+  const tcsOn = (modules ?? []).some((m) => m.code === "tcs" && m.active);
 
   const blocked =
     !items?.length
@@ -106,6 +115,8 @@ export default async function NewInvoicePage({
           branches={flatBranches}
           godowns={godowns ?? []}
           gstOn={gstOn}
+          tcsOn={tcsOn}
+          tcsSections={tcsSections ?? []}
           states={states ?? []}
         />
       )}
