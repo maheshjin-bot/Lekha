@@ -1152,6 +1152,7 @@ export type Database = {
           company_id: string
           created_at: string
           created_by: string | null
+          default_tcs_section: string | null
           gst_rate_percent: number
           hsn_sac: string | null
           id: string
@@ -1174,6 +1175,7 @@ export type Database = {
           company_id: string
           created_at?: string
           created_by?: string | null
+          default_tcs_section?: string | null
           gst_rate_percent?: number
           hsn_sac?: string | null
           id?: string
@@ -1196,6 +1198,7 @@ export type Database = {
           company_id?: string
           created_at?: string
           created_by?: string | null
+          default_tcs_section?: string | null
           gst_rate_percent?: number
           hsn_sac?: string | null
           id?: string
@@ -1218,6 +1221,13 @@ export type Database = {
             isOneToOne: false
             referencedRelation: "companies"
             referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "items_default_tcs_section_fkey"
+            columns: ["default_tcs_section"]
+            isOneToOne: false
+            referencedRelation: "ref_tcs_sections"
+            referencedColumns: ["section_code"]
           },
           {
             foreignKeyName: "items_uom_fkey"
@@ -1539,6 +1549,39 @@ export type Database = {
           jurisdiction?: string
           name?: string
           obsolete_note?: string | null
+        }
+        Relationships: []
+      }
+      ref_tcs_sections: {
+        Row: {
+          description: string
+          is_active: boolean
+          no_pan_rate_percent: number
+          rate_percent: number
+          section_code: string
+          sort_order: number
+          threshold_note: string | null
+          threshold_rupees: number | null
+        }
+        Insert: {
+          description: string
+          is_active?: boolean
+          no_pan_rate_percent: number
+          rate_percent: number
+          section_code: string
+          sort_order: number
+          threshold_note?: string | null
+          threshold_rupees?: number | null
+        }
+        Update: {
+          description?: string
+          is_active?: boolean
+          no_pan_rate_percent?: number
+          rate_percent?: number
+          section_code?: string
+          sort_order?: number
+          threshold_note?: string | null
+          threshold_rupees?: number | null
         }
         Relationships: []
       }
