@@ -47,11 +47,6 @@ export function RegistrationManager({
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  const branchName = (id: string | null) => {
-    const b = branches.find((x) => x.id === id);
-    return b ? `${b.code} — ${b.name}` : null;
-  };
-
   // Structural validity only — a well-formed but wrong GSTIN still reaches
   // the server, where the real checksum in app_private.is_valid_gstin decides.
   // This just saves a round trip on an obvious typo.
@@ -90,15 +85,15 @@ export function RegistrationManager({
   }
 
   const field =
-    "rounded-md border border-zinc-300 bg-white px-3 py-2 text-sm outline-none focus-visible:ring-2 focus-visible:ring-emerald-600 dark:border-zinc-700 dark:bg-zinc-900";
+    "rounded-lg border border-border-strong bg-surface px-3 py-2 text-sm text-ink outline-none focus-visible:border-accent focus-visible:ring-2 focus-visible:ring-accent/30";
 
   return (
     <div className="mt-8 grid gap-8 lg:grid-cols-[1fr_340px]">
       <section className="min-w-0">
-        <div className="overflow-x-auto rounded-lg border border-zinc-200 bg-white dark:border-zinc-800 dark:bg-zinc-900">
+        <div className="overflow-x-auto rounded-lg border border-border bg-surface">
           <table className="w-full min-w-[560px] text-sm">
             <thead>
-              <tr className="border-b border-zinc-200 text-left text-[11px] uppercase tracking-wide text-zinc-500 dark:border-zinc-800">
+              <tr className="border-b border-border text-left text-[11px] uppercase tracking-wide text-ink-faint">
                 <th className="px-4 py-2.5 font-medium">GSTIN</th>
                 <th className="px-4 py-2.5 font-medium">State</th>
                 <th className="px-4 py-2.5 font-medium">Type</th>
@@ -108,7 +103,7 @@ export function RegistrationManager({
             <tbody>
               {registrations.length === 0 && (
                 <tr>
-                  <td colSpan={4} className="px-4 py-10 text-center text-zinc-500">
+                  <td colSpan={4} className="px-4 py-10 text-center text-ink-faint">
                     No registrations yet. GST stays off until one is added.
                   </td>
                 </tr>
@@ -118,18 +113,18 @@ export function RegistrationManager({
                 return (
                   <tr
                     key={r.id}
-                    className="border-b border-zinc-100 last:border-0 dark:border-zinc-800/60"
+                    className="border-b border-border last:border-0"
                   >
                     <td className="px-4 py-2.5 font-mono text-xs">{r.gstin}</td>
                     <td className="px-4 py-2.5">{stateName(r.state_code)}</td>
-                    <td className="px-4 py-2.5 capitalize text-zinc-600 dark:text-zinc-400">
+                    <td className="px-4 py-2.5 capitalize text-ink-soft">
                       {r.registration_type}
                     </td>
                     <td className="px-4 py-2.5">
                       {attached ? (
                         `${attached.code} — ${attached.name}`
                       ) : (
-                        <span className="text-amber-800 dark:text-amber-300">
+                        <span className="text-warning">
                           Not attached — cannot invoice yet
                         </span>
                       )}
@@ -142,7 +137,7 @@ export function RegistrationManager({
         </div>
       </section>
 
-      <section className="rounded-lg border border-zinc-200 bg-white p-5 dark:border-zinc-800 dark:bg-zinc-900">
+      <section className="rounded-lg border border-border bg-surface p-5">
         <h2 className="font-semibold">New registration</h2>
         <form onSubmit={onSubmit} className="mt-4 flex flex-col gap-3">
           <label className="flex flex-col gap-1.5">
@@ -156,7 +151,7 @@ export function RegistrationManager({
               className={field + " font-mono"}
             />
             {gstin.length === 15 && !looksValid && (
-              <span className="text-xs text-amber-800 dark:text-amber-300">
+              <span className="text-xs text-warning">
                 That doesn&rsquo;t match the GSTIN format.
               </span>
             )}
@@ -175,7 +170,7 @@ export function RegistrationManager({
 
           <label className="flex flex-col gap-1.5">
             <span className="text-sm font-medium">
-              Attach to branch <span className="font-normal text-zinc-500">optional now, required to invoice</span>
+              Attach to branch <span className="font-normal text-ink-faint">optional now, required to invoice</span>
             </span>
             <select value={branchId} onChange={(e) => setBranchId(e.target.value)} className={field}>
               <option value="">Not yet</option>
@@ -185,7 +180,7 @@ export function RegistrationManager({
                 </option>
               ))}
             </select>
-            <span className="text-xs text-zinc-500">
+            <span className="text-xs text-ink-faint">
               {gstinState
                 ? "Only unattached branches in this GSTIN's own state are listed — a branch elsewhere is refused by the database too."
                 : "Start typing the GSTIN to narrow this to branches in its state."}
@@ -193,7 +188,7 @@ export function RegistrationManager({
           </label>
 
           {error && (
-            <p className="rounded-md bg-red-50 px-3 py-2 text-sm text-red-700 dark:bg-red-950 dark:text-red-300">
+            <p className="rounded-md bg-error-soft px-3 py-2 text-sm text-error">
               {error}
             </p>
           )}
@@ -201,7 +196,7 @@ export function RegistrationManager({
           <button
             type="submit"
             disabled={busy}
-            className="mt-1 rounded-md bg-emerald-800 px-4 py-2 text-sm font-medium text-white transition hover:bg-emerald-700 disabled:opacity-50 dark:bg-emerald-700 dark:hover:bg-emerald-600"
+            className="mt-1 rounded-lg bg-accent px-4 py-2 text-sm font-semibold text-accent-ink transition-colors hover:opacity-90 disabled:opacity-50"
           >
             {busy ? "Adding…" : "Add registration"}
           </button>

@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
 import { formatINR, sumPaise, toPaise } from "@/lib/utils/currency";
@@ -89,12 +89,16 @@ export function InvoiceForm({
   // Place of supply defaults to the party's state on file — the same rule
   // create_invoice applies server-side — but only until the user picks one
   // themselves. A party with no recorded state leaves this blank, which is
-  // deliberate: guessing the wrong state here is worse than asking.
-  useEffect(() => {
+  // deliberate: guessing the wrong state here is worse than asking. Applied
+  // directly in the party select's onChange (below) rather than as an effect
+  // reacting to partyId, so the lookup always runs against the same ledgers
+  // snapshot as the selection itself.
+  function selectParty(newPartyId: string) {
+    setPartyId(newPartyId);
     if (placeOfSupplyTouched) return;
-    const party = ledgers.find((l) => l.id === partyId);
+    const party = ledgers.find((l) => l.id === newPartyId);
     if (party?.state_code) setPlaceOfSupply(party.state_code);
-  }, [partyId, ledgers, placeOfSupplyTouched]);
+  }
 
   const supplyType =
     gstOn && branch?.registeredState && placeOfSupply
@@ -228,9 +232,9 @@ export function InvoiceForm({
   }
 
   const field =
-    "rounded-md border border-zinc-300 bg-white px-3 py-2 text-sm outline-none focus-visible:ring-2 focus-visible:ring-emerald-600 dark:border-zinc-700 dark:bg-zinc-900";
+    "rounded-lg border border-border-strong bg-surface px-3 py-2 text-sm text-ink outline-none focus-visible:border-accent focus-visible:ring-2 focus-visible:ring-accent/30";
   const cell =
-    "w-full rounded border border-transparent bg-transparent px-2 py-1.5 outline-none focus-visible:border-zinc-300 focus-visible:ring-2 focus-visible:ring-emerald-600 dark:focus-visible:border-zinc-700";
+    "w-full rounded border border-transparent bg-transparent px-2 py-1.5 outline-none focus-visible:border-accent focus-visible:ring-2 focus-visible:ring-accent/30";
 
   return (
     <form onSubmit={onSubmit} className="mt-8">
@@ -241,7 +245,7 @@ export function InvoiceForm({
             value={voucherType}
             onChange={(e) => {
               setVoucherType(e.target.value as typeof voucherType);
-              setPartyId("");
+              selectParty("");
               setTradingId("");
             }}
             className={field}
@@ -261,7 +265,7 @@ export function InvoiceForm({
 
         <label className="flex flex-col gap-1.5">
           <span className="text-sm font-medium">
-            Reference <span className="font-normal text-zinc-500">optional</span>
+            Reference <span className="font-normal text-ink-faint">optional</span>
           </span>
           <input
             value={reference}
@@ -284,7 +288,7 @@ export function InvoiceForm({
 
         <label className="flex flex-col gap-1.5">
           <span className="text-sm font-medium">{config.party}</span>
-          <select required value={partyId} onChange={(e) => setPartyId(e.target.value)} className={field}>
+          <select required value={partyId} onChange={(e) => selectParty(e.target.value)} className={field}>
             <option value="">Select…</option>
             {partyLedgers.map((l) => (
               <option key={l.id} value={l.id}>
@@ -337,7 +341,7 @@ export function InvoiceForm({
               ))}
             </select>
             {!branch?.registeredState && (
-              <span className="text-xs text-amber-800 dark:text-amber-300">
+              <span className="text-xs text-warning">
                 This branch has no GST registration — tax cannot be computed
                 from it.
               </span>
@@ -346,10 +350,10 @@ export function InvoiceForm({
         )}
       </div>
 
-      <div className="mt-6 overflow-x-auto rounded-lg border border-zinc-200 bg-white dark:border-zinc-800 dark:bg-zinc-900">
+      <div className="mt-6 overflow-x-auto rounded-lg border border-border bg-surface">
         <table className="w-full min-w-[720px] text-sm">
           <thead>
-            <tr className="border-b border-zinc-200 text-left text-[11px] uppercase tracking-wide text-zinc-500 dark:border-zinc-800">
+            <tr className="border-b border-border text-left text-[11px] uppercase tracking-wide text-ink-faint">
               <th className="px-3 py-2.5 font-medium">Item</th>
               <th className="w-24 px-3 py-2.5 text-right font-medium">Qty</th>
               <th className="w-16 px-3 py-2.5 font-medium">Unit</th>
@@ -364,7 +368,7 @@ export function InvoiceForm({
               const item = items.find((x) => x.id === line.itemId);
               const amount = Math.round((Number(line.quantity) || 0) * (Number(line.rate) || 0) * 100) / 100;
               return (
-                <tr key={i} className="border-b border-zinc-100 last:border-0 dark:border-zinc-800/60">
+                <tr key={i} className="border-b border-border last:border-0">
                   <td className="px-3 py-2">
                     <select value={line.itemId} onChange={(e) => update(i, { itemId: e.target.value })} className={cell}>
                       <option value="">Select an item…</option>
@@ -383,7 +387,7 @@ export function InvoiceForm({
                       className={cell + " text-right tabular-nums"}
                     />
                   </td>
-                  <td className="px-3 py-2 text-xs text-zinc-500">{item?.uom ?? "—"}</td>
+                  <td className="px-3 py-2 text-xs text-ink-faint">{item?.uom ?? "—"}</td>
                   <td className="px-3 py-2">
                     <input
                       inputMode="decimal"
@@ -399,18 +403,18 @@ export function InvoiceForm({
                     />
                   </td>
                   {gstOn && (
-                    <td className="px-3 py-2 text-right text-xs tabular-nums text-zinc-500">
+                    <td className="px-3 py-2 text-right text-xs tabular-nums text-ink-faint font-mono">
                       {item ? `${item.gst_rate_percent}%` : "—"}
                     </td>
                   )}
-                  <td className="px-3 py-2 text-right tabular-nums">{formatINR(amount)}</td>
+                  <td className="px-3 py-2 text-right tabular-nums font-mono">{formatINR(amount)}</td>
                   <td className="px-2 py-2 text-center">
                     {lines.length > 1 && (
                       <button
                         type="button"
                         onClick={() => setLines((p) => p.filter((_, idx) => idx !== i))}
                         aria-label={`Remove line ${i + 1}`}
-                        className="rounded px-1.5 py-0.5 text-zinc-400 transition hover:bg-zinc-100 hover:text-zinc-700 dark:hover:bg-zinc-800"
+                        className="rounded px-1.5 py-0.5 text-ink-faint transition-colors hover:bg-surface-2 hover:text-ink-soft"
                       >
                         ×
                       </button>
@@ -421,17 +425,17 @@ export function InvoiceForm({
             })}
           </tbody>
           <tfoot>
-            <tr className="border-t border-zinc-200 bg-zinc-50 dark:border-zinc-800 dark:bg-zinc-800/50">
+            <tr className="border-t border-border bg-bg">
               <td className="px-3 py-2.5" colSpan={gstOn ? 5 : 4}>
                 <button
                   type="button"
                   onClick={() => setLines((p) => [...p, emptyLine()])}
-                  className="rounded px-2 py-1 text-xs text-emerald-800 underline underline-offset-4 dark:text-emerald-400"
+                  className="rounded px-2 py-1 text-xs text-accent underline underline-offset-4"
                 >
                   Add line
                 </button>
               </td>
-              <td className="px-3 py-2.5 text-right font-medium tabular-nums">
+              <td className="px-3 py-2.5 text-right font-medium tabular-nums font-mono">
                 {formatINR(taxable, { showZero: true })}
               </td>
               <td />
@@ -440,46 +444,46 @@ export function InvoiceForm({
               <>
                 {supplyType === "intra" ? (
                   <>
-                    <tr className="text-xs text-zinc-600 dark:text-zinc-400">
+                    <tr className="text-xs text-ink-soft">
                       <td className="px-3 py-1" colSpan={gstOn ? 5 : 4}>
                         CGST
                       </td>
-                      <td className="px-3 py-1 text-right tabular-nums">{formatINR(tax.cgst)}</td>
+                      <td className="px-3 py-1 text-right tabular-nums font-mono">{formatINR(tax.cgst)}</td>
                       <td />
                     </tr>
-                    <tr className="text-xs text-zinc-600 dark:text-zinc-400">
+                    <tr className="text-xs text-ink-soft">
                       <td className="px-3 py-1" colSpan={gstOn ? 5 : 4}>
                         SGST
                       </td>
-                      <td className="px-3 py-1 text-right tabular-nums">{formatINR(tax.sgst)}</td>
+                      <td className="px-3 py-1 text-right tabular-nums font-mono">{formatINR(tax.sgst)}</td>
                       <td />
                     </tr>
                   </>
                 ) : supplyType === "inter" ? (
-                  <tr className="text-xs text-zinc-600 dark:text-zinc-400">
+                  <tr className="text-xs text-ink-soft">
                     <td className="px-3 py-1" colSpan={gstOn ? 5 : 4}>
                       IGST
                     </td>
-                    <td className="px-3 py-1 text-right tabular-nums">
+                    <td className="px-3 py-1 text-right tabular-nums font-mono">
                       {formatINR(tax.igst)}
                     </td>
                     <td />
                   </tr>
                 ) : null}
                 {tcs > 0 && (
-                  <tr className="text-xs text-zinc-600 dark:text-zinc-400">
+                  <tr className="text-xs text-ink-soft">
                     <td className="px-3 py-1" colSpan={gstOn ? 5 : 4}>
                       TCS
                     </td>
-                    <td className="px-3 py-1 text-right tabular-nums">{formatINR(tcs)}</td>
+                    <td className="px-3 py-1 text-right tabular-nums font-mono">{formatINR(tcs)}</td>
                     <td />
                   </tr>
                 )}
-                <tr className="border-t-2 border-zinc-300 font-semibold dark:border-zinc-700">
+                <tr className="border-t-2 border-border-strong font-semibold">
                   <td className="px-3 py-2.5" colSpan={gstOn ? 5 : 4}>
                     Total
                   </td>
-                  <td className="px-3 py-2.5 text-right tabular-nums">
+                  <td className="px-3 py-2.5 text-right tabular-nums font-mono">
                     {formatINR(grandTotal, { showZero: true })}
                   </td>
                   <td />
@@ -501,12 +505,12 @@ export function InvoiceForm({
       </label>
 
       {error && (
-        <p className="mt-4 rounded-md bg-red-50 px-3 py-2 text-sm text-red-700 dark:bg-red-950 dark:text-red-300">
+        <p className="mt-4 rounded-md bg-error-soft px-3 py-2 text-sm text-error">
           {error}
         </p>
       )}
 
-      <p className="mt-5 text-xs text-zinc-500">
+      <p className="mt-5 text-xs text-ink-faint">
         Saving records the stock movement, the tax and the ledger entries
         together, in one transaction — never any of them without the others.
       </p>
@@ -514,7 +518,7 @@ export function InvoiceForm({
       <button
         type="submit"
         disabled={busy || taxable <= 0}
-        className="mt-3 rounded-md bg-emerald-800 px-4 py-2 text-sm font-medium text-white transition hover:bg-emerald-700 disabled:opacity-50 dark:bg-emerald-700 dark:hover:bg-emerald-600"
+        className="mt-3 rounded-lg bg-accent px-4 py-2 text-sm font-semibold text-accent-ink transition-colors hover:opacity-90 disabled:opacity-50"
       >
         {busy ? "Saving…" : `Save ${config.label.toLowerCase()}`}
       </button>

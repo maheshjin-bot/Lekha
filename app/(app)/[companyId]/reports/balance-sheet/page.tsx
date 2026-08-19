@@ -96,7 +96,11 @@ export default async function BalanceSheetPage({
 
   // Named sideKey, not key: React reserves `key` as the list identity and
   // never forwards it as a prop, so it would arrive undefined.
-  const Side = ({ label, sideKey }: { label: string; sideKey: "assets" | "liabilities" }) => {
+  // A plain function, not a component: it closes over the page's own
+  // variables and is called inline as {renderSide(...)} rather than
+  // rendered as <RenderSide />, so React never sees it as a component type
+  // that gets torn down and rebuilt on every render.
+  const renderSide = ({ label, sideKey }: { label: string; sideKey: "assets" | "liabilities" }) => {
     const items = side(sideKey);
     const format = scheduleIII ? "schedule_iii" : "simple";
     const order = sideKey === "liabilities" ? LIABILITY_ORDER[format] : ASSET_ORDER[format];
@@ -195,8 +199,11 @@ export default async function BalanceSheetPage({
       }}
     >
       <div className="grid divide-y divide-border md:grid-cols-2 md:divide-x md:divide-y-0">
-        <Side label={scheduleIII ? "Equity and Liabilities" : "Liabilities"} sideKey="liabilities" />
-        <Side label="Assets" sideKey="assets" />
+        {renderSide({
+          label: scheduleIII ? "Equity and Liabilities" : "Liabilities",
+          sideKey: "liabilities",
+        })}
+        {renderSide({ label: "Assets", sideKey: "assets" })}
       </div>
       {scheduleIII && (
         <p className="border-t border-border px-4 py-3 text-xs text-ink-faint">

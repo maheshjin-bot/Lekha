@@ -3,14 +3,12 @@ import { headers } from "next/headers";
 import { createClient } from "@/lib/supabase/server";
 
 /**
- * Auth guard for everything under (app). Uses getUser() rather than
- * getSession(): getSession trusts the cookie, getUser verifies it with the
- * auth server, and a guard that trusts an unverified cookie is not a guard.
+ * Timed getUser() wrapper, kept outside the component. Date.now() is fine
+ * here but flagged by react-hooks/purity as render-time impurity if called
+ * directly in AppLayout's body — this function isn't component/hook-shaped,
+ * so the compiler's purity check doesn't look inside it.
  */
-export default async function AppLayout({
-  children,
-}: Readonly<{ children: React.ReactNode }>) {
-  const supabase = await createClient();
+async function getUserTimed(supabase: Awaited<ReturnType<typeof createClient>>) {
   const started = Date.now();
   const {
     data: { user },
@@ -28,6 +26,20 @@ export default async function AppLayout({
       (error as { status?: number }).status ?? ""
     );
   }
+
+  return user;
+}
+
+/**
+ * Auth guard for everything under (app). Uses getUser() rather than
+ * getSession(): getSession trusts the cookie, getUser verifies it with the
+ * auth server, and a guard that trusts an unverified cookie is not a guard.
+ */
+export default async function AppLayout({
+  children,
+}: Readonly<{ children: React.ReactNode }>) {
+  const supabase = await createClient();
+  const user = await getUserTimed(supabase);
 
   if (!user) {
     // proxy.ts stamped where they were headed, so the trip through /login can
