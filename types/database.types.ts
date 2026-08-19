@@ -1533,6 +1533,7 @@ export type Database = {
           jurisdiction: string
           name: string
           obsolete_note: string | null
+          qrmp_category: string | null
         }
         Insert: {
           code: string
@@ -1541,6 +1542,7 @@ export type Database = {
           jurisdiction: string
           name: string
           obsolete_note?: string | null
+          qrmp_category?: string | null
         }
         Update: {
           code?: string
@@ -1549,6 +1551,7 @@ export type Database = {
           jurisdiction?: string
           name?: string
           obsolete_note?: string | null
+          qrmp_category?: string | null
         }
         Relationships: []
       }
@@ -2213,6 +2216,15 @@ export type Database = {
           statement_format: string
           statutory_audit_rule: string
           tax_audit_report_form: string
+        }[]
+      }
+      get_compliance_calendar: {
+        Args: { p_company_id: string; p_from?: string; p_to?: string }
+        Returns: {
+          category: string
+          detail: string
+          due_date: string
+          label: string
         }[]
       }
       get_daybook: {
