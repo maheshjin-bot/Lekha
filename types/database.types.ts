@@ -815,6 +815,7 @@ export type Database = {
           incorporation_date: string | null
           inventory_valuation_method: string
           is_active: boolean
+          is_professional: boolean
           legal_name: string | null
           lock_date: string | null
           name: string
@@ -839,6 +840,7 @@ export type Database = {
           incorporation_date?: string | null
           inventory_valuation_method?: string
           is_active?: boolean
+          is_professional?: boolean
           legal_name?: string | null
           lock_date?: string | null
           name: string
@@ -863,6 +865,7 @@ export type Database = {
           incorporation_date?: string | null
           inventory_valuation_method?: string
           is_active?: boolean
+          is_professional?: boolean
           legal_name?: string | null
           lock_date?: string | null
           name?: string
@@ -2400,6 +2403,17 @@ export type Database = {
           label: string
         }[]
       }
+      get_dashboard_kpis: {
+        Args: { p_as_at?: string; p_company_id: string }
+        Returns: {
+          cash_bank: number
+          gst_liability: number
+          payables: number
+          receivables: number
+          receivables_overdue: number
+          tds_payable: number
+        }[]
+      }
       get_daybook: {
         Args: {
           p_branch_id?: string
@@ -2439,6 +2453,17 @@ export type Database = {
           net_book_value: number
           put_to_use_date: string
           residual_value_percent: number
+        }[]
+      }
+      get_form_3cd_particulars: {
+        Args: { p_company_id: string; p_fy_end: string; p_fy_start: string }
+        Returns: {
+          clause: string
+          source_note: string
+          title: string
+          value_numeric: number
+          value_text: string
+          value_type: string
         }[]
       }
       get_income_tax_computation: {
@@ -2483,6 +2508,28 @@ export type Database = {
           voucher_type: string
         }[]
       }
+      get_needs_attention: {
+        Args: { p_company_id: string }
+        Returns: {
+          category: string
+          detail: string
+          href: string
+          label: string
+          severity: string
+        }[]
+      }
+      get_overdue_receivables: {
+        Args: { p_as_at?: string; p_company_id: string }
+        Returns: {
+          days_overdue: number
+          due_date: string
+          outstanding: number
+          party_name: string
+          voucher_date: string
+          voucher_id: string
+          voucher_number: string
+        }[]
+      }
       get_party_outstanding: {
         Args: { p_as_at?: string; p_company_id: string; p_role?: string }
         Returns: {
@@ -2524,6 +2571,25 @@ export type Database = {
           quantity_in: number
           quantity_out: number
           uom: string
+        }[]
+      }
+      get_tax_audit_applicability: {
+        Args: { p_company_id: string; p_fy_end: string; p_fy_start: string }
+        Returns: {
+          audit_required: boolean
+          cash_payment_percent: number
+          cash_payments: number
+          cash_receipt_percent: number
+          cash_receipts: number
+          due_date: string
+          entity_type: string
+          is_professional: boolean
+          reason: string
+          report_form: string
+          threshold_used: number
+          total_payments: number
+          total_receipts: number
+          turnover: number
         }[]
       }
       get_tax_depreciation_blocks: {

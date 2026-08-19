@@ -9,6 +9,16 @@ const TAN_PATTERN = /^[A-Z]{4}[0-9]{5}[A-Z]$/;
 const UDYAM_PATTERN = /^UDYAM-[A-Z]{2}-[0-9]{2}-[0-9]{7}$/;
 
 const COMPANY_ENTITY_TYPES = new Set(["opc", "pvt_ltd", "ltd"]);
+// Sec 44AB's flat Rs 50 lakh "profession" threshold only makes sense for
+// entity types a sole-practitioner or professional-partnership structure
+// could plausibly be — a pvt_ltd/ltd/opc is always business turnover-based
+// for this purpose, same gating rationale as 0032's own migration comment.
+const PROFESSIONAL_TOGGLE_ENTITY_TYPES = new Set([
+  "proprietorship",
+  "partnership",
+  "llp",
+  "huf",
+]);
 
 export function CompanySettingsForm({
   companyId,
@@ -18,6 +28,7 @@ export function CompanySettingsForm({
   udyamNumber,
   udyamCategory,
   companyTaxRegime,
+  isProfessional,
 }: {
   companyId: string;
   entityType: string;
@@ -26,6 +37,7 @@ export function CompanySettingsForm({
   udyamNumber: string | null;
   udyamCategory: string | null;
   companyTaxRegime: string;
+  isProfessional: boolean;
 }) {
   const router = useRouter();
   const [tanInput, setTanInput] = useState(tan ?? "");
@@ -43,6 +55,11 @@ export function CompanySettingsForm({
   const [taxRegimeBusy, setTaxRegimeBusy] = useState(false);
   const [taxRegimeError, setTaxRegimeError] = useState<string | null>(null);
   const [taxRegimeSaved, setTaxRegimeSaved] = useState(false);
+
+  const [professionalInput, setProfessionalInput] = useState(isProfessional);
+  const [professionalBusy, setProfessionalBusy] = useState(false);
+  const [professionalError, setProfessionalError] = useState<string | null>(null);
+  const [professionalSaved, setProfessionalSaved] = useState(false);
 
   // Structural pre-check only — app_private.is_valid_tan on the companies.tan
   // check constraint is the real gate; this just catches an obvious typo
@@ -114,17 +131,37 @@ export function CompanySettingsForm({
     router.refresh();
   }
 
+  async function onProfessionalSubmit(e: React.FormEvent) {
+    e.preventDefault();
+    setProfessionalBusy(true);
+    setProfessionalError(null);
+    setProfessionalSaved(false);
+
+    const { error } = await createClient()
+      .from("companies")
+      .update({ is_professional: professionalInput })
+      .eq("id", companyId);
+
+    setProfessionalBusy(false);
+    if (error) {
+      setProfessionalError(error.message);
+      return;
+    }
+    setProfessionalSaved(true);
+    router.refresh();
+  }
+
   const field =
-    "rounded-md border border-zinc-300 bg-white px-3 py-2 text-sm outline-none focus-visible:ring-2 focus-visible:ring-emerald-600 dark:border-zinc-700 dark:bg-zinc-900";
+    "rounded-lg border border-border-strong bg-surface px-3 py-2 text-sm text-ink outline-none focus-visible:border-accent focus-visible:ring-2 focus-visible:ring-accent/30";
 
   return (
     <div className="mt-8 flex flex-col gap-8">
-      <section className="rounded-lg border border-zinc-200 bg-white p-5 dark:border-zinc-800 dark:bg-zinc-900">
+      <section className="rounded-lg border border-border bg-surface p-5">
         <h2 className="font-semibold">Identifiers</h2>
 
         <div className="mt-4 flex flex-col gap-1.5">
           <span className="text-sm font-medium">PAN</span>
-          <p className="rounded-md bg-zinc-50 px-3 py-2 font-mono text-sm text-zinc-600 dark:bg-zinc-800 dark:text-zinc-400">
+          <p className="rounded-md bg-bg px-3 py-2 font-mono text-sm text-ink-soft">
             {pan ?? "Not set"}
           </p>
         </div>
@@ -133,7 +170,7 @@ export function CompanySettingsForm({
           <label className="flex flex-col gap-1.5">
             <span className="text-sm font-medium">
               TAN{" "}
-              <span className="font-normal text-zinc-500">
+              <span className="font-normal text-ink-faint">
                 required for TDS — this is what turns the module on
               </span>
             </span>
@@ -146,19 +183,19 @@ export function CompanySettingsForm({
             />
           </label>
           {tanInput.length > 0 && !looksValid && (
-            <span className="text-xs text-amber-800 dark:text-amber-300">
+            <span className="text-xs text-warning">
               That doesn&rsquo;t match the TAN format (4 letters, 5 digits, 1
               letter).
             </span>
           )}
 
           {error && (
-            <p className="mt-2 rounded-md bg-red-50 px-3 py-2 text-sm text-red-700 dark:bg-red-950 dark:text-red-300">
+            <p className="mt-2 rounded-md bg-error-soft px-3 py-2 text-sm text-error">
               {error}
             </p>
           )}
           {saved && !error && (
-            <p className="mt-2 rounded-md bg-emerald-50 px-3 py-2 text-sm text-emerald-800 dark:bg-emerald-950 dark:text-emerald-300">
+            <p className="mt-2 rounded-md bg-success-soft px-3 py-2 text-sm text-success">
               Saved.
               {tanInput ? " TDS is now on for this company." : ""}
             </p>
@@ -167,16 +204,16 @@ export function CompanySettingsForm({
           <button
             type="submit"
             disabled={busy}
-            className="mt-3 self-start rounded-md bg-emerald-800 px-4 py-2 text-sm font-medium text-white transition hover:bg-emerald-700 disabled:opacity-50 dark:bg-emerald-700 dark:hover:bg-emerald-600"
+            className="mt-3 self-start rounded-lg bg-accent px-4 py-2 text-sm font-semibold text-accent-ink transition-colors hover:opacity-90 disabled:opacity-50"
           >
             {busy ? "Saving…" : "Save"}
           </button>
         </form>
       </section>
 
-      <section className="rounded-lg border border-zinc-200 bg-white p-5 dark:border-zinc-800 dark:bg-zinc-900">
+      <section className="rounded-lg border border-border bg-surface p-5">
         <h2 className="font-semibold">Udyam (MSME) registration</h2>
-        <p className="mt-1 text-sm text-zinc-600 dark:text-zinc-400">
+        <p className="mt-1 text-sm text-ink-soft">
           This company&rsquo;s own registration — separate from flagging which
           of your suppliers are MSMEs, which is set per-ledger.
         </p>
@@ -191,7 +228,7 @@ export function CompanySettingsForm({
             />
           </label>
           {udyamInput.length > 0 && !udyamLooksValid && (
-            <span className="text-xs text-amber-800 dark:text-amber-300">
+            <span className="text-xs text-warning">
               That doesn&rsquo;t match the Udyam number format.
             </span>
           )}
@@ -213,12 +250,12 @@ export function CompanySettingsForm({
           )}
 
           {udyamError && (
-            <p className="rounded-md bg-red-50 px-3 py-2 text-sm text-red-700 dark:bg-red-950 dark:text-red-300">
+            <p className="rounded-md bg-error-soft px-3 py-2 text-sm text-error">
               {udyamError}
             </p>
           )}
           {udyamSaved && !udyamError && (
-            <p className="rounded-md bg-emerald-50 px-3 py-2 text-sm text-emerald-800 dark:bg-emerald-950 dark:text-emerald-300">
+            <p className="rounded-md bg-success-soft px-3 py-2 text-sm text-success">
               Saved.
             </p>
           )}
@@ -226,7 +263,7 @@ export function CompanySettingsForm({
           <button
             type="submit"
             disabled={udyamBusy}
-            className="mt-1 self-start rounded-md bg-emerald-800 px-4 py-2 text-sm font-medium text-white transition hover:bg-emerald-700 disabled:opacity-50 dark:bg-emerald-700 dark:hover:bg-emerald-600"
+            className="mt-1 self-start rounded-lg bg-accent px-4 py-2 text-sm font-semibold text-accent-ink transition-colors hover:opacity-90 disabled:opacity-50"
           >
             {udyamBusy ? "Saving…" : "Save"}
           </button>
@@ -234,9 +271,9 @@ export function CompanySettingsForm({
       </section>
 
       {COMPANY_ENTITY_TYPES.has(entityType) && (
-        <section className="rounded-lg border border-zinc-200 bg-white p-5 dark:border-zinc-800 dark:bg-zinc-900">
+        <section className="rounded-lg border border-border bg-surface p-5">
           <h2 className="font-semibold">Income tax regime</h2>
-          <p className="mt-1 text-sm text-zinc-600 dark:text-zinc-400">
+          <p className="mt-1 text-sm text-ink-soft">
             Only relevant for companies — LEKHA cannot determine which rate
             applies to you; the default is the higher, safer rate.
           </p>
@@ -265,12 +302,12 @@ export function CompanySettingsForm({
             </label>
 
             {taxRegimeError && (
-              <p className="rounded-md bg-red-50 px-3 py-2 text-sm text-red-700 dark:bg-red-950 dark:text-red-300">
+              <p className="rounded-md bg-error-soft px-3 py-2 text-sm text-error">
                 {taxRegimeError}
               </p>
             )}
             {taxRegimeSaved && !taxRegimeError && (
-              <p className="rounded-md bg-emerald-50 px-3 py-2 text-sm text-emerald-800 dark:bg-emerald-950 dark:text-emerald-300">
+              <p className="rounded-md bg-success-soft px-3 py-2 text-sm text-success">
                 Saved.
               </p>
             )}
@@ -278,9 +315,56 @@ export function CompanySettingsForm({
             <button
               type="submit"
               disabled={taxRegimeBusy}
-              className="mt-1 self-start rounded-md bg-emerald-800 px-4 py-2 text-sm font-medium text-white transition hover:bg-emerald-700 disabled:opacity-50 dark:bg-emerald-700 dark:hover:bg-emerald-600"
+              className="mt-1 self-start rounded-lg bg-accent px-4 py-2 text-sm font-semibold text-accent-ink transition-colors hover:opacity-90 disabled:opacity-50"
             >
               {taxRegimeBusy ? "Saving…" : "Save"}
+            </button>
+          </form>
+        </section>
+      )}
+
+      {PROFESSIONAL_TOGGLE_ENTITY_TYPES.has(entityType) && (
+        <section className="rounded-lg border border-border bg-surface p-5">
+          <h2 className="font-semibold">Tax audit — business or profession</h2>
+          <p className="mt-1 text-sm text-ink-soft">
+            Decides which Sec 44AB turnover threshold applies on the Tax
+            audit report: a flat ₹50 lakh for a specified profession (legal,
+            medical, engineering, architectural, accountancy, technical
+            consultancy, company secretary, IT and similar), or the
+            turnover-based ₹1 crore/₹10 crore business threshold otherwise.
+            LEKHA cannot infer this from your ledgers — most businesses
+            should leave this off.
+          </p>
+          <form onSubmit={onProfessionalSubmit} className="mt-4 flex flex-col gap-3">
+            <label className="flex items-center gap-2.5">
+              <input
+                type="checkbox"
+                checked={professionalInput}
+                onChange={(e) => setProfessionalInput(e.target.checked)}
+                className="h-4 w-4 rounded border-border-strong accent-accent"
+              />
+              <span className="text-sm font-medium">
+                This company&rsquo;s income is from a specified profession
+              </span>
+            </label>
+
+            {professionalError && (
+              <p className="rounded-md bg-error-soft px-3 py-2 text-sm text-error">
+                {professionalError}
+              </p>
+            )}
+            {professionalSaved && !professionalError && (
+              <p className="rounded-md bg-success-soft px-3 py-2 text-sm text-success">
+                Saved.
+              </p>
+            )}
+
+            <button
+              type="submit"
+              disabled={professionalBusy}
+              className="mt-1 self-start rounded-lg bg-accent px-4 py-2 text-sm font-semibold text-accent-ink transition-colors hover:opacity-90 disabled:opacity-50"
+            >
+              {professionalBusy ? "Saving…" : "Save"}
             </button>
           </form>
         </section>
