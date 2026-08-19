@@ -12,6 +12,7 @@ type Ledger = {
   opening_balance_amount: number;
   opening_balance_type: string;
   is_active: boolean;
+  pan: string | null;
   is_tds_deductee: boolean;
   default_tds_section: string | null;
   udyam_number: string | null;
@@ -31,6 +32,8 @@ type TdsSection = { section_code: string; description: string; rate_percent: num
 
 // Mirrors app_private.is_valid_udyam exactly.
 const UDYAM_PATTERN = /^UDYAM-[A-Z]{2}-[0-9]{2}-[0-9]{7}$/;
+// Mirrors app_private.is_valid_pan exactly.
+const PAN_PATTERN = /^[A-Z]{5}[0-9]{4}[A-Z]$/;
 
 export function LedgerManager({
   companyId,
@@ -56,6 +59,7 @@ export function LedgerManager({
   );
   const [opening, setOpening] = useState("0");
   const [openingType, setOpeningType] = useState<"debit" | "credit">("debit");
+  const [pan, setPan] = useState("");
   const [isTdsDeductee, setIsTdsDeductee] = useState(false);
   const [tdsSection, setTdsSection] = useState("");
   const [isMsme, setIsMsme] = useState(false);
@@ -69,6 +73,7 @@ export function LedgerManager({
   const sectionRate = (code: string | null) =>
     tdsSections.find((s) => s.section_code === code)?.rate_percent;
   const udyamLooksValid = udyam.length === 0 || UDYAM_PATTERN.test(udyam);
+  const panLooksValid = pan.length === 0 || PAN_PATTERN.test(pan);
 
   async function onSubmit(e: React.FormEvent) {
     e.preventDefault();
@@ -81,6 +86,7 @@ export function LedgerManager({
       name: name.trim(),
       opening_balance_amount: Number(opening) || 0,
       opening_balance_type: openingType,
+      pan: pan.trim() || null,
       is_tds_deductee: isTdsDeductee,
       default_tds_section: isTdsDeductee ? tdsSection || null : null,
       udyam_number: isMsme ? udyam.trim() || null : null,
@@ -96,6 +102,7 @@ export function LedgerManager({
 
     setName("");
     setOpening("0");
+    setPan("");
     setIsTdsDeductee(false);
     setTdsSection("");
     setIsMsme(false);
@@ -118,6 +125,7 @@ export function LedgerManager({
               <tr className="border-b border-zinc-200 text-left text-[11px] uppercase tracking-wide text-zinc-500 dark:border-zinc-800">
                 <th className="px-4 py-2.5 font-medium">Ledger</th>
                 <th className="px-4 py-2.5 font-medium">Group</th>
+                <th className="px-4 py-2.5 font-medium">PAN</th>
                 {tdsOn && <th className="px-4 py-2.5 font-medium">TDS</th>}
                 {msmeOn && <th className="px-4 py-2.5 font-medium">MSME</th>}
                 <th className="px-4 py-2.5 text-right font-medium">Opening</th>
@@ -127,7 +135,7 @@ export function LedgerManager({
               {initialLedgers.length === 0 && (
                 <tr>
                   <td
-                    colSpan={3 + (tdsOn ? 1 : 0) + (msmeOn ? 1 : 0)}
+                    colSpan={4 + (tdsOn ? 1 : 0) + (msmeOn ? 1 : 0)}
                     className="px-4 py-10 text-center text-zinc-500"
                   >
                     No ledgers yet. Create one on the right.
@@ -142,6 +150,9 @@ export function LedgerManager({
                   <td className="px-4 py-2.5 font-medium">{l.name}</td>
                   <td className="px-4 py-2.5 text-zinc-600 dark:text-zinc-400">
                     {groupName(l.group_id)}
+                  </td>
+                  <td className="px-4 py-2.5 font-mono text-xs text-zinc-600 dark:text-zinc-400">
+                    {l.pan ?? <span className="text-zinc-400">—</span>}
                   </td>
                   {tdsOn && (
                     <td className="px-4 py-2.5 text-zinc-600 dark:text-zinc-400">
@@ -203,6 +214,28 @@ export function LedgerManager({
               onChange={(e) => setName(e.target.value)}
               className={field}
             />
+          </label>
+
+          <label className="flex flex-col gap-1.5">
+            <span className="text-sm font-medium">
+              PAN{" "}
+              <span className="font-normal text-zinc-500">
+                optional — sets the TCS no-PAN rate, shown on GST documents
+              </span>
+            </span>
+            <input
+              value={pan}
+              onChange={(e) => setPan(e.target.value.toUpperCase())}
+              maxLength={10}
+              placeholder="AAAAA0000A"
+              className={field + " font-mono uppercase"}
+            />
+            {pan.length > 0 && !panLooksValid && (
+              <span className="text-xs text-amber-800 dark:text-amber-300">
+                That doesn&rsquo;t match the PAN format (5 letters, 4 digits,
+                1 letter).
+              </span>
+            )}
           </label>
 
           <label className="flex flex-col gap-1.5">

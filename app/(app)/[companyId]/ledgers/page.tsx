@@ -12,7 +12,7 @@ export default async function LedgersPage({
       supabase
         .from("ledgers")
         .select(
-          "id, name, group_id, opening_balance_amount, opening_balance_type, is_active, is_tds_deductee, default_tds_section, udyam_number, msme_category, msme_payment_days"
+          "id, name, group_id, opening_balance_amount, opening_balance_type, is_active, pan, is_tds_deductee, default_tds_section, udyam_number, msme_category, msme_payment_days"
         )
         .eq("company_id", companyId)
         .order("name"),
