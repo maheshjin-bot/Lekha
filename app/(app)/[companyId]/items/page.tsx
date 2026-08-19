@@ -7,15 +7,20 @@ export default async function ItemsPage({
   const { companyId } = await params;
   const supabase = await createClient();
 
-  const [{ data: items }, { data: uoms }] = await Promise.all([
+  const [{ data: items }, { data: uoms }, { data: tcsSections }] = await Promise.all([
     supabase
       .from("items")
       .select(
-        "id, code, name, item_type, hsn_sac, uom, maintain_stock, opening_quantity, opening_value, sale_rate, gst_rate_percent, is_active"
+        "id, code, name, item_type, hsn_sac, uom, maintain_stock, opening_quantity, opening_value, sale_rate, gst_rate_percent, default_tcs_section, is_active"
       )
       .eq("company_id", companyId)
       .order("name"),
     supabase.from("ref_uom").select("code, name").order("name"),
+    supabase
+      .from("ref_tcs_sections")
+      .select("section_code, description, rate_percent")
+      .eq("is_active", true)
+      .order("sort_order"),
   ]);
 
   return (
@@ -26,7 +31,12 @@ export default async function ItemsPage({
         unit comes from the notified UQC list, because a GST return will not
         accept anything else.
       </p>
-      <ItemManager companyId={companyId} items={items ?? []} uoms={uoms ?? []} />
+      <ItemManager
+        companyId={companyId}
+        items={items ?? []}
+        uoms={uoms ?? []}
+        tcsSections={tcsSections ?? []}
+      />
     </main>
   );
 }

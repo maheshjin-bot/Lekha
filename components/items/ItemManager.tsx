@@ -17,8 +17,11 @@ type Item = {
   opening_value: number;
   sale_rate: number | null;
   gst_rate_percent: number;
+  default_tcs_section: string | null;
   is_active: boolean;
 };
+
+type TcsSection = { section_code: string; description: string; rate_percent: number };
 
 // The rates actually notified for goods and services — not every percentage
 // in between, so a typo like 12.5 does not sit unnoticed on an invoice.
@@ -28,10 +31,12 @@ export function ItemManager({
   companyId,
   items,
   uoms,
+  tcsSections,
 }: {
   companyId: string;
   items: Item[];
   uoms: { code: string; name: string }[];
+  tcsSections: TcsSection[];
 }) {
   const router = useRouter();
   const [name, setName] = useState("");
@@ -42,10 +47,13 @@ export function ItemManager({
   const [openingValue, setOpeningValue] = useState("0");
   const [saleRate, setSaleRate] = useState("");
   const [gstRate, setGstRate] = useState("18");
+  const [tcsSection, setTcsSection] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   const isService = itemType === "service";
+  const tcsSectionRate = (code: string | null) =>
+    tcsSections.find((s) => s.section_code === code)?.rate_percent;
 
   async function onSubmit(e: React.FormEvent) {
     e.preventDefault();
@@ -67,6 +75,7 @@ export function ItemManager({
         opening_value: isService ? 0 : Number(openingValue) || 0,
         sale_rate: saleRate.trim() ? Number(saleRate) : null,
         gst_rate_percent: Number(gstRate) || 0,
+        default_tcs_section: tcsSection || null,
       });
 
     if (error) {
@@ -80,6 +89,7 @@ export function ItemManager({
     setOpeningQty("0");
     setOpeningValue("0");
     setSaleRate("");
+    setTcsSection("");
     setBusy(false);
     router.refresh();
   }
@@ -99,13 +109,14 @@ export function ItemManager({
                 <th className="px-4 py-2.5 font-medium">Unit</th>
                 <th className="px-4 py-2.5 text-right font-medium">Opening</th>
                 <th className="px-4 py-2.5 text-right font-medium">GST</th>
+                <th className="px-4 py-2.5 font-medium">TCS</th>
                 <th className="px-4 py-2.5 text-right font-medium">Sale rate</th>
               </tr>
             </thead>
             <tbody>
               {items.length === 0 && (
                 <tr>
-                  <td colSpan={5} className="px-4 py-10 text-center text-zinc-500">
+                  <td colSpan={7} className="px-4 py-10 text-center text-zinc-500">
                     No items yet. Create one on the right.
                   </td>
                 </tr>
@@ -138,6 +149,20 @@ export function ItemManager({
                   </td>
                   <td className="px-4 py-2.5 text-right tabular-nums">
                     {it.gst_rate_percent > 0 ? `${it.gst_rate_percent}%` : <span className="text-zinc-400">—</span>}
+                  </td>
+                  <td className="px-4 py-2.5">
+                    {it.default_tcs_section ? (
+                      <span className="font-mono text-xs">
+                        {it.default_tcs_section}
+                        {tcsSectionRate(it.default_tcs_section) != null && (
+                          <span className="ml-1 text-zinc-400">
+                            {tcsSectionRate(it.default_tcs_section)}%
+                          </span>
+                        )}
+                      </span>
+                    ) : (
+                      <span className="text-zinc-400">—</span>
+                    )}
                   </td>
                   <td className="px-4 py-2.5 text-right tabular-nums">
                     {it.sale_rate ? formatINR(it.sale_rate) : <span className="text-zinc-400">—</span>}
@@ -241,6 +266,24 @@ export function ItemManager({
               {GST_RATES.map((r) => (
                 <option key={r} value={r}>
                   {r}%{r === 0 ? " — Nil / exempt" : ""}
+                </option>
+              ))}
+            </select>
+          </label>
+
+          <label className="flex flex-col gap-1.5">
+            <span className="text-sm font-medium">
+              TCS section{" "}
+              <span className="font-normal text-zinc-500">
+                optional — only the specified goods 206C still covers (scrap,
+                minerals, liquor, vehicles, timber…)
+              </span>
+            </span>
+            <select value={tcsSection} onChange={(e) => setTcsSection(e.target.value)} className={field}>
+              <option value="">Not applicable</option>
+              {tcsSections.map((s) => (
+                <option key={s.section_code} value={s.section_code}>
+                  {s.section_code} — {s.rate_percent}%
                 </option>
               ))}
             </select>
