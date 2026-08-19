@@ -1,3 +1,4 @@
+import Link from "next/link";
 import { createClient } from "@/lib/supabase/server";
 import { CompanySettingsForm } from "@/components/companies/CompanySettingsForm";
 
@@ -33,6 +34,19 @@ export default async function SettingsPage({
         companyTaxRegime={company?.company_tax_regime ?? "default_30"}
         isProfessional={company?.is_professional ?? false}
       />
+
+      <Link
+        href={`/${companyId}/settings/modules`}
+        className="mt-8 flex items-center justify-between rounded-lg border border-border bg-surface p-5 transition-colors hover:bg-surface-2"
+      >
+        <span>
+          <span className="block font-semibold text-ink">Modules</span>
+          <span className="mt-0.5 block text-sm text-ink-soft">
+            What this company runs — core, conditional and optional, one screen.
+          </span>
+        </span>
+        <span aria-hidden className="text-ink-faint">→</span>
+      </Link>
     </main>
   );
 }
