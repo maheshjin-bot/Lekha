@@ -27,6 +27,14 @@ function taxYearBounds(): { from: string; to: string; label: string } {
   };
 }
 
+const SEC43B_LABEL: Record<string, string> = {
+  statutory_dues: "Tax, duty, cess or fee",
+  employee_welfare_fund: "PF/superannuation/gratuity fund",
+  bonus_commission: "Bonus or commission",
+  specified_interest: "Interest — bank/PFI/NBFC loan",
+  leave_encashment: "Leave encashment",
+};
+
 const REPORT_FORM_LABEL: Record<string, string> = {
   "3ca": "Form 3CA — accounts already audited under another law (e.g. Companies Act)",
   "3cb": "Form 3CB — no other statutory audit; the tax auditor audits the accounts directly",
@@ -93,6 +101,13 @@ export default async function TaxAuditPage({
   ]);
   const loanReceipts = loanReceiptRows ?? [];
   const loanRepayments = loanRepaymentRows ?? [];
+
+  const { data: sec43bRows } = await supabase.rpc("get_general_sec43b_dues", {
+    p_company_id: companyId,
+    p_fy_start: from,
+    p_fy_end: to,
+  });
+  const sec43bDues = sec43bRows ?? [];
 
   const result = appRows?.[0] ?? null;
   const clauses = clauseRows ?? [];
@@ -382,15 +397,60 @@ export default async function TaxAuditPage({
         </tbody>
       </table>
 
+      <div className="border-b border-t border-border p-4">
+        <h2 className="font-semibold">Clause 26 (general) — Sec 43B dues outstanding at year end</h2>
+        <p className="mt-0.5 text-xs text-ink-faint">
+          The balance on every ledger flagged with a Sec 43B category —
+          statutory dues, PF/gratuity, bonus/commission, specified-lender
+          loan interest, leave encashment — still outstanding at the end of
+          the year, including any brought forward from an earlier year.
+          Candidates for disallowance, not a computed figure: paid before
+          the return&rsquo;s due date, an amount below is still fully
+          deductible — LEKHA does not track that date. MSME dues are
+          covered separately, above. Set a ledger&rsquo;s category from
+          the ledger&rsquo;s own form on the Ledgers page.
+        </p>
+      </div>
+      <table className="w-full min-w-[600px] text-sm">
+        <thead>
+          <tr className="border-b border-border text-left">
+            <th className={th}>Ledger</th>
+            <th className={th}>Category</th>
+            <th className={th + " text-right"}>Outstanding</th>
+          </tr>
+        </thead>
+        <tbody>
+          {sec43bDues.length === 0 && (
+            <tr>
+              <td colSpan={3} className="px-4 py-8 text-center text-ink-faint">
+                No flagged ledger has an outstanding balance at year end.
+              </td>
+            </tr>
+          )}
+          {sec43bDues.map((d) => (
+            <tr key={d.ledger_id} className="border-b border-border last:border-0">
+              <td className={td}>{d.ledger_name}</td>
+              <td className={td + " text-ink-soft"}>
+                {SEC43B_LABEL[d.category as string] ?? d.category}
+              </td>
+              <td className={num + " font-medium text-warning"}>
+                {formatINR(Number(d.outstanding_amount), { showZero: true })}
+              </td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+
       <p className="border-t border-border px-4 py-3 text-xs text-ink-faint">
         {inventoryOn ? "Ten" : "Nine"} of Form 3CD&rsquo;s roughly 44
         clauses are auto-filled above (13(a), 14(a), 18, 21(c), 21(d), 23,
-        26, 31, 34(a){inventoryOn ? ", 35" : ""}) — the ones LEKHA already
-        computes elsewhere in this app. Every other clause — general
-        (non-MSME) Sec 43B items, and clause 44&rsquo;s break-up of
-        expenditure by supplier GST-registration status among them —
-        needs data this schema does not hold at the right grain and must
-        be prepared manually. Clause 44 specifically needs every expense
+        26 — now covering both MSME dues and the general (non-MSME)
+        categories in its own section — 31, 34(a){inventoryOn ? ", 35" : ""}) —
+        the ones LEKHA already computes elsewhere in this app. Every other
+        clause — clause 44&rsquo;s break-up of expenditure by supplier
+        GST-registration status among them — needs data this schema does
+        not hold at the right grain and must be prepared manually. Clause
+        44 specifically needs every expense
         posting classified by its supplier&rsquo;s GST-registration status,
         but most expense postings in this app never carry a supplier GSTIN
         at all — only formal GST purchase invoices do — so LEKHA cannot

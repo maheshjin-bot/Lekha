@@ -1372,6 +1372,7 @@ export type Database = {
           party_type: string | null
           phone: string | null
           pincode: string | null
+          sec43b_category: string | null
           state_code: string | null
           udyam_number: string | null
           updated_at: string
@@ -1412,6 +1413,7 @@ export type Database = {
           party_type?: string | null
           phone?: string | null
           pincode?: string | null
+          sec43b_category?: string | null
           state_code?: string | null
           udyam_number?: string | null
           updated_at?: string
@@ -1452,6 +1454,7 @@ export type Database = {
           party_type?: string | null
           phone?: string | null
           pincode?: string | null
+          sec43b_category?: string | null
           state_code?: string | null
           udyam_number?: string | null
           updated_at?: string
@@ -2496,6 +2499,15 @@ export type Database = {
           value_numeric: number
           value_text: string
           value_type: string
+        }[]
+      }
+      get_general_sec43b_dues: {
+        Args: { p_company_id: string; p_fy_end: string; p_fy_start: string }
+        Returns: {
+          category: string
+          ledger_id: string
+          ledger_name: string
+          outstanding_amount: number
         }[]
       }
       get_gst_input_register: {

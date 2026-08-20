@@ -21,6 +21,7 @@ type Ledger = {
   is_partner_remuneration: boolean;
   is_related_party: boolean;
   is_loan_or_deposit: boolean;
+  sec43b_category: string | null;
 };
 
 type Group = {
@@ -38,6 +39,15 @@ const UDYAM_PATTERN = /^UDYAM-[A-Z]{2}-[0-9]{2}-[0-9]{7}$/;
 // Mirrors app_private.is_valid_pan exactly.
 const PAN_PATTERN = /^[A-Z]{5}[0-9]{4}[A-Z]$/;
 
+// Short labels for the sec43b_category check-constraint values.
+const SEC43B_LABEL: Record<string, string> = {
+  statutory_dues: "Tax/duty/cess/fee",
+  employee_welfare_fund: "PF/gratuity fund",
+  bonus_commission: "Bonus/commission",
+  specified_interest: "Bank/PFI interest",
+  leave_encashment: "Leave encashment",
+};
+
 export function LedgerManager({
   companyId,
   initialLedgers,
@@ -48,6 +58,7 @@ export function LedgerManager({
   partnerRemunerationOn,
   relatedPartyOn,
   loanTrackingOn,
+  sec43bOn,
 }: {
   companyId: string;
   initialLedgers: Ledger[];
@@ -58,6 +69,7 @@ export function LedgerManager({
   partnerRemunerationOn: boolean;
   relatedPartyOn: boolean;
   loanTrackingOn: boolean;
+  sec43bOn: boolean;
 }) {
   const router = useRouter();
   const [name, setName] = useState("");
@@ -78,6 +90,7 @@ export function LedgerManager({
   const [isPartnerRemuneration, setIsPartnerRemuneration] = useState(false);
   const [isRelatedParty, setIsRelatedParty] = useState(false);
   const [isLoanOrDeposit, setIsLoanOrDeposit] = useState(false);
+  const [sec43bCategory, setSec43bCategory] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -107,6 +120,7 @@ export function LedgerManager({
       is_partner_remuneration: isPartnerRemuneration,
       is_related_party: isRelatedParty,
       is_loan_or_deposit: isLoanOrDeposit,
+      sec43b_category: sec43bCategory || null,
     });
 
     if (error) {
@@ -127,6 +141,7 @@ export function LedgerManager({
     setIsPartnerRemuneration(false);
     setIsRelatedParty(false);
     setIsLoanOrDeposit(false);
+    setSec43bCategory("");
     setBusy(false);
     router.refresh();
   }
@@ -149,6 +164,7 @@ export function LedgerManager({
                 {partnerRemunerationOn && <th className="px-4 py-2.5 font-medium">Sec 40(b)</th>}
                 {relatedPartyOn && <th className="px-4 py-2.5 font-medium">Related party</th>}
                 {loanTrackingOn && <th className="px-4 py-2.5 font-medium">Loan/deposit</th>}
+                {sec43bOn && <th className="px-4 py-2.5 font-medium">Sec 43B</th>}
                 <th className="px-4 py-2.5 text-right font-medium">Opening</th>
               </tr>
             </thead>
@@ -162,7 +178,8 @@ export function LedgerManager({
                       (msmeOn ? 1 : 0) +
                       (partnerRemunerationOn ? 1 : 0) +
                       (relatedPartyOn ? 1 : 0) +
-                      (loanTrackingOn ? 1 : 0)
+                      (loanTrackingOn ? 1 : 0) +
+                      (sec43bOn ? 1 : 0)
                     }
                     className="px-4 py-10 text-center text-ink-faint"
                   >
@@ -234,6 +251,15 @@ export function LedgerManager({
                     <td className="px-4 py-2.5 text-ink-soft">
                       {l.is_loan_or_deposit ? (
                         <span className="text-xs">Sec 269SS/T</span>
+                      ) : (
+                        <span className="text-ink-faint">—</span>
+                      )}
+                    </td>
+                  )}
+                  {sec43bOn && (
+                    <td className="px-4 py-2.5 text-ink-soft">
+                      {l.sec43b_category ? (
+                        <span className="text-xs">{SEC43B_LABEL[l.sec43b_category] ?? l.sec43b_category}</span>
                       ) : (
                         <span className="text-ink-faint">—</span>
                       )}
@@ -495,6 +521,34 @@ export function LedgerManager({
                 the outstanding balance from this person reaches
                 ₹20,000, since both sections require an account-payee
                 cheque, draft or electronic mode above that limit.
+              </span>
+            </div>
+          )}
+
+          {sec43bOn && (
+            <div className="rounded-md border border-border p-3">
+              <label className="flex flex-col gap-1.5">
+                <span className="text-sm font-medium">Sec 43B category</span>
+                <select
+                  value={sec43bCategory}
+                  onChange={(e) => setSec43bCategory(e.target.value)}
+                  className={field}
+                >
+                  <option value="">Not applicable</option>
+                  <option value="statutory_dues">Tax, duty, cess or fee</option>
+                  <option value="employee_welfare_fund">PF/superannuation/gratuity fund</option>
+                  <option value="bonus_commission">Bonus or commission</option>
+                  <option value="specified_interest">Interest — bank/PFI/NBFC loan only</option>
+                  <option value="leave_encashment">Leave encashment</option>
+                </select>
+              </label>
+              <span className="mt-1 block text-xs text-ink-faint">
+                Deductible only when actually paid, not merely accrued — the
+                tax audit report lists this ledger&rsquo;s outstanding
+                balance at year end as a candidate disallowance under Form
+                3CD clause 26. Don&rsquo;t use &ldquo;Interest&rdquo; for a
+                director or other unspecified lender — Sec 43B only reaches
+                interest owed to a bank, PFI or NBFC.
               </span>
             </div>
           )}
