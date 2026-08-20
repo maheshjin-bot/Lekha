@@ -1353,6 +1353,7 @@ export type Database = {
           gstin: string | null
           id: string
           is_active: boolean
+          is_loan_or_deposit: boolean
           is_partner_remuneration: boolean
           is_related_party: boolean
           is_tds_deductee: boolean
@@ -1392,6 +1393,7 @@ export type Database = {
           gstin?: string | null
           id?: string
           is_active?: boolean
+          is_loan_or_deposit?: boolean
           is_partner_remuneration?: boolean
           is_related_party?: boolean
           is_tds_deductee?: boolean
@@ -1431,6 +1433,7 @@ export type Database = {
           gstin?: string | null
           id?: string
           is_active?: boolean
+          is_loan_or_deposit?: boolean
           is_partner_remuneration?: boolean
           is_related_party?: boolean
           is_tds_deductee?: boolean
@@ -2678,6 +2681,28 @@ export type Database = {
           ledger_id: string
           ledger_name: string
           pan: string
+        }[]
+      }
+      get_sec269ss_loan_receipts: {
+        Args: { p_company_id: string; p_fy_end: string; p_fy_start: string }
+        Returns: {
+          amount_received: number
+          balance_after: number
+          ledger_id: string
+          ledger_name: string
+          receipt_date: string
+          voucher_id: string
+        }[]
+      }
+      get_sec269t_loan_repayments: {
+        Args: { p_company_id: string; p_fy_end: string; p_fy_start: string }
+        Returns: {
+          amount_repaid: number
+          balance_before: number
+          ledger_id: string
+          ledger_name: string
+          repayment_date: string
+          voucher_id: string
         }[]
       }
       get_sec40a3_cash_payments: {

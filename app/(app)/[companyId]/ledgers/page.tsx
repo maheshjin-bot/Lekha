@@ -12,7 +12,7 @@ export default async function LedgersPage({
       supabase
         .from("ledgers")
         .select(
-          "id, name, group_id, opening_balance_amount, opening_balance_type, is_active, pan, is_tds_deductee, default_tds_section, udyam_number, msme_category, msme_payment_days, is_partner_remuneration, is_related_party"
+          "id, name, group_id, opening_balance_amount, opening_balance_type, is_active, pan, is_tds_deductee, default_tds_section, udyam_number, msme_category, msme_payment_days, is_partner_remuneration, is_related_party, is_loan_or_deposit"
         )
         .eq("company_id", companyId)
         .order("name"),
@@ -40,6 +40,8 @@ export default async function LedgersPage({
   // Sec 40A(2)(b) applies to any entity type — gated on the tax audit
   // module rather than entity_type, same reasoning as the report itself.
   const relatedPartyOn = (modules ?? []).some((m) => m.code === "tax_audit" && m.active);
+  // Sec 269SS/269T likewise applies to any entity type — same tax_audit gate.
+  const loanTrackingOn = relatedPartyOn;
 
   return (
     <main className="mx-auto max-w-5xl px-6 py-10">
@@ -57,6 +59,7 @@ export default async function LedgersPage({
         msmeOn={msmeOn}
         partnerRemunerationOn={partnerRemunerationOn}
         relatedPartyOn={relatedPartyOn}
+        loanTrackingOn={loanTrackingOn}
       />
     </main>
   );

@@ -20,6 +20,7 @@ type Ledger = {
   msme_payment_days: number | null;
   is_partner_remuneration: boolean;
   is_related_party: boolean;
+  is_loan_or_deposit: boolean;
 };
 
 type Group = {
@@ -46,6 +47,7 @@ export function LedgerManager({
   msmeOn,
   partnerRemunerationOn,
   relatedPartyOn,
+  loanTrackingOn,
 }: {
   companyId: string;
   initialLedgers: Ledger[];
@@ -55,6 +57,7 @@ export function LedgerManager({
   msmeOn: boolean;
   partnerRemunerationOn: boolean;
   relatedPartyOn: boolean;
+  loanTrackingOn: boolean;
 }) {
   const router = useRouter();
   const [name, setName] = useState("");
@@ -74,6 +77,7 @@ export function LedgerManager({
   const [msmePaymentDays, setMsmePaymentDays] = useState("");
   const [isPartnerRemuneration, setIsPartnerRemuneration] = useState(false);
   const [isRelatedParty, setIsRelatedParty] = useState(false);
+  const [isLoanOrDeposit, setIsLoanOrDeposit] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -102,6 +106,7 @@ export function LedgerManager({
       msme_payment_days: isMsme && msmePaymentDays ? Number(msmePaymentDays) : null,
       is_partner_remuneration: isPartnerRemuneration,
       is_related_party: isRelatedParty,
+      is_loan_or_deposit: isLoanOrDeposit,
     });
 
     if (error) {
@@ -121,6 +126,7 @@ export function LedgerManager({
     setMsmePaymentDays("");
     setIsPartnerRemuneration(false);
     setIsRelatedParty(false);
+    setIsLoanOrDeposit(false);
     setBusy(false);
     router.refresh();
   }
@@ -142,6 +148,7 @@ export function LedgerManager({
                 {msmeOn && <th className="px-4 py-2.5 font-medium">MSME</th>}
                 {partnerRemunerationOn && <th className="px-4 py-2.5 font-medium">Sec 40(b)</th>}
                 {relatedPartyOn && <th className="px-4 py-2.5 font-medium">Related party</th>}
+                {loanTrackingOn && <th className="px-4 py-2.5 font-medium">Loan/deposit</th>}
                 <th className="px-4 py-2.5 text-right font-medium">Opening</th>
               </tr>
             </thead>
@@ -154,7 +161,8 @@ export function LedgerManager({
                       (tdsOn ? 1 : 0) +
                       (msmeOn ? 1 : 0) +
                       (partnerRemunerationOn ? 1 : 0) +
-                      (relatedPartyOn ? 1 : 0)
+                      (relatedPartyOn ? 1 : 0) +
+                      (loanTrackingOn ? 1 : 0)
                     }
                     className="px-4 py-10 text-center text-ink-faint"
                   >
@@ -217,6 +225,15 @@ export function LedgerManager({
                     <td className="px-4 py-2.5 text-ink-soft">
                       {l.is_related_party ? (
                         <span className="text-xs">Sec 40A(2)(b)</span>
+                      ) : (
+                        <span className="text-ink-faint">—</span>
+                      )}
+                    </td>
+                  )}
+                  {loanTrackingOn && (
+                    <td className="px-4 py-2.5 text-ink-soft">
+                      {l.is_loan_or_deposit ? (
+                        <span className="text-xs">Sec 269SS/T</span>
                       ) : (
                         <span className="text-ink-faint">—</span>
                       )}
@@ -458,6 +475,26 @@ export function LedgerManager({
                 the assessee/director/partner has a substantial interest —
                 the tax audit report lists actual payments made to this
                 ledger under Form 3CD clause 23.
+              </span>
+            </div>
+          )}
+
+          {loanTrackingOn && (
+            <div className="rounded-md border border-border p-3">
+              <label className="flex items-center gap-2 text-sm font-medium">
+                <input
+                  type="checkbox"
+                  checked={isLoanOrDeposit}
+                  onChange={(e) => setIsLoanOrDeposit(e.target.checked)}
+                />
+                Loan/deposit ledger (Sec 269SS/269T)
+              </label>
+              <span className="mt-1 block text-xs text-ink-faint">
+                One ledger per lender or depositor — the tax audit report
+                flags any cash acceptance or repayment on this ledger once
+                the outstanding balance from this person reaches
+                ₹20,000, since both sections require an account-payee
+                cheque, draft or electronic mode above that limit.
               </span>
             </div>
           )}

@@ -79,6 +79,21 @@ export default async function TaxAuditPage({
   });
   const relatedPartyPayments = relatedPartyRows ?? [];
 
+  const [{ data: loanReceiptRows }, { data: loanRepaymentRows }] = await Promise.all([
+    supabase.rpc("get_sec269ss_loan_receipts", {
+      p_company_id: companyId,
+      p_fy_start: from,
+      p_fy_end: to,
+    }),
+    supabase.rpc("get_sec269t_loan_repayments", {
+      p_company_id: companyId,
+      p_fy_start: from,
+      p_fy_end: to,
+    }),
+  ]);
+  const loanReceipts = loanReceiptRows ?? [];
+  const loanRepayments = loanRepaymentRows ?? [];
+
   const result = appRows?.[0] ?? null;
   const clauses = clauseRows ?? [];
   const period = `FY ${label} · ${from} to ${to} · calendar April–March tax year, not this company's book year`;
@@ -310,16 +325,72 @@ export default async function TaxAuditPage({
         </tbody>
       </table>
 
+      <div className="border-b border-t border-border p-4">
+        <h2 className="font-semibold">Clause 31 — Sec 269SS/269T cash loan/deposit candidates</h2>
+        <p className="mt-0.5 text-xs text-ink-faint">
+          Cash accepted or repaid on a ledger flagged as a loan/deposit,
+          wherever the outstanding balance from that lender reaches
+          ₹20,000 — both sections test the aggregate held from one person,
+          not just the single transaction. Candidates for your review, not
+          a computed penalty: LEKHA cannot identify a &ldquo;specified
+          sum&rdquo; property-transfer advance, and treats every bank-mode
+          movement as compliant since it cannot tell an account-payee
+          instrument from a bearer one. Flag a ledger as a loan/deposit
+          from the ledger&rsquo;s own form on the Ledgers page.
+        </p>
+      </div>
+      <table className="w-full min-w-[640px] text-sm">
+        <thead>
+          <tr className="border-b border-border text-left">
+            <th className={th}>Lender</th>
+            <th className={th}>Date</th>
+            <th className={th}>Direction</th>
+            <th className={th + " text-right"}>Amount</th>
+            <th className={th + " text-right"}>Balance</th>
+          </tr>
+        </thead>
+        <tbody>
+          {loanReceipts.length === 0 && loanRepayments.length === 0 && (
+            <tr>
+              <td colSpan={5} className="px-4 py-8 text-center text-ink-faint">
+                No cash acceptance or repayment crossed ₹20,000 outstanding this year.
+              </td>
+            </tr>
+          )}
+          {loanReceipts.map((r, i) => (
+            <tr key={`ss-${r.ledger_id}-${i}`} className="border-b border-border last:border-0">
+              <td className={td}>{r.ledger_name}</td>
+              <td className={td}>{r.receipt_date}</td>
+              <td className={td + " text-ink-soft"}>Accepted (269SS)</td>
+              <td className={num + " font-medium text-warning"}>
+                {formatINR(Number(r.amount_received), { showZero: true })}
+              </td>
+              <td className={num}>{formatINR(Number(r.balance_after), { showZero: true })}</td>
+            </tr>
+          ))}
+          {loanRepayments.map((r, i) => (
+            <tr key={`t-${r.ledger_id}-${i}`} className="border-b border-border last:border-0">
+              <td className={td}>{r.ledger_name}</td>
+              <td className={td}>{r.repayment_date}</td>
+              <td className={td + " text-ink-soft"}>Repaid (269T)</td>
+              <td className={num + " font-medium text-warning"}>
+                {formatINR(Number(r.amount_repaid), { showZero: true })}
+              </td>
+              <td className={num}>{formatINR(Number(r.balance_before), { showZero: true })}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+
       <p className="border-t border-border px-4 py-3 text-xs text-ink-faint">
-        {inventoryOn ? "Nine" : "Eight"} of Form 3CD&rsquo;s roughly 44
+        {inventoryOn ? "Ten" : "Nine"} of Form 3CD&rsquo;s roughly 44
         clauses are auto-filled above (13(a), 14(a), 18, 21(c), 21(d), 23,
-        26, 34(a){inventoryOn ? ", 35" : ""}) — the ones LEKHA already
-        computes elsewhere in this app. Every other clause —
-        loans/deposits under Sec 269SS/269T, general (non-MSME)
-        Sec 43B items, and clause 44&rsquo;s break-up of expenditure by
-        supplier GST-registration status among them — needs data this
-        schema does not hold at the right grain and must be prepared
-        manually. Clause 44 specifically needs every expense
+        26, 31, 34(a){inventoryOn ? ", 35" : ""}) — the ones LEKHA already
+        computes elsewhere in this app. Every other clause — general
+        (non-MSME) Sec 43B items, and clause 44&rsquo;s break-up of
+        expenditure by supplier GST-registration status among them —
+        needs data this schema does not hold at the right grain and must
+        be prepared manually. Clause 44 specifically needs every expense
         posting classified by its supplier&rsquo;s GST-registration status,
         but most expense postings in this app never carry a supplier GSTIN
         at all — only formal GST purchase invoices do — so LEKHA cannot
