@@ -197,6 +197,64 @@ describeDb(`accounting invariants (${hasDb ? "live" : noDbReason})`, () => {
 });
 
 // ---------------------------------------------------------------------------
+// GST/TDS report reconciliation
+// ---------------------------------------------------------------------------
+// Both 0051 and 0053 derive their own totals independently of the reports
+// they must agree with (get_gst_output_register, and the raw TDS Payable
+// postings respectively) — proration and attribution logic that, if it ever
+// drifts, produces a report whose own numbers don't add up. A hand-check
+// against live seed data caught one such bug during development (a
+// proration divide left unrounded, printing 4499.9999999999999999730000
+// instead of 4500.00) before it ever shipped; these two checks make sure a
+// future migration can't reintroduce that class of bug unnoticed.
+describeDb(`GST/TDS report reconciliation (${hasDb ? "live" : noDbReason})`, () => {
+  it("GSTR-1 HSN summary's total tax equals the GST output register's total tax, per company", async () => {
+    // Same underlying postings, sliced two different ways (by HSN vs by
+    // voucher) — a whole-of-time window per company so nothing is cut off by
+    // an arbitrary date range.
+    const rows = await sql(`
+      select * from (
+        select c.id, c.name,
+          (select coalesce(sum(h.cgst + h.sgst + h.igst + h.cess), 0)
+             from public.get_gstr1_hsn_summary(c.id, '1900-01-01'::date, '2999-12-31'::date, null) h
+          ) as hsn_summary_tax,
+          (select coalesce(sum(r.cgst + r.sgst + r.igst + r.cess), 0)
+             from public.get_gst_output_register(c.id, '1900-01-01'::date, '2999-12-31'::date, null) r
+          ) as output_register_tax
+          from public.companies c
+      ) t
+      where hsn_summary_tax <> output_register_tax
+    `);
+    expect(rows, `companies where the HSN summary and output register disagree:\n${offenders(rows)}`).toEqual([]);
+  });
+
+  it("TDS deductee summary's total equals the raw credit-side TDS Payable postings, per company", async () => {
+    // get_tds_deductee_summary buckets by deductee (including an explicit
+    // "unattributed" bucket for genuine ambiguity) — the SUM across every
+    // bucket must still equal the ledger's own actual movement, whole-of-time,
+    // regardless of how the attribution logic groups the rows.
+    const rows = await sql(`
+      select * from (
+        select c.id, c.name,
+          (select coalesce(sum(s.tds_deducted), 0)
+             from public.get_tds_deductee_summary(c.id, '1900-01-01'::date, '2999-12-31'::date) s
+          ) as summary_total,
+          (select coalesce(sum(e.credit_amount), 0)
+             from public.voucher_entries e
+             join public.tax_ledger_map m on m.ledger_id = e.ledger_id and m.company_id = e.company_id
+             join public.vouchers v on v.id = e.voucher_id and v.company_id = e.company_id
+            where e.company_id = c.id and m.purpose = 'tds_payable'
+              and e.credit_amount > 0 and not v.is_deleted
+          ) as raw_credit_total
+          from public.companies c
+      ) t
+      where summary_total <> raw_credit_total
+    `);
+    expect(rows, `companies where the TDS summary and raw postings disagree:\n${offenders(rows)}`).toEqual([]);
+  });
+});
+
+// ---------------------------------------------------------------------------
 // Tenancy: what the catalog can prove without fixtures
 // ---------------------------------------------------------------------------
 describeDb(`tenancy and RLS, catalog-level (${hasDb ? "live" : noDbReason})`, () => {
