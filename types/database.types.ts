@@ -1641,6 +1641,84 @@ export type Database = {
           },
         ]
       }
+      payroll_ledger_map: {
+        Row: {
+          company_id: string
+          id: string
+          ledger_id: string
+          purpose: string
+        }
+        Insert: {
+          company_id: string
+          id?: string
+          ledger_id: string
+          purpose: string
+        }
+        Update: {
+          company_id?: string
+          id?: string
+          ledger_id?: string
+          purpose?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "payroll_ledger_map_company_id_fkey"
+            columns: ["company_id"]
+            isOneToOne: false
+            referencedRelation: "companies"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "payroll_ledger_map_ledger_id_company_id_fkey"
+            columns: ["ledger_id", "company_id"]
+            isOneToOne: false
+            referencedRelation: "ledgers"
+            referencedColumns: ["id", "company_id"]
+          },
+        ]
+      }
+      payroll_postings: {
+        Row: {
+          company_id: string
+          id: string
+          period_month: string
+          posted_at: string
+          posted_by: string | null
+          voucher_id: string
+        }
+        Insert: {
+          company_id: string
+          id?: string
+          period_month: string
+          posted_at?: string
+          posted_by?: string | null
+          voucher_id: string
+        }
+        Update: {
+          company_id?: string
+          id?: string
+          period_month?: string
+          posted_at?: string
+          posted_by?: string | null
+          voucher_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "payroll_postings_company_id_fkey"
+            columns: ["company_id"]
+            isOneToOne: false
+            referencedRelation: "companies"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "payroll_postings_voucher_id_fkey"
+            columns: ["voucher_id"]
+            isOneToOne: false
+            referencedRelation: "vouchers"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       profiles: {
         Row: {
           avatar_url: string | null
@@ -2976,6 +3054,14 @@ export type Database = {
       match_bank_line: {
         Args: { p_statement_line_id: string; p_voucher_entry_id: string }
         Returns: undefined
+      }
+      post_payroll_run: {
+        Args: {
+          p_branch_id: string
+          p_company_id: string
+          p_period_month: string
+        }
+        Returns: string
       }
       reopen_period: {
         Args: { p_company_id: string; p_new_lock_date?: string }

@@ -2,6 +2,7 @@ import Link from "next/link";
 import { createClient } from "@/lib/supabase/server";
 import { formatINR } from "@/lib/utils/currency";
 import { ReportShell, num, td, th } from "@/components/reports/ReportShell";
+import { PostPayrollButton } from "@/components/employees/PostPayrollButton";
 
 /** Today as a local wall-clock date — not toISOString(), which is UTC. */
 function todayLocal(): string {
@@ -68,10 +69,25 @@ export default async function PayrollRegisterPage({
     );
   }
 
-  const { data: rows } = await supabase.rpc("get_payroll_run", {
-    p_company_id: companyId,
-    p_period_month: periodMonth,
-  });
+  const [{ data: rows }, { data: posting }, { data: branch }] = await Promise.all([
+    supabase.rpc("get_payroll_run", {
+      p_company_id: companyId,
+      p_period_month: periodMonth,
+    }),
+    supabase
+      .from("payroll_postings")
+      .select("voucher_id, posted_at")
+      .eq("company_id", companyId)
+      .eq("period_month", periodMonth)
+      .maybeSingle(),
+    supabase
+      .from("branches")
+      .select("id")
+      .eq("company_id", companyId)
+      .order("is_head_office", { ascending: false })
+      .limit(1)
+      .maybeSingle(),
+  ]);
 
   const runs = rows ?? [];
   const totals = runs.reduce(
@@ -92,26 +108,46 @@ export default async function PayrollRegisterPage({
   return (
     <ReportShell
       title="Payroll register"
-      period={`${label} · computed, not posted to the books`}
+      period={posting ? `${label} · posted to the books` : `${label} · computed, not posted to the books`}
       status={{
         label: `${formatINR(totals.net, { showZero: true })} net pay`,
         tone: "ok",
       }}
     >
-      <div className="flex items-center gap-2 border-b border-border p-4 text-sm">
-        <Link
-          href={`${base}?month=${shiftMonth(ym, -1)}`}
-          className="rounded-md border border-border-strong px-2.5 py-1 hover:bg-surface-2"
-        >
-          ← Prev
-        </Link>
-        <span className="px-2 font-medium">{label}</span>
-        <Link
-          href={`${base}?month=${shiftMonth(ym, 1)}`}
-          className="rounded-md border border-border-strong px-2.5 py-1 hover:bg-surface-2"
-        >
-          Next →
-        </Link>
+      <div className="flex items-center justify-between gap-3 border-b border-border p-4 text-sm">
+        <div className="flex items-center gap-2">
+          <Link
+            href={`${base}?month=${shiftMonth(ym, -1)}`}
+            className="rounded-md border border-border-strong px-2.5 py-1 hover:bg-surface-2"
+          >
+            ← Prev
+          </Link>
+          <span className="px-2 font-medium">{label}</span>
+          <Link
+            href={`${base}?month=${shiftMonth(ym, 1)}`}
+            className="rounded-md border border-border-strong px-2.5 py-1 hover:bg-surface-2"
+          >
+            Next →
+          </Link>
+        </div>
+        {posting ? (
+          <div className="text-right text-xs text-ink-faint">
+            Posted {posting.posted_at?.slice(0, 10)} —{" "}
+            <Link href={`/${companyId}/vouchers/${posting.voucher_id}`} className="underline">
+              view voucher
+            </Link>
+          </div>
+        ) : (
+          runs.length > 0 &&
+          branch?.id && (
+            <PostPayrollButton
+              companyId={companyId}
+              branchId={branch.id}
+              periodMonth={periodMonth}
+              monthLabel={label}
+            />
+          )
+        )}
       </div>
 
       <table className="w-full min-w-[880px] text-sm">
@@ -171,8 +207,22 @@ export default async function PayrollRegisterPage({
         levy it at all. Net pay does not deduct TDS on salary (Sec 192), which
         this app does not compute yet. A full month&rsquo;s structure is used
         regardless of actual days worked — mid-month joiners and leavers are
-        not prorated. This is a computation, not a posted payroll — no voucher
-        is created and no ledger is touched by this report.
+        not prorated.{" "}
+        {posting ? (
+          <>
+            Posted as a single journal voucher (Dr Salary Expense + Employer
+            PF/ESI Contribution, Cr PF/ESI/Professional Tax Payable + Salaries
+            Payable) — one aggregate liability ledger, not one per employee.
+            A correction needs a manual reversing entry; there is no unpost
+            action.
+          </>
+        ) : (
+          <>
+            Not yet posted — nothing here has touched a ledger. Posting
+            creates one journal voucher for the whole month&rsquo;s totals,
+            not a line per employee.
+          </>
+        )}
       </p>
     </ReportShell>
   );
