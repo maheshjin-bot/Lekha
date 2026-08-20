@@ -65,6 +65,13 @@ export default async function TaxAuditPage({
     : { data: null };
   const stockDetails = stockRows ?? [];
 
+  const { data: cashPaymentRows } = await supabase.rpc("get_sec40a3_cash_payments", {
+    p_company_id: companyId,
+    p_fy_start: from,
+    p_fy_end: to,
+  });
+  const cashPayments = cashPaymentRows ?? [];
+
   const result = appRows?.[0] ?? null;
   const clauses = clauseRows ?? [];
   const period = `FY ${label} · ${from} to ${to} · calendar April–March tax year, not this company's book year`;
@@ -213,17 +220,58 @@ export default async function TaxAuditPage({
         </>
       )}
 
+      <div className="border-b border-t border-border p-4">
+        <h2 className="font-semibold">Clause 21(d) — Sec 40A(3) cash-payment candidates</h2>
+        <p className="mt-0.5 text-xs text-ink-faint">
+          Cash paid to one payee in one day, aggregated across every voucher
+          that day, wherever it exceeds ₹10,000. These are candidates for
+          your review, not a computed disallowance — LEKHA cannot evaluate
+          Rule 6DD (payment to government, no banking facility, agricultural
+          produce and several more) or apply the ₹35,000 transporter-specific
+          limit, since nothing here identifies which payees are transporters.
+          A row below may turn out to be fully exempt on review.
+        </p>
+      </div>
+      <table className="w-full min-w-[600px] text-sm">
+        <thead>
+          <tr className="border-b border-border text-left">
+            <th className={th}>Payee</th>
+            <th className={th}>Date</th>
+            <th className={th + " text-right"}>Payments</th>
+            <th className={th + " text-right"}>Cash paid</th>
+          </tr>
+        </thead>
+        <tbody>
+          {cashPayments.length === 0 && (
+            <tr>
+              <td colSpan={4} className="px-4 py-8 text-center text-ink-faint">
+                No cash payment crossed ₹10,000 to one payee on one day this year.
+              </td>
+            </tr>
+          )}
+          {cashPayments.map((c, i) => (
+            <tr key={`${c.payee_ledger_id}-${c.payment_date}-${i}`} className="border-b border-border last:border-0">
+              <td className={td}>{c.payee_name}</td>
+              <td className={td}>{c.payment_date}</td>
+              <td className={num}>{c.payment_count}</td>
+              <td className={num + " font-medium text-warning"}>
+                {formatINR(Number(c.cash_amount), { showZero: true })}
+              </td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+
       <p className="border-t border-border px-4 py-3 text-xs text-ink-faint">
-        {inventoryOn ? "Seven" : "Six"} of Form 3CD&rsquo;s roughly 44 clauses
-        are auto-filled above (13(a), 14(a), 18, 21(c), 26, 34(a){inventoryOn
-          ? ", 35"
-          : ""}) — the ones LEKHA already computes elsewhere in this app.
-        Every other clause — the related-party register, loans/deposits
-        under Sec 269SS/269T, Sec 40A(3) cash-payment disallowance, general
-        (non-MSME) Sec 43B items, and clause 44&rsquo;s break-up of
-        expenditure by supplier GST-registration status among them — needs
-        data this schema does not hold at the right grain and must be
-        prepared manually. Clause 44 specifically needs every expense
+        {inventoryOn ? "Eight" : "Seven"} of Form 3CD&rsquo;s roughly 44
+        clauses are auto-filled above (13(a), 14(a), 18, 21(c), 21(d), 26,
+        34(a){inventoryOn ? ", 35" : ""}) — the ones LEKHA already computes
+        elsewhere in this app. Every other clause — the related-party
+        register, loans/deposits under Sec 269SS/269T, general (non-MSME)
+        Sec 43B items, and clause 44&rsquo;s break-up of expenditure by
+        supplier GST-registration status among them — needs data this
+        schema does not hold at the right grain and must be prepared
+        manually. Clause 44 specifically needs every expense
         posting classified by its supplier&rsquo;s GST-registration status,
         but most expense postings in this app never carry a supplier GSTIN
         at all — only formal GST purchase invoices do — so LEKHA cannot

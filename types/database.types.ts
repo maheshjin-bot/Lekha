@@ -2668,6 +2668,16 @@ export type Database = {
           uom: string
         }[]
       }
+      get_sec40a3_cash_payments: {
+        Args: { p_company_id: string; p_fy_end: string; p_fy_start: string }
+        Returns: {
+          cash_amount: number
+          payee_ledger_id: string
+          payee_name: string
+          payment_count: number
+          payment_date: string
+        }[]
+      }
       get_stock_summary: {
         Args: { p_as_at?: string; p_company_id: string; p_godown_id?: string }
         Returns: {
