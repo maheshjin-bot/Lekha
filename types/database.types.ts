@@ -822,6 +822,8 @@ export type Database = {
           lock_date: string | null
           name: string
           pan: string | null
+          password_hash: string | null
+          password_protected: boolean | null
           stock_margin_percent: number
           tan: string | null
           udyam_category: string | null
@@ -850,6 +852,8 @@ export type Database = {
           lock_date?: string | null
           name: string
           pan?: string | null
+          password_hash?: string | null
+          password_protected?: boolean | null
           stock_margin_percent?: number
           tan?: string | null
           udyam_category?: string | null
@@ -878,6 +882,8 @@ export type Database = {
           lock_date?: string | null
           name?: string
           pan?: string | null
+          password_hash?: string | null
+          password_protected?: boolean | null
           stock_margin_percent?: number
           tan?: string | null
           udyam_category?: string | null
@@ -1039,6 +1045,112 @@ export type Database = {
             isOneToOne: false
             referencedRelation: "ref_modules"
             referencedColumns: ["code"]
+          },
+        ]
+      }
+      employee_salary_structures: {
+        Row: {
+          basic: number
+          company_id: string
+          created_at: string
+          effective_from: string
+          employee_id: string
+          esi_applicable: boolean
+          hra: number
+          id: string
+          other_allowance: number
+          pf_applicable: boolean
+          pf_wage_ceiling_applies: boolean
+          professional_tax_monthly: number
+          special_allowance: number
+        }
+        Insert: {
+          basic: number
+          company_id: string
+          created_at?: string
+          effective_from: string
+          employee_id: string
+          esi_applicable?: boolean
+          hra?: number
+          id?: string
+          other_allowance?: number
+          pf_applicable?: boolean
+          pf_wage_ceiling_applies?: boolean
+          professional_tax_monthly?: number
+          special_allowance?: number
+        }
+        Update: {
+          basic?: number
+          company_id?: string
+          created_at?: string
+          effective_from?: string
+          employee_id?: string
+          esi_applicable?: boolean
+          hra?: number
+          id?: string
+          other_allowance?: number
+          pf_applicable?: boolean
+          pf_wage_ceiling_applies?: boolean
+          professional_tax_monthly?: number
+          special_allowance?: number
+        }
+        Relationships: [
+          {
+            foreignKeyName: "employee_salary_structures_employee_id_company_id_fkey"
+            columns: ["employee_id", "company_id"]
+            isOneToOne: false
+            referencedRelation: "employees"
+            referencedColumns: ["id", "company_id"]
+          },
+        ]
+      }
+      employees: {
+        Row: {
+          company_id: string
+          created_at: string
+          date_of_joining: string
+          date_of_leaving: string | null
+          esi_number: string | null
+          id: string
+          is_active: boolean
+          name: string
+          pan: string | null
+          uan: string | null
+          updated_at: string
+        }
+        Insert: {
+          company_id: string
+          created_at?: string
+          date_of_joining: string
+          date_of_leaving?: string | null
+          esi_number?: string | null
+          id?: string
+          is_active?: boolean
+          name: string
+          pan?: string | null
+          uan?: string | null
+          updated_at?: string
+        }
+        Update: {
+          company_id?: string
+          created_at?: string
+          date_of_joining?: string
+          date_of_leaving?: string | null
+          esi_number?: string | null
+          id?: string
+          is_active?: boolean
+          name?: string
+          pan?: string | null
+          uan?: string | null
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "employees_company_id_fkey"
+            columns: ["company_id"]
+            isOneToOne: false
+            referencedRelation: "companies"
+            referencedColumns: ["id"]
           },
         ]
       }
@@ -2657,6 +2769,26 @@ export type Database = {
           outstanding: number
         }[]
       }
+      get_payroll_run: {
+        Args: { p_company_id: string; p_period_month: string }
+        Returns: {
+          basic: number
+          employee_id: string
+          employee_name: string
+          esi_applicable: boolean
+          esi_employee: number
+          esi_employer: number
+          gross_pay: number
+          hra: number
+          net_pay: number
+          other_allowance: number
+          pf_employee: number
+          pf_employer: number
+          pf_wage: number
+          professional_tax: number
+          special_allowance: number
+        }[]
+      }
       get_profit_and_loss: {
         Args: {
           p_branch_id?: string
@@ -2817,6 +2949,10 @@ export type Database = {
           value: number
         }[]
       }
+      set_company_password: {
+        Args: { p_company_id: string; p_password: string }
+        Returns: undefined
+      }
       set_module: {
         Args: {
           p_company_id: string
@@ -2841,6 +2977,10 @@ export type Database = {
           p_voucher_id: string
         }
         Returns: string
+      }
+      verify_company_password: {
+        Args: { p_company_id: string; p_password: string }
+        Returns: boolean
       }
     }
     Enums: {

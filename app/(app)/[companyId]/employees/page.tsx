@@ -1,0 +1,69 @@
+import Link from "next/link";
+import { createClient } from "@/lib/supabase/server";
+import { EmployeeManager } from "@/components/employees/EmployeeManager";
+
+export default async function EmployeesPage({
+  params,
+}: PageProps<"/[companyId]/employees">) {
+  const { companyId } = await params;
+  const supabase = await createClient();
+
+  const [{ data: employees }, { data: structures }, { data: modules }] = await Promise.all([
+    supabase
+      .from("employees")
+      .select("id, name, pan, uan, esi_number, date_of_joining, date_of_leaving, is_active")
+      .eq("company_id", companyId)
+      .order("name"),
+    supabase
+      .from("employee_salary_structures")
+      .select("employee_id, effective_from, basic, hra, special_allowance, other_allowance")
+      .eq("company_id", companyId)
+      .order("effective_from", { ascending: false }),
+    supabase.rpc("get_company_modules", { p_company_id: companyId }),
+  ]);
+
+  const payrollOn = (modules ?? []).some((m) => m.code === "payroll" && m.active);
+
+  // First row per employee, since structures are ordered newest-first —
+  // that is this employee's CURRENT structure as of today.
+  const latestByEmployee = new Map<string, { basic: number; gross: number }>();
+  for (const s of structures ?? []) {
+    if (latestByEmployee.has(s.employee_id)) continue;
+    latestByEmployee.set(s.employee_id, {
+      basic: Number(s.basic),
+      gross: Number(s.basic) + Number(s.hra) + Number(s.special_allowance) + Number(s.other_allowance),
+    });
+  }
+
+  const rows = (employees ?? []).map((e) => ({
+    ...e,
+    current_basic: latestByEmployee.get(e.id)?.basic ?? null,
+    current_gross: latestByEmployee.get(e.id)?.gross ?? null,
+  }));
+
+  return (
+    <main className="mx-auto max-w-5xl px-6 py-10">
+      <h1 className="font-display text-2xl font-semibold tracking-tight text-ink">Employees</h1>
+      <p className="mt-1.5 max-w-2xl text-sm text-ink-soft">
+        Employee master and salary structure — the input to the payroll
+        register. Book posting (salary expense, PF/ESI/PT payable) isn&rsquo;t
+        wired up yet; this computes and reports, it doesn&rsquo;t post
+        vouchers.
+      </p>
+      {!payrollOn && (
+        <div className="mt-4 rounded-md bg-blue-50 px-4 py-3 text-sm text-blue-900">
+          <p className="font-semibold">Payroll is not turned on for this company</p>
+          <p className="mt-1">
+            You can still add employees, but the payroll register won&rsquo;t
+            compute anything until you turn it on.{" "}
+            <Link href={`/${companyId}/settings/modules`} className="underline">
+              Turn it on in Settings → Modules
+            </Link>
+            .
+          </p>
+        </div>
+      )}
+      <EmployeeManager companyId={companyId} employees={rows} />
+    </main>
+  );
+}
