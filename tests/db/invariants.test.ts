@@ -252,6 +252,55 @@ describeDb(`GST/TDS report reconciliation (${hasDb ? "live" : noDbReason})`, () 
     `);
     expect(rows, `companies where the TDS summary and raw postings disagree:\n${offenders(rows)}`).toEqual([]);
   });
+
+  // Regression guard for 0054: get_dashboard_kpis' gst_liability and
+  // tds_payable once returned app_private.ledger_opening_signed's raw
+  // debit-positive convention directly — a genuine liability (net credit on
+  // the ledger) showed as NEGATIVE, exactly backwards from what the
+  // "Liability"/"Payable" label promises. Checked against the ledger's own
+  // signed movement (net CREDIT, not the helper's net debit), so this fails
+  // again if the sign is ever silently reintroduced.
+  it("dashboard TDS Payable is positive exactly when the TDS ledger carries a net credit (genuinely owed), per company", async () => {
+    const rows = await sql(`
+      select * from (
+        select c.id, c.name,
+          (select tds_payable from public.get_dashboard_kpis(c.id, current_date)) as kpi_tds_payable,
+          (select coalesce(sum(e.credit_amount - e.debit_amount), 0)
+             from public.voucher_entries e
+             join public.tax_ledger_map m on m.ledger_id = e.ledger_id and m.company_id = e.company_id
+             join public.vouchers v on v.id = e.voucher_id and v.company_id = e.company_id
+            where e.company_id = c.id and m.purpose = 'tds_payable' and m.gst_registration_id is null
+              and not v.is_deleted and v.voucher_date <= current_date
+          ) as ledger_net_credit
+          from public.companies c
+      ) t
+      where kpi_tds_payable <> ledger_net_credit
+    `);
+    expect(rows, `companies where the dashboard TDS figure disagrees with the ledger's own net credit:\n${offenders(rows)}`).toEqual([]);
+  });
+
+  it("dashboard GST Liability is positive exactly when the GST ledgers carry a net credit (genuinely owed), per company", async () => {
+    const rows = await sql(`
+      select * from (
+        select c.id, c.name,
+          (select gst_liability from public.get_dashboard_kpis(c.id, current_date)) as kpi_gst_liability,
+          (select coalesce(sum(e.credit_amount - e.debit_amount), 0)
+             from public.voucher_entries e
+             join public.tax_ledger_map m on m.ledger_id = e.ledger_id and m.company_id = e.company_id
+             join public.vouchers v on v.id = e.voucher_id and v.company_id = e.company_id
+            where e.company_id = c.id and not v.is_deleted and v.voucher_date <= current_date
+              and m.purpose in (
+                'output_cgst', 'output_sgst', 'output_igst', 'output_cess',
+                'input_cgst', 'input_sgst', 'input_igst', 'input_cess',
+                'rcm_payable', 'gst_payable', 'gst_refund_receivable'
+              )
+          ) as ledgers_net_credit
+          from public.companies c
+      ) t
+      where kpi_gst_liability <> ledgers_net_credit
+    `);
+    expect(rows, `companies where the dashboard GST figure disagrees with the ledgers' own net credit:\n${offenders(rows)}`).toEqual([]);
+  });
 });
 
 // ---------------------------------------------------------------------------
