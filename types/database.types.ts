@@ -2530,6 +2530,14 @@ export type Database = {
         }
         Returns: string
       }
+      create_invoices_bulk: {
+        Args: { p_company_id: string; p_groups: Json }
+        Returns: {
+          error_message: string
+          group_key: string
+          voucher_id: string
+        }[]
+      }
       create_voucher: {
         Args: {
           p_branch_id: string
@@ -2948,6 +2956,19 @@ export type Database = {
           ledger_id: string
           ledger_name: string
           pan: string
+        }[]
+      }
+      get_salary_tds_estimate: {
+        Args: { p_company_id: string; p_period_month: string }
+        Returns: {
+          annual_projected_gross: number
+          annual_tax: number
+          employee_id: string
+          employee_name: string
+          monthly_gross: number
+          monthly_tds: number
+          standard_deduction: number
+          taxable_salary_income: number
         }[]
       }
       get_sec269ss_loan_receipts: {

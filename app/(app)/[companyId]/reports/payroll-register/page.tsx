@@ -69,7 +69,7 @@ export default async function PayrollRegisterPage({
     );
   }
 
-  const [{ data: rows }, { data: posting }, { data: branch }] = await Promise.all([
+  const [{ data: rows }, { data: posting }, { data: branch }, { data: tdsRows }] = await Promise.all([
     supabase.rpc("get_payroll_run", {
       p_company_id: companyId,
       p_period_month: periodMonth,
@@ -87,9 +87,15 @@ export default async function PayrollRegisterPage({
       .order("is_head_office", { ascending: false })
       .limit(1)
       .maybeSingle(),
+    supabase.rpc("get_salary_tds_estimate", {
+      p_company_id: companyId,
+      p_period_month: periodMonth,
+    }),
   ]);
 
   const runs = rows ?? [];
+  const tdsEstimates = tdsRows ?? [];
+  const totalMonthlyTds = tdsEstimates.reduce((n, r) => n + Number(r.monthly_tds), 0);
   const totals = runs.reduce(
     (acc, r) => ({
       gross: acc.gross + Number(r.gross_pay),
@@ -198,16 +204,72 @@ export default async function PayrollRegisterPage({
         </tbody>
       </table>
 
+      <div className="border-b border-t border-border p-4">
+        <h2 className="font-semibold">Sec 192 — TDS-on-salary estimate</h2>
+        <p className="mt-0.5 text-xs text-ink-faint">
+          A starting estimate, not a final Sec 192 computation and not
+          deducted anywhere — annualised gross (this month × 12) less the
+          ₹75,000 standard deduction, taxed at new-regime slab rates (Sec
+          115BAC, the default absent an employee declaration this app
+          doesn&rsquo;t record), with the same rebate/surcharge/cess logic
+          as the Income tax report. Ignores HRA exemption, Chapter VI-A
+          declarations (80C/80D/80CCD), other income the employee has
+          declared, and tax already withheld by a previous employer this
+          year — an employer who wires this straight into payroll without
+          adjusting for an employee&rsquo;s actual declarations will
+          over-withhold for nearly everyone with any deduction at all.
+        </p>
+      </div>
+      <table className="w-full min-w-[720px] text-sm">
+        <thead>
+          <tr className="border-b border-border text-left">
+            <th className={th}>Employee</th>
+            <th className={th + " text-right"}>Annualised gross</th>
+            <th className={th + " text-right"}>Taxable salary income</th>
+            <th className={th + " text-right"}>Annual tax</th>
+            <th className={th + " text-right"}>Monthly TDS estimate</th>
+          </tr>
+        </thead>
+        <tbody>
+          {tdsEstimates.length === 0 && (
+            <tr>
+              <td colSpan={5} className="px-4 py-8 text-center text-ink-faint">
+                No employee had an active salary structure this month.
+              </td>
+            </tr>
+          )}
+          {tdsEstimates.map((r) => (
+            <tr key={r.employee_id} className="border-b border-border last:border-0">
+              <td className={td}>{r.employee_name}</td>
+              <td className={num}>{formatINR(Number(r.annual_projected_gross), { showZero: true })}</td>
+              <td className={num}>{formatINR(Number(r.taxable_salary_income), { showZero: true })}</td>
+              <td className={num}>{formatINR(Number(r.annual_tax), { showZero: true })}</td>
+              <td className={num + " font-medium"}>{formatINR(Number(r.monthly_tds), { showZero: true })}</td>
+            </tr>
+          ))}
+          {tdsEstimates.length > 0 && (
+            <tr className="bg-bg font-semibold">
+              <td className={td} colSpan={4}>
+                Total monthly TDS estimate
+              </td>
+              <td className={num}>{formatINR(totalMonthlyTds, { showZero: true })}</td>
+            </tr>
+          )}
+        </tbody>
+      </table>
+
       <p className="border-t border-border px-4 py-3 text-xs text-ink-faint">
         PF: 12%/12% of PF wage (basic, capped at ₹15,000 unless an employee&rsquo;s
         structure says otherwise). ESI: 0.75%/3.25% of gross, only while gross
         is at or under ₹21,000/month. Professional tax is whatever was entered
         on the employee&rsquo;s own salary structure — not computed from a
         state slab table, since PT varies by state and several states don&rsquo;t
-        levy it at all. Net pay does not deduct TDS on salary (Sec 192), which
-        this app does not compute yet. A full month&rsquo;s structure is used
-        regardless of actual days worked — mid-month joiners and leavers are
-        not prorated.{" "}
+        levy it at all. Net pay above does not deduct the Sec 192 TDS
+        estimate below — the two are shown side by side deliberately, not
+        netted, since the estimate needs a human&rsquo;s adjustment before
+        it should touch anyone&rsquo;s actual pay. A full month&rsquo;s
+        structure is used regardless of actual days worked — mid-month
+        joiners and leavers are not prorated.{" "}
         {posting ? (
           <>
             Posted as a single journal voucher (Dr Salary Expense + Employer
