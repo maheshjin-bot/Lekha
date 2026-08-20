@@ -726,6 +726,56 @@ export type Database = {
           },
         ]
       }
+      banking_facilities: {
+        Row: {
+          bank_name: string
+          company_id: string
+          created_at: string
+          debtor_eligibility_days: number
+          debtor_margin_percent: number
+          facility_type: string
+          id: string
+          is_active: boolean
+          sanctioned_limit: number
+          stock_margin_percent: number
+          updated_at: string
+        }
+        Insert: {
+          bank_name: string
+          company_id: string
+          created_at?: string
+          debtor_eligibility_days?: number
+          debtor_margin_percent?: number
+          facility_type?: string
+          id?: string
+          is_active?: boolean
+          sanctioned_limit?: number
+          stock_margin_percent?: number
+          updated_at?: string
+        }
+        Update: {
+          bank_name?: string
+          company_id?: string
+          created_at?: string
+          debtor_eligibility_days?: number
+          debtor_margin_percent?: number
+          facility_type?: string
+          id?: string
+          is_active?: boolean
+          sanctioned_limit?: number
+          stock_margin_percent?: number
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "banking_facilities_company_id_fkey"
+            columns: ["company_id"]
+            isOneToOne: false
+            referencedRelation: "companies"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       branches: {
         Row: {
           address_line1: string | null
@@ -2696,16 +2746,19 @@ export type Database = {
         }[]
       }
       get_drawing_power: {
-        Args: { p_as_at?: string; p_company_id: string }
+        Args: { p_as_at?: string; p_company_id: string; p_facility_id?: string }
         Returns: {
+          bank_name: string
           closing_stock_value: number
           debtor_eligibility_days: number
           debtor_margin_percent: number
           dp_from_debtors: number
           dp_from_stock: number
           eligible_debtors: number
+          facility_id: string
           ineligible_debtors: number
           paid_stock: number
+          sanctioned_limit: number
           stock_margin_percent: number
           sundry_creditors: number
           total_debtors: number

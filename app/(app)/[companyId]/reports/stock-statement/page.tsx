@@ -3,11 +3,14 @@ import { createClient } from "@/lib/supabase/server";
 import { formatINR } from "@/lib/utils/currency";
 import { defaultPeriod } from "@/lib/utils/period";
 import { ReportShell, num, td } from "@/components/reports/ReportShell";
+import { NewFacilityForm } from "@/components/banking/NewFacilityForm";
 
 export default async function StockStatementPage({
   params,
+  searchParams,
 }: PageProps<"/[companyId]/reports/stock-statement">) {
   const { companyId } = await params;
+  const sp = await searchParams;
   const supabase = await createClient();
 
   const [{ data: company }, { data: modules }] = await Promise.all([
@@ -42,12 +45,24 @@ export default async function StockStatementPage({
     );
   }
 
-  const { data: rows } = await supabase.rpc("get_drawing_power", {
-    p_company_id: companyId,
-    p_as_at: today,
-  });
+  const facilityParam = typeof sp.facility === "string" ? sp.facility : undefined;
+
+  const [{ data: facilities }, { data: rows }] = await Promise.all([
+    supabase
+      .from("banking_facilities")
+      .select("id, bank_name, facility_type, sanctioned_limit")
+      .eq("company_id", companyId)
+      .eq("is_active", true)
+      .order("created_at"),
+    supabase.rpc("get_drawing_power", {
+      p_company_id: companyId,
+      p_as_at: today,
+      p_facility_id: facilityParam || undefined,
+    }),
+  ]);
 
   const dp = rows?.[0] ?? null;
+  const activeFacilities = facilities ?? [];
 
   if (!dp) {
     return (
@@ -68,16 +83,42 @@ export default async function StockStatementPage({
   const debtorMargin = Number(dp.debtor_margin_percent);
   const dpDebtors = Number(dp.dp_from_debtors);
   const totalDp = Number(dp.total_drawing_power);
+  const sanctionedLimit = Number(dp.sanctioned_limit ?? 0);
+  const usableLimit = sanctionedLimit > 0 ? Math.min(totalDp, sanctionedLimit) : totalDp;
+  const base = `/${companyId}/reports/stock-statement`;
 
   return (
     <ReportShell
       title="Stock statement"
-      period={`As at ${today} · monthly submission for a bank CC/OD facility`}
+      period={
+        dp.bank_name
+          ? `As at ${today} · ${dp.bank_name}`
+          : `As at ${today} · monthly submission for a bank CC/OD facility`
+      }
       status={{
         label: `${formatINR(totalDp, { showZero: true })} drawing power`,
         tone: "ok",
       }}
     >
+      <div className="flex flex-wrap items-center gap-2 border-b border-border p-4">
+        {activeFacilities.length > 1 &&
+          activeFacilities.map((f) => (
+            <Link
+              key={f.id}
+              href={`${base}?facility=${f.id}`}
+              className={
+                "rounded-md border px-2.5 py-1 text-sm " +
+                (dp.facility_id === f.id
+                  ? "border-accent bg-accent-soft text-accent"
+                  : "border-border-strong hover:bg-surface-2")
+              }
+            >
+              {f.bank_name}
+            </Link>
+          ))}
+        <NewFacilityForm companyId={companyId} />
+      </div>
+
       <table className="w-full text-sm">
         <tbody>
           <tr className="border-b border-border bg-bg">
@@ -142,22 +183,33 @@ export default async function StockStatementPage({
             <td className={td + " text-base font-bold"}>Total drawing power</td>
             <td className={num + " text-base font-bold"}>{formatINR(totalDp, { showZero: true })}</td>
           </tr>
+          {sanctionedLimit > 0 && (
+            <>
+              <tr className="border-b border-border">
+                <td className={td}>Sanctioned limit</td>
+                <td className={num}>{formatINR(sanctionedLimit, { showZero: true })}</td>
+              </tr>
+              <tr className="bg-bg">
+                <td className={td + " text-base font-bold"}>Usable (lower of the two)</td>
+                <td className={num + " text-base font-bold"}>{formatINR(usableLimit, { showZero: true })}</td>
+              </tr>
+            </>
+          )}
         </tbody>
       </table>
 
       <p className="border-t border-border px-4 py-3 text-xs text-ink-faint">
         Margins and the debtor eligibility window ({dp.debtor_eligibility_days}{" "}
-        days) come from Settings and default to typical figures (25% stock,
-        40% debtors, 90 days) — confirm both against your actual sanction
-        letter. Debtor ageing is inferred (receipts applied to the oldest
-        invoice first), not bill-wise allocated — see the Outstanding report
-        for the same caveat. Excludes stock the bank would separately reject
-        as obsolete, uninsured, or at an unapproved location, and debtors
-        disputed or otherwise ineligible by the bank&rsquo;s own judgement —
-        neither is something ledger data alone can answer. One facility only;
-        a company with more than one bank line isn&rsquo;t represented here
-        yet. This is not the sanctioned limit — compare against it yourself;
-        the lower of the two is the real drawing power.
+        days) are set per facility above and default to typical figures (25%
+        stock, 40% debtors, 90 days) — confirm both against your actual
+        sanction letter. Debtor ageing is inferred (receipts applied to the
+        oldest invoice first), not bill-wise allocated — see the Outstanding
+        report for the same caveat. Excludes stock the bank would separately
+        reject as obsolete, uninsured, or at an unapproved location, and
+        debtors disputed or otherwise ineligible by the bank&rsquo;s own
+        judgement — neither is something ledger data alone can answer.
+        {sanctionedLimit === 0 &&
+          " Enter a sanctioned limit on the facility to see it compared against drawing power directly."}
       </p>
     </ReportShell>
   );
