@@ -41,7 +41,7 @@ export default async function TaxAuditPage({
   const supabase = await createClient();
   const { from, to, label } = taxYearBounds();
 
-  const [{ data: appRows }, { data: clauseRows }] = await Promise.all([
+  const [{ data: appRows }, { data: clauseRows }, { data: modules }] = await Promise.all([
     supabase.rpc("get_tax_audit_applicability", {
       p_company_id: companyId,
       p_fy_start: from,
@@ -52,7 +52,18 @@ export default async function TaxAuditPage({
       p_fy_start: from,
       p_fy_end: to,
     }),
+    supabase.rpc("get_company_modules", { p_company_id: companyId }),
   ]);
+
+  const inventoryOn = (modules ?? []).some((m) => m.code === "inventory" && m.active);
+  const { data: stockRows } = inventoryOn
+    ? await supabase.rpc("get_quantitative_stock_details", {
+        p_company_id: companyId,
+        p_fy_start: from,
+        p_fy_end: to,
+      })
+    : { data: null };
+  const stockDetails = stockRows ?? [];
 
   const result = appRows?.[0] ?? null;
   const clauses = clauseRows ?? [];
@@ -145,20 +156,84 @@ export default async function TaxAuditPage({
         </tbody>
       </table>
 
+      {inventoryOn && (
+        <>
+          <div className="border-b border-t border-border p-4">
+            <h2 className="font-semibold">Clause 35 — quantitative details (trading concern)</h2>
+            <p className="mt-0.5 text-xs text-ink-faint">
+              Opening, purchases, sales and closing quantity per item —
+              purchase and sales returns netted against their own side, not
+              lumped into a raw increase/decrease. Principal items (over 10%
+              of total purchase or sales value for the year) are marked;
+              every item with any movement is still listed underneath.
+              Shortage/excess is not shown — LEKHA has no physical
+              stock-take feature to compare the book figure against.
+            </p>
+          </div>
+          <table className="w-full min-w-[720px] text-sm">
+            <thead>
+              <tr className="border-b border-border text-left">
+                <th className={th}>Item</th>
+                <th className={th}>UOM</th>
+                <th className={th + " text-right"}>Opening</th>
+                <th className={th + " text-right"}>Purchases</th>
+                <th className={th + " text-right"}>Sales</th>
+                <th className={th + " text-right"}>Closing</th>
+              </tr>
+            </thead>
+            <tbody>
+              {stockDetails.length === 0 && (
+                <tr>
+                  <td colSpan={6} className="px-4 py-8 text-center text-ink-faint">
+                    No stock movement this year.
+                  </td>
+                </tr>
+              )}
+              {stockDetails.map((s) => (
+                <tr key={s.item_id} className="border-b border-border last:border-0">
+                  <td className={td}>
+                    {s.item_name}
+                    {s.is_principal_item && (
+                      <span className="ml-1.5 rounded bg-accent-soft px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-accent">
+                        Principal
+                      </span>
+                    )}
+                  </td>
+                  <td className={td + " text-ink-soft"}>{s.uom}</td>
+                  <td className={num}>{Number(s.opening_quantity).toLocaleString("en-IN")}</td>
+                  <td className={num}>{Number(s.purchases_quantity).toLocaleString("en-IN")}</td>
+                  <td className={num}>{Number(s.sales_quantity).toLocaleString("en-IN")}</td>
+                  <td className={num + " font-medium"}>
+                    {Number(s.closing_quantity).toLocaleString("en-IN")}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </>
+      )}
+
       <p className="border-t border-border px-4 py-3 text-xs text-ink-faint">
-        Six of Form 3CD&rsquo;s roughly 44 clauses are auto-filled above (13(a),
-        14(a), 18, 21(c), 26, 34(a)) — the ones LEKHA already computes
-        elsewhere in this app. Every other clause — the related-party
-        register, loans/deposits under Sec 269SS/269T, Sec 40A(3) cash-payment
-        disallowance, general (non-MSME) Sec 43B items, quantitative stock
-        reconciliation, and the clause 44 GST-turnover reconciliation among
-        them — needs data this schema does not hold at the right grain and
-        must be prepared manually. The Sec 44AB(e) presumptive-scheme
-        opt-out trigger (44AD/44ADA) is also not evaluated; see the
-        applicability note above. Governed by the Income-tax Act 1961 as
-        amended (AY 2026-27), not the Income-tax Act 2025, which only
-        governs income earned from 1 April 2026 onward. Treat this as a
-        working draft for your tax auditor, not a filed report.
+        {inventoryOn ? "Seven" : "Six"} of Form 3CD&rsquo;s roughly 44 clauses
+        are auto-filled above (13(a), 14(a), 18, 21(c), 26, 34(a){inventoryOn
+          ? ", 35"
+          : ""}) — the ones LEKHA already computes elsewhere in this app.
+        Every other clause — the related-party register, loans/deposits
+        under Sec 269SS/269T, Sec 40A(3) cash-payment disallowance, general
+        (non-MSME) Sec 43B items, and clause 44&rsquo;s break-up of
+        expenditure by supplier GST-registration status among them — needs
+        data this schema does not hold at the right grain and must be
+        prepared manually. Clause 44 specifically needs every expense
+        posting classified by its supplier&rsquo;s GST-registration status,
+        but most expense postings in this app never carry a supplier GSTIN
+        at all — only formal GST purchase invoices do — so LEKHA cannot
+        classify the bulk of a company&rsquo;s expenditure with any
+        confidence. The Sec 44AB(e) presumptive-scheme opt-out trigger
+        (44AD/44ADA) is also not evaluated; see the applicability note
+        above. Governed by the Income-tax Act 1961 as amended (AY 2026-27),
+        not the Income-tax Act 2025, which only governs income earned from
+        1 April 2026 onward. Treat this as a working draft for your tax
+        auditor, not a filed report.
       </p>
     </ReportShell>
   );

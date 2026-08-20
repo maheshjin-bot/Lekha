@@ -2654,6 +2654,20 @@ export type Database = {
           section: string
         }[]
       }
+      get_quantitative_stock_details: {
+        Args: { p_company_id: string; p_fy_end: string; p_fy_start: string }
+        Returns: {
+          closing_quantity: number
+          hsn_sac: string
+          is_principal_item: boolean
+          item_id: string
+          item_name: string
+          opening_quantity: number
+          purchases_quantity: number
+          sales_quantity: number
+          uom: string
+        }[]
+      }
       get_stock_summary: {
         Args: { p_as_at?: string; p_company_id: string; p_godown_id?: string }
         Returns: {
