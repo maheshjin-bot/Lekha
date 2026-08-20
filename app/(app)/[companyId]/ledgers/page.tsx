@@ -12,7 +12,7 @@ export default async function LedgersPage({
       supabase
         .from("ledgers")
         .select(
-          "id, name, group_id, opening_balance_amount, opening_balance_type, is_active, pan, is_tds_deductee, default_tds_section, udyam_number, msme_category, msme_payment_days, is_partner_remuneration"
+          "id, name, group_id, opening_balance_amount, opening_balance_type, is_active, pan, is_tds_deductee, default_tds_section, udyam_number, msme_category, msme_payment_days, is_partner_remuneration, is_related_party"
         )
         .eq("company_id", companyId)
         .order("name"),
@@ -37,10 +37,13 @@ export default async function LedgersPage({
   // any other entity type.
   const partnerRemunerationOn =
     company?.entity_type === "partnership" || company?.entity_type === "llp";
+  // Sec 40A(2)(b) applies to any entity type — gated on the tax audit
+  // module rather than entity_type, same reasoning as the report itself.
+  const relatedPartyOn = (modules ?? []).some((m) => m.code === "tax_audit" && m.active);
 
   return (
     <main className="mx-auto max-w-5xl px-6 py-10">
-      <h1 className="text-2xl font-semibold tracking-tight">Ledgers</h1>
+      <h1 className="font-display text-2xl font-semibold tracking-tight text-ink">Ledgers</h1>
       <p className="mt-1.5 text-sm text-ink-soft">
         Every posting lands in a ledger, and every ledger belongs to a group.
         The group decides how it appears in the statements.
@@ -53,6 +56,7 @@ export default async function LedgersPage({
         tdsOn={tdsOn}
         msmeOn={msmeOn}
         partnerRemunerationOn={partnerRemunerationOn}
+        relatedPartyOn={relatedPartyOn}
       />
     </main>
   );

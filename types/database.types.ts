@@ -1354,6 +1354,7 @@ export type Database = {
           id: string
           is_active: boolean
           is_partner_remuneration: boolean
+          is_related_party: boolean
           is_tds_deductee: boolean
           ldc_amount_cap: number | null
           ldc_number: string | null
@@ -1392,6 +1393,7 @@ export type Database = {
           id?: string
           is_active?: boolean
           is_partner_remuneration?: boolean
+          is_related_party?: boolean
           is_tds_deductee?: boolean
           ldc_amount_cap?: number | null
           ldc_number?: string | null
@@ -1430,6 +1432,7 @@ export type Database = {
           id?: string
           is_active?: boolean
           is_partner_remuneration?: boolean
+          is_related_party?: boolean
           is_tds_deductee?: boolean
           ldc_amount_cap?: number | null
           ldc_number?: string | null
@@ -2666,6 +2669,15 @@ export type Database = {
           purchases_quantity: number
           sales_quantity: number
           uom: string
+        }[]
+      }
+      get_related_party_payments: {
+        Args: { p_company_id: string; p_fy_end: string; p_fy_start: string }
+        Returns: {
+          amount_paid: number
+          ledger_id: string
+          ledger_name: string
+          pan: string
         }[]
       }
       get_sec40a3_cash_payments: {

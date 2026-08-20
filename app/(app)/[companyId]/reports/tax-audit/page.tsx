@@ -72,6 +72,13 @@ export default async function TaxAuditPage({
   });
   const cashPayments = cashPaymentRows ?? [];
 
+  const { data: relatedPartyRows } = await supabase.rpc("get_related_party_payments", {
+    p_company_id: companyId,
+    p_fy_start: from,
+    p_fy_end: to,
+  });
+  const relatedPartyPayments = relatedPartyRows ?? [];
+
   const result = appRows?.[0] ?? null;
   const clauses = clauseRows ?? [];
   const period = `FY ${label} · ${from} to ${to} · calendar April–March tax year, not this company's book year`;
@@ -262,12 +269,53 @@ export default async function TaxAuditPage({
         </tbody>
       </table>
 
+      <div className="border-b border-t border-border p-4">
+        <h2 className="font-semibold">Clause 23 — payments to Sec 40A(2)(b) specified persons</h2>
+        <p className="mt-0.5 text-xs text-ink-faint">
+          Actual payments made this year to ledgers flagged as a specified
+          person (director, partner, their relative, or an entity in which
+          the assessee/director/partner has a substantial interest) —
+          amounts merely debited or outstanding, not yet paid, are excluded,
+          per the clause&rsquo;s own scope. Whether a payment is excessive
+          or unreasonable is not evaluated here — that is the assessing
+          officer&rsquo;s call. Flag a ledger as a specified person from the
+          ledger&rsquo;s own form on the Ledgers page.
+        </p>
+      </div>
+      <table className="w-full min-w-[600px] text-sm">
+        <thead>
+          <tr className="border-b border-border text-left">
+            <th className={th}>Payee</th>
+            <th className={th}>PAN</th>
+            <th className={th + " text-right"}>Amount paid</th>
+          </tr>
+        </thead>
+        <tbody>
+          {relatedPartyPayments.length === 0 && (
+            <tr>
+              <td colSpan={3} className="px-4 py-8 text-center text-ink-faint">
+                No payment to a flagged specified person this year.
+              </td>
+            </tr>
+          )}
+          {relatedPartyPayments.map((r) => (
+            <tr key={r.ledger_id} className="border-b border-border last:border-0">
+              <td className={td}>{r.ledger_name}</td>
+              <td className={td + " text-ink-soft"}>{r.pan ?? "—"}</td>
+              <td className={num + " font-medium"}>
+                {formatINR(Number(r.amount_paid), { showZero: true })}
+              </td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+
       <p className="border-t border-border px-4 py-3 text-xs text-ink-faint">
-        {inventoryOn ? "Eight" : "Seven"} of Form 3CD&rsquo;s roughly 44
-        clauses are auto-filled above (13(a), 14(a), 18, 21(c), 21(d), 26,
-        34(a){inventoryOn ? ", 35" : ""}) — the ones LEKHA already computes
-        elsewhere in this app. Every other clause — the related-party
-        register, loans/deposits under Sec 269SS/269T, general (non-MSME)
+        {inventoryOn ? "Nine" : "Eight"} of Form 3CD&rsquo;s roughly 44
+        clauses are auto-filled above (13(a), 14(a), 18, 21(c), 21(d), 23,
+        26, 34(a){inventoryOn ? ", 35" : ""}) — the ones LEKHA already
+        computes elsewhere in this app. Every other clause —
+        loans/deposits under Sec 269SS/269T, general (non-MSME)
         Sec 43B items, and clause 44&rsquo;s break-up of expenditure by
         supplier GST-registration status among them — needs data this
         schema does not hold at the right grain and must be prepared

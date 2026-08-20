@@ -19,6 +19,7 @@ type Ledger = {
   msme_category: string | null;
   msme_payment_days: number | null;
   is_partner_remuneration: boolean;
+  is_related_party: boolean;
 };
 
 type Group = {
@@ -44,6 +45,7 @@ export function LedgerManager({
   tdsOn,
   msmeOn,
   partnerRemunerationOn,
+  relatedPartyOn,
 }: {
   companyId: string;
   initialLedgers: Ledger[];
@@ -52,6 +54,7 @@ export function LedgerManager({
   tdsOn: boolean;
   msmeOn: boolean;
   partnerRemunerationOn: boolean;
+  relatedPartyOn: boolean;
 }) {
   const router = useRouter();
   const [name, setName] = useState("");
@@ -70,6 +73,7 @@ export function LedgerManager({
   const [msmeCategory, setMsmeCategory] = useState("");
   const [msmePaymentDays, setMsmePaymentDays] = useState("");
   const [isPartnerRemuneration, setIsPartnerRemuneration] = useState(false);
+  const [isRelatedParty, setIsRelatedParty] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -97,6 +101,7 @@ export function LedgerManager({
       msme_category: isMsme ? msmeCategory || null : null,
       msme_payment_days: isMsme && msmePaymentDays ? Number(msmePaymentDays) : null,
       is_partner_remuneration: isPartnerRemuneration,
+      is_related_party: isRelatedParty,
     });
 
     if (error) {
@@ -115,6 +120,7 @@ export function LedgerManager({
     setMsmeCategory("");
     setMsmePaymentDays("");
     setIsPartnerRemuneration(false);
+    setIsRelatedParty(false);
     setBusy(false);
     router.refresh();
   }
@@ -135,6 +141,7 @@ export function LedgerManager({
                 {tdsOn && <th className="px-4 py-2.5 font-medium">TDS</th>}
                 {msmeOn && <th className="px-4 py-2.5 font-medium">MSME</th>}
                 {partnerRemunerationOn && <th className="px-4 py-2.5 font-medium">Sec 40(b)</th>}
+                {relatedPartyOn && <th className="px-4 py-2.5 font-medium">Related party</th>}
                 <th className="px-4 py-2.5 text-right font-medium">Opening</th>
               </tr>
             </thead>
@@ -142,7 +149,13 @@ export function LedgerManager({
               {initialLedgers.length === 0 && (
                 <tr>
                   <td
-                    colSpan={4 + (tdsOn ? 1 : 0) + (msmeOn ? 1 : 0) + (partnerRemunerationOn ? 1 : 0)}
+                    colSpan={
+                      4 +
+                      (tdsOn ? 1 : 0) +
+                      (msmeOn ? 1 : 0) +
+                      (partnerRemunerationOn ? 1 : 0) +
+                      (relatedPartyOn ? 1 : 0)
+                    }
                     className="px-4 py-10 text-center text-ink-faint"
                   >
                     No ledgers yet. Create one on the right.
@@ -195,6 +208,15 @@ export function LedgerManager({
                     <td className="px-4 py-2.5 text-ink-soft">
                       {l.is_partner_remuneration ? (
                         <span className="text-xs">Remuneration</span>
+                      ) : (
+                        <span className="text-ink-faint">—</span>
+                      )}
+                    </td>
+                  )}
+                  {relatedPartyOn && (
+                    <td className="px-4 py-2.5 text-ink-soft">
+                      {l.is_related_party ? (
+                        <span className="text-xs">Sec 40A(2)(b)</span>
                       ) : (
                         <span className="text-ink-faint">—</span>
                       )}
@@ -417,6 +439,25 @@ export function LedgerManager({
                 Salary/bonus/commission paid to a working partner — the
                 income tax report tests what&rsquo;s posted here against the
                 slab ceiling and flags any excess.
+              </span>
+            </div>
+          )}
+
+          {relatedPartyOn && (
+            <div className="rounded-md border border-border p-3">
+              <label className="flex items-center gap-2 text-sm font-medium">
+                <input
+                  type="checkbox"
+                  checked={isRelatedParty}
+                  onChange={(e) => setIsRelatedParty(e.target.checked)}
+                />
+                Specified person (Sec 40A(2)(b))
+              </label>
+              <span className="mt-1 block text-xs text-ink-faint">
+                A director, partner, their relative, or an entity in which
+                the assessee/director/partner has a substantial interest —
+                the tax audit report lists actual payments made to this
+                ledger under Form 3CD clause 23.
               </span>
             </div>
           )}
