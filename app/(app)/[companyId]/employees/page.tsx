@@ -46,9 +46,10 @@ export default async function EmployeesPage({
       <h1 className="font-display text-2xl font-semibold tracking-tight text-ink">Employees</h1>
       <p className="mt-1.5 max-w-2xl text-sm text-ink-soft">
         Employee master and salary structure — the input to the payroll
-        register. Book posting (salary expense, PF/ESI/PT payable) isn&rsquo;t
-        wired up yet; this computes and reports, it doesn&rsquo;t post
-        vouchers.
+        register. This page only computes and reports; it doesn&rsquo;t post
+        vouchers itself — book posting (salary expense, PF/ESI/PT payable)
+        happens from the payroll register report, one month and branch at a
+        time, once you&rsquo;ve reviewed the numbers here.
       </p>
       {!payrollOn && (
         <div className="mt-4 rounded-md bg-blue-50 px-4 py-3 text-sm text-blue-900">
