@@ -1977,6 +1977,51 @@ export type Database = {
         }
         Relationships: []
       }
+      statutory_update_notes: {
+        Row: {
+          applied_note: string | null
+          area: string
+          citation_text: string | null
+          citation_url: string | null
+          created_at: string
+          created_by: string | null
+          description: string
+          effective_date: string
+          id: string
+          status: string
+          title: string
+          updated_at: string
+        }
+        Insert: {
+          applied_note?: string | null
+          area: string
+          citation_text?: string | null
+          citation_url?: string | null
+          created_at?: string
+          created_by?: string | null
+          description: string
+          effective_date: string
+          id?: string
+          status?: string
+          title: string
+          updated_at?: string
+        }
+        Update: {
+          applied_note?: string | null
+          area?: string
+          citation_text?: string | null
+          citation_url?: string | null
+          created_at?: string
+          created_by?: string | null
+          description?: string
+          effective_date?: string
+          id?: string
+          status?: string
+          title?: string
+          updated_at?: string
+        }
+        Relationships: []
+      }
       tax_ledger_map: {
         Row: {
           company_id: string
