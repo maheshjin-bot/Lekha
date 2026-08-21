@@ -304,6 +304,72 @@ describeDb(`GST/TDS report reconciliation (${hasDb ? "live" : noDbReason})`, () 
 });
 
 // ---------------------------------------------------------------------------
+// CMA / lender pack (0056)
+// ---------------------------------------------------------------------------
+// Guards the two defects hand-verification caught before 0056 shipped. Both
+// are the kind that produce a confident, wrong number rather than an error,
+// and both would flatter a borrower in front of a bank — the one direction of
+// error that actually costs someone money.
+describeDb(`CMA data (${hasDb ? "live" : noDbReason})`, () => {
+  it("CMA net worth ties to the balance sheet, absorbing the un-closed period result", async () => {
+    // The original bug: net worth read the capital/reserves ledgers alone,
+    // which year-end closing has not yet moved this period's profit or loss
+    // into — so it overstated the borrower's own stake by exactly the period
+    // result, and debt-equity and TOL/TNW inherited that error.
+    const rows = await sql(`
+      select * from (
+        select c.id, c.name,
+          (select value from public.get_cma_ratios(c.id, '1900-01-01'::date, '2999-12-31'::date)
+            where metric_code = 'networth') as cma_networth,
+          (select coalesce(sum(-app_private.ledger_opening_signed(c.id, l.id, '3000-01-01'::date, null)), 0)
+             from public.ledgers l
+             join public.account_groups g on g.id = l.group_id
+            where l.company_id = c.id
+              and g.nature in ('share_capital','reserves_surplus','capital',
+                               'direct_income','indirect_income',
+                               'direct_expense','indirect_expense')
+          ) as capital_plus_period_result
+          from public.companies c
+      ) t
+      where round(cma_networth, 2) is distinct from round(capital_plus_period_result, 2)
+    `);
+    expect(rows, `companies where CMA net worth does not tie out:\n${offenders(rows)}`).toEqual([]);
+  });
+
+  it("no CMA text carries a U+FFFD replacement character", async () => {
+    // The original bug: em-dashes in the function's own prose reached the
+    // database as U+FFFD because the migration was passed through a shell
+    // variable that mangled the multibyte bytes. Caught by codepoint, not by
+    // eye — mojibake is easy to skim past in a report a bank will read.
+    const rows = await sql(`
+      select c.name, r.metric_code, r.benchmark_note
+        from public.companies c
+        cross join lateral public.get_cma_ratios(c.id, '1900-01-01'::date, '2999-12-31'::date) r
+       where r.benchmark_note like '%' || chr(65533) || '%'
+          or r.metric_label like '%' || chr(65533) || '%'
+    `);
+    expect(rows, `CMA text with replacement characters:\n${offenders(rows)}`).toEqual([]);
+  });
+
+  it("MPBF Method II follows the Tandon formula exactly, per company", async () => {
+    // 0.75 x TCA - OCL. Guards against a later edit quietly switching this to
+    // Method I's 0.75 x (TCA - OCL), which is more generous and would show a
+    // borrower a limit no bank would actually sanction.
+    const rows = await sql(`
+      select * from (
+        select c.id, c.name,
+          (select value from public.get_cma_ratios(c.id, '1900-01-01'::date, '2999-12-31'::date) where metric_code='mpbf_2') as mpbf2,
+          (select 0.75 * (select value from public.get_cma_ratios(c.id, '1900-01-01'::date, '2999-12-31'::date) where metric_code='tca')
+                 - (select value from public.get_cma_ratios(c.id, '1900-01-01'::date, '2999-12-31'::date) where metric_code='ocl')) as expected
+          from public.companies c
+      ) t
+      where round(mpbf2, 2) is distinct from round(expected, 2)
+    `);
+    expect(rows, `companies where MPBF Method II does not follow the formula:\n${offenders(rows)}`).toEqual([]);
+  });
+});
+
+// ---------------------------------------------------------------------------
 // Tenancy: what the catalog can prove without fixtures
 // ---------------------------------------------------------------------------
 describeDb(`tenancy and RLS, catalog-level (${hasDb ? "live" : noDbReason})`, () => {
