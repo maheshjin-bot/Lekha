@@ -659,6 +659,70 @@ describeDb(`sales and purchase orders (${hasDb ? "live" : noDbReason})`, () => {
 });
 
 // ---------------------------------------------------------------------------
+// ROC compliance calendar (0062)
+// ---------------------------------------------------------------------------
+describeDb(`ROC compliance calendar (${hasDb ? "live" : noDbReason})`, () => {
+  it("only ROC-applicable entity types (ref_entity_types.roc_applicable) ever get a ROC row", async () => {
+    // The direct evidence the entity-type gate actually works: a
+    // proprietorship/partnership/HUF/trust/society/AOP must never see a ROC
+    // due date, since none of them file with the Registrar of Companies at
+    // all — a stray ROC row for one would be a genuinely wrong compliance
+    // reminder, not a cosmetic bug.
+    const rows = await sql(`
+      select c.id, c.name, c.entity_type, cal.label
+        from public.companies c
+        cross join lateral public.get_compliance_calendar(c.id, '1900-01-01'::date, '2999-12-31'::date) cal
+        join public.ref_entity_types et on et.code = c.entity_type
+       where cal.category = 'ROC' and not et.roc_applicable
+    `);
+    expect(rows, `ROC rows for a non-ROC-applicable entity type:\n${offenders(rows)}`).toEqual([]);
+  });
+
+  it("an LLP never gets a company-only ROC form, and a company never gets an LLP-only form", async () => {
+    // AOC-4/MGT-7/MGT-7A/DPT-3/MSME-1 exist under the Companies Act; Form
+    // 8/11 exist under the LLP Act — the two sets must never cross, since a
+    // business filed under the wrong regime is not just a display bug, it
+    // is a wrong statutory reminder.
+    const rows = await sql(`
+      select c.name, c.entity_type, cal.label
+        from public.companies c
+        cross join lateral public.get_compliance_calendar(c.id, '1900-01-01'::date, '2999-12-31'::date) cal
+       where cal.category = 'ROC'
+         and ((c.entity_type = 'llp' and cal.label ~ 'AOC-4|MGT-7|DPT-3|MSME')
+           or (c.entity_type <> 'llp' and cal.label ~ 'LLP Form'))
+    `);
+    expect(rows, `ROC forms crossing the Companies Act / LLP Act boundary:\n${offenders(rows)}`).toEqual([]);
+  });
+
+  it("a company with an active GST/TDS/TCS/income-tax module still gets that category's rows, over a full year", async () => {
+    // Regression guard specifically for the fact 0062 is a CREATE OR REPLACE
+    // over an already-shipped function (0024) rather than a new one — this
+    // positively confirms each pre-existing category still fires for a
+    // company entitled to it, rather than trusting that the ROC extension
+    // left the earlier CTEs untouched. A full calendar year, not the
+    // function's 120-day default, since a full year is guaranteed to
+    // contain at least one occurrence of even the least frequent rule here.
+    const rows = await sql(`
+      select c.id, c.name, m.module_code
+        from public.companies c
+        join public.company_modules m on m.company_id = c.id and m.effective_to is null
+       where (
+              (m.module_code = 'gst'
+               and exists (select 1 from public.gst_registrations gr where gr.company_id = c.id and gr.is_active))
+           or m.module_code in ('tds','tcs','income_tax')
+         )
+         and not exists (
+           select 1 from public.get_compliance_calendar(c.id, '2026-04-01'::date, '2027-03-31'::date) cal
+            where cal.category = (case m.module_code
+                    when 'gst' then 'GST' when 'tds' then 'TDS'
+                    when 'tcs' then 'TCS' when 'income_tax' then 'Income tax' end)
+         )
+    `);
+    expect(rows, `companies with an active module but zero matching calendar rows for a full year:\n${offenders(rows)}`).toEqual([]);
+  });
+});
+
+// ---------------------------------------------------------------------------
 // Tenancy: what the catalog can prove without fixtures
 // ---------------------------------------------------------------------------
 describeDb(`tenancy and RLS, catalog-level (${hasDb ? "live" : noDbReason})`, () => {
