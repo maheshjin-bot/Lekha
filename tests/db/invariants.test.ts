@@ -1005,6 +1005,70 @@ describeDb(`forex settlement (${hasDb ? "live" : noDbReason})`, () => {
 });
 
 // ---------------------------------------------------------------------------
+// Job work (0069)
+// ---------------------------------------------------------------------------
+describeDb(`job work (${hasDb ? "live" : noDbReason})`, () => {
+  it("the four new RPCs are not reachable by anon or public", async () => {
+    const rows = await sql(`
+      select p.proname, r.rolname
+        from pg_proc p
+        join pg_namespace n on n.oid = p.pronamespace
+        cross join (values ('anon'), ('public')) as r(rolname)
+       where n.nspname = 'public'
+         and p.proname in ('ensure_job_work_movement_ledger', 'create_job_work_challan', 'create_job_work_return', 'get_job_work_outstanding')
+         and has_function_privilege(r.rolname, p.oid, 'EXECUTE')
+    `);
+    expect(rows, `job work function reachable by a role it shouldn't be:\n${offenders(rows)}`).toEqual([]);
+  });
+
+  it("the Job Work Movement ledger's running balance is always exactly zero", async () => {
+    // Direct regression guard for the whole design's core promise: every
+    // job_work_out/in voucher debits and credits this ledger for the same
+    // amount, so no matter how many challans and returns have ever
+    // happened, its net balance must never move off zero.
+    const rows = await sql(`
+      select l.company_id, sum(e.debit_amount) - sum(e.credit_amount) as net_balance
+        from public.ledgers l
+        join public.voucher_entries e on e.ledger_id = l.id
+       where l.name = 'Job Work Movement'
+       group by l.company_id
+      having abs(sum(e.debit_amount) - sum(e.credit_amount)) > 0.01
+    `);
+    expect(rows, `Job Work Movement ledgers with a nonzero balance:\n${offenders(rows)}`).toEqual([]);
+  });
+
+  it("no challan's received+loss quantity ever exceeds what was actually sent", async () => {
+    const rows = await sql(`
+      select c.id, c.quantity_sent,
+             coalesce(sum(r.quantity_received), 0) + coalesce(sum(r.quantity_loss_or_waste), 0) as total_closed
+        from public.job_work_challans c
+        left join public.job_work_returns r on r.challan_id = c.id
+       group by c.id, c.quantity_sent
+      having coalesce(sum(r.quantity_received), 0) + coalesce(sum(r.quantity_loss_or_waste), 0) > c.quantity_sent + 0.0005
+    `);
+    expect(rows, `challans over-returned beyond what was sent:\n${offenders(rows)}`).toEqual([]);
+  });
+
+  it("a challan's status agrees with its own received+loss total, not just whatever was set at the time", async () => {
+    // Recomputes status from first principles rather than trusting the
+    // column create_job_work_return wrote — a genuine regression guard
+    // against that function's own status logic drifting from its data.
+    const rows = await sql(`
+      select c.id, c.status,
+             case when coalesce(sum(r.quantity_received), 0) + coalesce(sum(r.quantity_loss_or_waste), 0) >= c.quantity_sent - 0.0005
+                  then 'closed' else 'open_or_partial' end as expected_bucket
+        from public.job_work_challans c
+        left join public.job_work_returns r on r.challan_id = c.id
+       group by c.id, c.status, c.quantity_sent
+      having (c.status = 'closed') is distinct from (
+        coalesce(sum(r.quantity_received), 0) + coalesce(sum(r.quantity_loss_or_waste), 0) >= c.quantity_sent - 0.0005
+      )
+    `);
+    expect(rows, `challans whose status disagrees with their own received+loss total:\n${offenders(rows)}`).toEqual([]);
+  });
+});
+
+// ---------------------------------------------------------------------------
 // Tenancy: what the catalog can prove without fixtures
 // ---------------------------------------------------------------------------
 describeDb(`tenancy and RLS, catalog-level (${hasDb ? "live" : noDbReason})`, () => {
