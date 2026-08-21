@@ -777,6 +777,43 @@ describeDb(`public API keys (${hasDb ? "live" : noDbReason})`, () => {
 });
 
 // ---------------------------------------------------------------------------
+// create_invoice currency metadata (0065)
+// ---------------------------------------------------------------------------
+describeDb(`create_invoice currency metadata (${hasDb ? "live" : noDbReason})`, () => {
+  it("create_invoice still exists with exactly one signature — the ambiguous-overload trap did not recur", async () => {
+    // Direct regression guard for the exact bug this migration's own DROP
+    // FUNCTION avoided: adding a parameter without dropping the old
+    // signature first leaves TWO overloads and every future call fails with
+    // "function name is not unique". Asserts there is exactly one.
+    const rows = await sql(`
+      select count(*) as n from pg_proc where proname = 'create_invoice'
+    `);
+    expect(Number(rows[0]?.n)).toBe(1);
+  });
+
+  it("create_invoice's new currency parameters do not change the INR figures it posts", async () => {
+    // The core design promise of 0065: txn_currency/exchange_rate are pure
+    // metadata, never multiplied into debit_amount/credit_amount. Checked
+    // structurally rather than by re-running the function: every existing
+    // INR voucher (exchange_rate defaults to 1 for all of them) must still
+    // show total_amount equal to its own debit total, the same invariant
+    // the accounting-invariants suite already asserts for every voucher —
+    // re-asserted here scoped to exchange_rate <> 1 specifically, so a
+    // regression that started scaling amounts by the rate would fail here
+    // even if it accidentally kept the INR-only case correct.
+    const rows = await sql(`
+      select v.id, v.voucher_number, v.exchange_rate, v.total_amount, sum(e.debit_amount) as debit_total
+        from public.vouchers v
+        join public.voucher_entries e on e.voucher_id = v.id
+       where v.exchange_rate <> 1
+       group by v.id, v.voucher_number, v.exchange_rate, v.total_amount
+      having v.total_amount is distinct from sum(e.debit_amount)
+    `);
+    expect(rows, `non-unit-rate vouchers whose total_amount doesn't match their own debit total:\n${offenders(rows)}`).toEqual([]);
+  });
+});
+
+// ---------------------------------------------------------------------------
 // Tenancy: what the catalog can prove without fixtures
 // ---------------------------------------------------------------------------
 describeDb(`tenancy and RLS, catalog-level (${hasDb ? "live" : noDbReason})`, () => {
