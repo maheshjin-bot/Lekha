@@ -11,10 +11,17 @@ export default async function NoticesPage({
 
   const filter = typeof sp.filter === "string" && sp.filter === "all" ? "all" : "open";
 
-  const { data: notices } = await supabase.rpc("get_notices", {
-    p_company_id: companyId,
-    p_status_filter: filter === "open" ? "open" : undefined,
-  });
+  const [{ data: notices }, { data: docs }] = await Promise.all([
+    supabase.rpc("get_notices", {
+      p_company_id: companyId,
+      p_status_filter: filter === "open" ? "open" : undefined,
+    }),
+    supabase
+      .from("documents")
+      .select("id, storage_path, file_name, mime_type, size_bytes, created_at, entity_id")
+      .eq("company_id", companyId)
+      .eq("entity_type", "notice"),
+  ]);
 
   const overdueCount = (notices ?? []).filter((n) => n.is_overdue).length;
 
@@ -37,7 +44,7 @@ export default async function NoticesPage({
         )}
       </header>
 
-      <NoticeManager companyId={companyId} notices={notices ?? []} filter={filter} />
+      <NoticeManager companyId={companyId} notices={notices ?? []} filter={filter} docs={docs ?? []} />
     </main>
   );
 }

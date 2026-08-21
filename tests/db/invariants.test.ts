@@ -556,6 +556,56 @@ describeDb(`notice tracking (${hasDb ? "live" : noDbReason})`, () => {
 });
 
 // ---------------------------------------------------------------------------
+// Document attachments (0060)
+// ---------------------------------------------------------------------------
+describeDb(`document storage (${hasDb ? "live" : noDbReason})`, () => {
+  it("every documents row's storage_path starts with its own company_id, and the folder actually exists in storage", async () => {
+    // The tenancy boundary storage RLS checks (storage.foldername(name)[1])
+    // and the metadata row's own company_id must never disagree — if they
+    // did, a document could be readable by one company's RLS while its
+    // metadata claims to belong to another, or vice versa.
+    const rows = await sql(`
+      select d.id, d.company_id, d.storage_path
+        from public.documents d
+       where d.storage_path !~ ('^' || d.company_id::text || '/')
+    `);
+    expect(rows, `documents rows whose storage_path doesn't start with their own company_id:\n${offenders(rows)}`).toEqual([]);
+  });
+
+  it("the documents bucket is private and MIME-restricted to PDF/PNG/JPEG/WebP", async () => {
+    // Guards the bucket's own config row directly — a console click or a
+    // careless future migration toggling "public" would make every
+    // business's attached notices and fixed-asset invoices world-readable
+    // with no RLS involved at all, since a public bucket serves files over
+    // a plain unauthenticated URL.
+    const rows = await sql(`
+      select id, public, allowed_mime_types
+        from storage.buckets
+       where id = 'documents'
+         and (public
+              or allowed_mime_types is distinct from
+                 array['application/pdf','image/png','image/jpeg','image/webp'])
+    `);
+    expect(rows, `documents bucket misconfigured:\n${offenders(rows)}`).toEqual([]);
+  });
+
+  it("storage.objects in the documents bucket has read/insert/delete policies scoped through company membership", async () => {
+    // Same "every tenant policy must consult a company-scope helper" check
+    // the tenancy suite already runs for every public-schema table, applied
+    // to storage.objects specifically — RLS on a table outside the public
+    // schema is easy to forget when auditing "every policy in this app".
+    const rows = await sql(`
+      select policyname, cmd, coalesce(qual, with_check) as expr
+        from pg_policies
+       where schemaname = 'storage' and tablename = 'objects'
+         and coalesce(qual, '') !~ 'is_company_member|can_write_company'
+         and coalesce(with_check, '') !~ 'is_company_member|can_write_company'
+    `);
+    expect(rows, `storage.objects policies with no company scope:\n${offenders(rows)}`).toEqual([]);
+  });
+});
+
+// ---------------------------------------------------------------------------
 // Tenancy: what the catalog can prove without fixtures
 // ---------------------------------------------------------------------------
 describeDb(`tenancy and RLS, catalog-level (${hasDb ? "live" : noDbReason})`, () => {

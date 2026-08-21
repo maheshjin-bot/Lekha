@@ -7,6 +7,17 @@ import { createClient } from "@/lib/supabase/client";
 import { formatINR } from "@/lib/utils/currency";
 import { Badge } from "@/components/ui/Badge";
 import { TableContainer, th, td, num } from "@/components/ui/Table";
+import { DocumentAttachments } from "@/components/documents/DocumentAttachments";
+
+type Doc = {
+  id: string;
+  storage_path: string;
+  file_name: string;
+  mime_type: string;
+  size_bytes: number;
+  created_at: string;
+  entity_id: string | null;
+};
 
 type Notice = {
   id: string;
@@ -47,14 +58,19 @@ export function NoticeManager({
   companyId,
   notices,
   filter,
+  docs,
 }: {
   companyId: string;
   notices: Notice[];
   filter: string;
+  docs: Doc[];
 }) {
   const router = useRouter();
   const [showForm, setShowForm] = useState(false);
   const [busy, setBusy] = useState(false);
+  // Which row's attachment panel is open — independent of the respond panel,
+  // since a user may want to see what's attached without starting a response.
+  const [filesOpenFor, setFilesOpenFor] = useState<string | null>(null);
 
   const [authority, setAuthority] = useState("gst");
   const [noticeType, setNoticeType] = useState("");
@@ -275,27 +291,48 @@ export function NoticeManager({
                   <td className={num}>{n.amount_involved ? formatINR(Number(n.amount_involved)) : "—"}</td>
                   <td className={td + " max-w-xs text-ink-soft"}>{n.description}</td>
                   <td className={td}>
-                    {n.status === "open" && (
+                    <div className="flex flex-col items-start gap-1">
+                      {n.status === "open" && (
+                        <button
+                          type="button"
+                          onClick={() => setActingOn(actingOn === n.id ? null : n.id)}
+                          className="text-xs text-accent underline underline-offset-2"
+                        >
+                          Respond
+                        </button>
+                      )}
+                      {n.status === "responded" && (
+                        <button
+                          type="button"
+                          disabled={busy}
+                          onClick={() => markClosed(n.id)}
+                          className="text-xs text-accent underline underline-offset-2 disabled:opacity-50"
+                        >
+                          Close
+                        </button>
+                      )}
                       <button
                         type="button"
-                        onClick={() => setActingOn(actingOn === n.id ? null : n.id)}
-                        className="text-xs text-accent underline underline-offset-2"
+                        onClick={() => setFilesOpenFor(filesOpenFor === n.id ? null : n.id)}
+                        className="text-xs text-ink-soft underline underline-offset-2"
                       >
-                        Respond
+                        Files ({docs.filter((d) => d.entity_id === n.id).length})
                       </button>
-                    )}
-                    {n.status === "responded" && (
-                      <button
-                        type="button"
-                        disabled={busy}
-                        onClick={() => markClosed(n.id)}
-                        className="text-xs text-accent underline underline-offset-2 disabled:opacity-50"
-                      >
-                        Close
-                      </button>
-                    )}
+                    </div>
                   </td>
                 </tr>
+                {filesOpenFor === n.id && (
+                  <tr className="border-b border-border bg-bg">
+                    <td colSpan={8} className="px-4 py-3">
+                      <DocumentAttachments
+                        companyId={companyId}
+                        entityType="notice"
+                        entityId={n.id}
+                        docs={docs.filter((d) => d.entity_id === n.id)}
+                      />
+                    </td>
+                  </tr>
+                )}
                 {actingOn === n.id && (
                   <tr className="border-b border-border bg-bg">
                     <td colSpan={8} className="px-4 py-3">
