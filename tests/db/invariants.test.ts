@@ -370,6 +370,75 @@ describeDb(`CMA data (${hasDb ? "live" : noDbReason})`, () => {
 });
 
 // ---------------------------------------------------------------------------
+// Cost centres (0057)
+// ---------------------------------------------------------------------------
+describeDb(`cost centre allocation (${hasDb ? "live" : noDbReason})`, () => {
+  it("the cost centre split always sums to the company's own P&L", async () => {
+    // The whole promise of the report: the parts add up to the whole, because
+    // unallocated lines come back as their own row instead of being dropped.
+    // If a later change filters them out, the report starts quietly
+    // under-reporting and every row still looks individually correct.
+    const rows = await sql(`
+      select * from (
+        select c.id, c.name,
+          (select coalesce(sum(net), 0)
+             from public.get_cost_centre_pnl(c.id, '1900-01-01'::date, '2999-12-31'::date)) as cc_net,
+          (select coalesce(sum(
+                    case when g.nature in ('direct_income','indirect_income')
+                         then e.credit_amount - e.debit_amount
+                         else e.debit_amount - e.credit_amount end
+                    * case when g.nature in ('direct_income','indirect_income') then 1 else -1 end
+                  ), 0)
+             from public.voucher_entries e
+             join public.vouchers v on v.id = e.voucher_id and v.company_id = e.company_id
+             join public.ledgers l on l.id = e.ledger_id
+             join public.account_groups g on g.id = l.group_id
+            where e.company_id = c.id and not v.is_deleted
+              and g.nature in ('direct_income','indirect_income','direct_expense','indirect_expense')
+          ) as pnl_net
+          from public.companies c
+      ) t
+      where round(cc_net, 2) is distinct from round(pnl_net, 2)
+    `);
+    expect(rows, `companies where the cost centre split does not tie to P&L:\n${offenders(rows)}`).toEqual([]);
+  });
+
+  it("no balance-sheet line carries a cost centre", async () => {
+    // set_entry_cost_centre refuses these, but the dimensions column is plain
+    // jsonb that any future write path could set. A cost centre on a bank
+    // balance cannot be summed into anything meaningful, so it must never
+    // exist regardless of which code path put it there.
+    const rows = await sql(`
+      select v.voucher_number, l.name as ledger, g.nature
+        from public.voucher_entries e
+        join public.vouchers v on v.id = e.voucher_id
+        join public.ledgers l on l.id = e.ledger_id
+        join public.account_groups g on g.id = l.group_id
+       where e.dimensions ? 'cost_centre'
+         and g.nature not in ('direct_income','indirect_income','direct_expense','indirect_expense')
+    `);
+    expect(rows, `balance-sheet lines carrying a cost centre:\n${offenders(rows)}`).toEqual([]);
+  });
+
+  it("every allocated cost centre exists and belongs to the same company", async () => {
+    // dimensions is schemaless, so nothing at the database level enforces that
+    // the uuid in it is a real cost centre of that company — a dangling id
+    // would silently render as "(unallocated)" and quietly misstate the split.
+    const rows = await sql(`
+      select v.voucher_number, e.dimensions->>'cost_centre' as cc_id
+        from public.voucher_entries e
+        join public.vouchers v on v.id = e.voucher_id
+       where e.dimensions ? 'cost_centre'
+         and not exists (
+           select 1 from public.cost_centres c
+            where c.id = nullif(e.dimensions->>'cost_centre','')::uuid
+              and c.company_id = e.company_id)
+    `);
+    expect(rows, `entries pointing at a missing or cross-company cost centre:\n${offenders(rows)}`).toEqual([]);
+  });
+});
+
+// ---------------------------------------------------------------------------
 // Tenancy: what the catalog can prove without fixtures
 // ---------------------------------------------------------------------------
 describeDb(`tenancy and RLS, catalog-level (${hasDb ? "live" : noDbReason})`, () => {
