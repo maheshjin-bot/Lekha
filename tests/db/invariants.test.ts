@@ -814,6 +814,42 @@ describeDb(`create_invoice currency metadata (${hasDb ? "live" : noDbReason})`, 
 });
 
 // ---------------------------------------------------------------------------
+// Quick billing / POS (0066)
+// ---------------------------------------------------------------------------
+describeDb(`quick billing (${hasDb ? "live" : noDbReason})`, () => {
+  it("ensure_cash_sales_ledger is not reachable by anon or public", async () => {
+    // Same systemic gotcha this whole session kept catching: PUBLIC's
+    // default EXECUTE grant reaches anon unless explicitly revoked from
+    // both. Written and checked live before trusting it, per the pattern
+    // that first caught this bug (0064).
+    const rows = await sql(`
+      select p.proname, r.rolname
+        from pg_proc p
+        join pg_namespace n on n.oid = p.pronamespace
+        cross join (values ('anon'), ('public')) as r(rolname)
+       where n.nspname = 'public' and p.proname = 'ensure_cash_sales_ledger'
+         and has_function_privilege(r.rolname, p.oid, 'EXECUTE')
+    `);
+    expect(rows, `ensure_cash_sales_ledger reachable by a role it shouldn't be:\n${offenders(rows)}`).toEqual([]);
+  });
+
+  it("no company ever ends up with two ledgers under Cash-in-Hand named 'Cash Sales'", async () => {
+    // Direct regression guard for ensure_cash_sales_ledger's core promise:
+    // it must reuse whatever ledger already sits under the company's
+    // Cash-in-Hand group rather than creating a second one on every call.
+    const rows = await sql(`
+      select l.company_id, count(*) as n
+        from public.ledgers l
+        join public.account_groups g on g.id = l.group_id
+       where g.name = 'Cash-in-Hand' and l.name = 'Cash Sales'
+       group by l.company_id
+      having count(*) > 1
+    `);
+    expect(rows, `companies with duplicate Cash Sales ledgers:\n${offenders(rows)}`).toEqual([]);
+  });
+});
+
+// ---------------------------------------------------------------------------
 // Tenancy: what the catalog can prove without fixtures
 // ---------------------------------------------------------------------------
 describeDb(`tenancy and RLS, catalog-level (${hasDb ? "live" : noDbReason})`, () => {
