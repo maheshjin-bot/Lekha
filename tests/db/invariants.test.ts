@@ -914,6 +914,97 @@ describeDb(`batch and serial tracking (${hasDb ? "live" : noDbReason})`, () => {
 });
 
 // ---------------------------------------------------------------------------
+// EXIM / foreign-currency settlement (0068)
+// ---------------------------------------------------------------------------
+describeDb(`forex settlement (${hasDb ? "live" : noDbReason})`, () => {
+  it("the three new RPCs are not reachable by anon or public", async () => {
+    const rows = await sql(`
+      select p.proname, r.rolname
+        from pg_proc p
+        join pg_namespace n on n.oid = p.pronamespace
+        cross join (values ('anon'), ('public')) as r(rolname)
+       where n.nspname = 'public'
+         and p.proname in ('ensure_exchange_gain_loss_ledger', 'get_open_fc_vouchers', 'record_forex_settlement')
+         and has_function_privilege(r.rolname, p.oid, 'EXECUTE')
+    `);
+    expect(rows, `forex function reachable by a role it shouldn't be:\n${offenders(rows)}`).toEqual([]);
+  });
+
+  it("every settled voucher's settlement voucher is itself balanced (debits = credits)", async () => {
+    // record_forex_settlement posts a brand-new voucher rather than reusing
+    // create_voucher's own balance-trigger path — this is the direct check
+    // that its hand-built INSERTs still land balanced, for every settlement
+    // that has ever actually happened, not just the two shapes hand-verified
+    // live while building it.
+    const rows = await sql(`
+      select v.id, v.voucher_number,
+             sum(e.debit_amount) as debit_total, sum(e.credit_amount) as credit_total
+        from public.vouchers v
+        join public.voucher_entries e on e.voucher_id = v.id
+       where v.id in (select fc_settlement_voucher_id from public.vouchers where fc_settlement_voucher_id is not null)
+       group by v.id, v.voucher_number
+      having sum(e.debit_amount) is distinct from sum(e.credit_amount)
+    `);
+    expect(rows, `unbalanced settlement vouchers:\n${offenders(rows)}`).toEqual([]);
+  });
+
+  it("a settled voucher's bank/cash leg matches its original booked amount plus the realized gain/loss — the AS 11 formula, re-derived independently", async () => {
+    // Direct structural check of the formula itself, recomputed here from
+    // the raw postings rather than trusting record_forex_settlement's own
+    // arithmetic: the settlement voucher's bank/cash leg (everything that
+    // isn't the original party ledger or Exchange Gain/Loss) should equal
+    // original_inr + gain_loss for a receivable (fc_amount booked debit),
+    // or the mirror image for a payable (fc_amount booked credit) — see
+    // migration 0068's header comment for why the sign flips. Verified by
+    // hand against all three settlements that existed at the time this was
+    // written (one receivable gain, one receivable loss, one payable loss)
+    // before trusting the query itself.
+    const rows = await sql(`
+      with settled as (
+        select id as original_id, fc_settlement_voucher_id as settlement_id
+          from public.vouchers where fc_settlement_voucher_id is not null
+      ),
+      original_leg as (
+        select s.settlement_id, e.ledger_id as party_ledger_id,
+               case when e.debit_amount > 0 then e.debit_amount else e.credit_amount end as original_inr,
+               case when e.debit_amount > 0 then 'debit' else 'credit' end as direction
+          from settled s
+          join public.voucher_entries e on e.voucher_id = s.original_id and e.fc_amount is not null
+      ),
+      gl_ledger as (select id from public.ledgers where name = 'Exchange Gain/Loss'),
+      settlement_legs as (
+        select e.voucher_id as settlement_id, e.ledger_id, e.debit_amount, e.credit_amount
+          from public.voucher_entries e
+         where e.voucher_id in (select settlement_id from settled)
+      ),
+      gain_loss as (
+        select sl.settlement_id, sum(sl.credit_amount - sl.debit_amount) as signed_gain_loss
+          from settlement_legs sl where sl.ledger_id in (select id from gl_ledger)
+         group by sl.settlement_id
+      ),
+      bank_leg as (
+        select sl.settlement_id, sum(sl.debit_amount - sl.credit_amount) as signed_bank
+          from settlement_legs sl
+          join original_leg ol on ol.settlement_id = sl.settlement_id
+         where sl.ledger_id <> ol.party_ledger_id and sl.ledger_id not in (select id from gl_ledger)
+         group by sl.settlement_id
+      )
+      select ol.settlement_id, ol.direction, ol.original_inr,
+             coalesce(gl.signed_gain_loss, 0) as gain_loss, coalesce(bl.signed_bank, 0) as signed_bank
+        from original_leg ol
+        left join gain_loss gl on gl.settlement_id = ol.settlement_id
+        left join bank_leg bl on bl.settlement_id = ol.settlement_id
+       where abs(
+               coalesce(bl.signed_bank, 0) -
+               (case when ol.direction = 'debit' then ol.original_inr + coalesce(gl.signed_gain_loss, 0)
+                     else -ol.original_inr + coalesce(gl.signed_gain_loss, 0) end)
+             ) > 0.01
+    `);
+    expect(rows, `settlements where the bank leg doesn't match original + gain/loss:\n${offenders(rows)}`).toEqual([]);
+  });
+});
+
+// ---------------------------------------------------------------------------
 // Tenancy: what the catalog can prove without fixtures
 // ---------------------------------------------------------------------------
 describeDb(`tenancy and RLS, catalog-level (${hasDb ? "live" : noDbReason})`, () => {
