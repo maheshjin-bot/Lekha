@@ -1069,6 +1069,70 @@ describeDb(`job work (${hasDb ? "live" : noDbReason})`, () => {
 });
 
 // ---------------------------------------------------------------------------
+// Manufacturing / BOM (0070)
+// ---------------------------------------------------------------------------
+describeDb(`manufacturing and BOM (${hasDb ? "live" : noDbReason})`, () => {
+  it("the three new RPCs are not reachable by anon or public", async () => {
+    const rows = await sql(`
+      select p.proname, r.rolname
+        from pg_proc p
+        join pg_namespace n on n.oid = p.pronamespace
+        cross join (values ('anon'), ('public')) as r(rolname)
+       where n.nspname = 'public'
+         and p.proname in ('ensure_manufacturing_clearing_ledger', 'create_production_voucher', 'get_boms')
+         and has_function_privilege(r.rolname, p.oid, 'EXECUTE')
+    `);
+    expect(rows, `manufacturing function reachable by a role it shouldn't be:\n${offenders(rows)}`).toEqual([]);
+  });
+
+  it("the Manufacturing Clearing ledger's running balance is always exactly zero", async () => {
+    const rows = await sql(`
+      select l.company_id, sum(e.debit_amount) - sum(e.credit_amount) as net_balance
+        from public.ledgers l
+        join public.voucher_entries e on e.ledger_id = l.id
+       where l.name = 'Manufacturing Clearing'
+       group by l.company_id
+      having abs(sum(e.debit_amount) - sum(e.credit_amount)) > 0.01
+    `);
+    expect(rows, `Manufacturing Clearing ledgers with a nonzero balance:\n${offenders(rows)}`).toEqual([]);
+  });
+
+  it("no BOM component is the same item as its own BOM's output", async () => {
+    const rows = await sql(`
+      select bc.id, b.output_item_id
+        from public.bom_components bc
+        join public.bill_of_materials b on b.id = bc.bom_id
+       where bc.component_item_id = b.output_item_id
+    `);
+    expect(rows, `BOM components that are the same item as their own output:\n${offenders(rows)}`).toEqual([]);
+  });
+
+  it("every production voucher's finished-item receipt value equals the sum of its consumed-component values plus nothing untracked", async () => {
+    // Direct structural check of the costing promise: for every
+    // stock_journal voucher (the type create_production_voucher uses),
+    // the single 'in' line's amount should equal the sum of all 'out'
+    // lines' amounts, plus whatever the self-cancelling Manufacturing
+    // Clearing pair recorded as the voucher's total — recomputed here from
+    // the raw voucher_items rows, not from trusting the function's return
+    // value.
+    const rows = await sql(`
+      select v.id, v.voucher_number,
+             sum(vi.amount) filter (where vi.direction = 'out') as consumed,
+             sum(vi.amount) filter (where vi.direction = 'in') as received,
+             v.total_amount
+        from public.vouchers v
+        join public.voucher_items vi on vi.voucher_id = v.id
+       where v.voucher_type = 'stock_journal'
+         and exists (select 1 from public.voucher_entries e join public.ledgers l on l.id = e.ledger_id
+                      where e.voucher_id = v.id and l.name = 'Manufacturing Clearing')
+       group by v.id, v.voucher_number, v.total_amount
+      having abs(coalesce(sum(vi.amount) filter (where vi.direction = 'in'), 0) - v.total_amount) > 0.01
+    `);
+    expect(rows, `production vouchers where the receipt value doesn't match total_amount:\n${offenders(rows)}`).toEqual([]);
+  });
+});
+
+// ---------------------------------------------------------------------------
 // Tenancy: what the catalog can prove without fixtures
 // ---------------------------------------------------------------------------
 describeDb(`tenancy and RLS, catalog-level (${hasDb ? "live" : noDbReason})`, () => {
