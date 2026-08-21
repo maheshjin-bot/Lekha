@@ -850,6 +850,70 @@ describeDb(`quick billing (${hasDb ? "live" : noDbReason})`, () => {
 });
 
 // ---------------------------------------------------------------------------
+// Batch / serial / expiry tracking (0067)
+// ---------------------------------------------------------------------------
+describeDb(`batch and serial tracking (${hasDb ? "live" : noDbReason})`, () => {
+  it("the three new RPCs are not reachable by anon or public", async () => {
+    const rows = await sql(`
+      select p.proname, r.rolname
+        from pg_proc p
+        join pg_namespace n on n.oid = p.pronamespace
+        cross join (values ('anon'), ('public')) as r(rolname)
+       where n.nspname = 'public'
+         and p.proname in ('upsert_item_batch', 'allocate_voucher_item_to_batch', 'get_unallocated_stock_lines', 'get_batch_stock_summary')
+         and has_function_privilege(r.rolname, p.oid, 'EXECUTE')
+    `);
+    expect(rows, `batch-tracking function reachable by a role it shouldn't be:\n${offenders(rows)}`).toEqual([]);
+  });
+
+  it("no voucher_item_batches row allocates more than its own line's quantity", async () => {
+    // Direct regression guard for enforce_batch_allocation's core promise —
+    // checked structurally against the live sum rather than trusting the
+    // trigger fired correctly on every historical row.
+    const rows = await sql(`
+      select vi.id as voucher_item_id, vi.quantity as line_quantity, sum(vib.quantity) as allocated
+        from public.voucher_item_batches vib
+        join public.voucher_items vi on vi.id = vib.voucher_item_id
+       group by vi.id, vi.quantity
+      having sum(vib.quantity) > vi.quantity + 0.0005
+    `);
+    expect(rows, `voucher_items with over-allocated batch quantity:\n${offenders(rows)}`).toEqual([]);
+  });
+
+  it("no voucher_item_batches row allocates a batch belonging to a different item than its line", async () => {
+    const rows = await sql(`
+      select vib.id, vi.item_id as line_item_id, b.item_id as batch_item_id
+        from public.voucher_item_batches vib
+        join public.voucher_items vi on vi.id = vib.voucher_item_id
+        join public.item_batches b on b.id = vib.batch_id
+       where vi.item_id <> b.item_id
+    `);
+    expect(rows, `allocations where the batch's item doesn't match the line's item:\n${offenders(rows)}`).toEqual([]);
+  });
+
+  it("no serial-tracked item has an allocation with quantity other than 1", async () => {
+    const rows = await sql(`
+      select vib.id, i.name, vib.quantity
+        from public.voucher_item_batches vib
+        join public.item_batches b on b.id = vib.batch_id
+        join public.items i on i.id = b.item_id
+       where i.batch_tracking = 'serial' and vib.quantity <> 1
+    `);
+    expect(rows, `serial allocations with quantity <> 1:\n${offenders(rows)}`).toEqual([]);
+  });
+
+  it("no batch/serial number is duplicated on the same item, case-insensitively", async () => {
+    const rows = await sql(`
+      select company_id, item_id, lower(batch_no) as batch_no_ci, count(*) as n
+        from public.item_batches
+       group by company_id, item_id, lower(batch_no)
+      having count(*) > 1
+    `);
+    expect(rows, `duplicate batch numbers on one item:\n${offenders(rows)}`).toEqual([]);
+  });
+});
+
+// ---------------------------------------------------------------------------
 // Tenancy: what the catalog can prove without fixtures
 // ---------------------------------------------------------------------------
 describeDb(`tenancy and RLS, catalog-level (${hasDb ? "live" : noDbReason})`, () => {
