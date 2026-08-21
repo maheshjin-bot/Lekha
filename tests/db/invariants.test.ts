@@ -508,6 +508,54 @@ describeDb(`budgets and variance (${hasDb ? "live" : noDbReason})`, () => {
 });
 
 // ---------------------------------------------------------------------------
+// Notices (0059)
+// ---------------------------------------------------------------------------
+describeDb(`notice tracking (${hasDb ? "live" : noDbReason})`, () => {
+  it("a closed or responded notice is never reported overdue, regardless of its due_date", async () => {
+    // The specific guard get_notices exists to provide: is_overdue must
+    // reflect the business's OWN workflow state, not just a date comparison
+    // — a notice resolved after its printed deadline is still resolved, and
+    // a dashboard that keeps flagging it "overdue" would train the reader to
+    // ignore the flag entirely.
+    const rows = await sql(`
+      select c.name, n.notice_type, n.status, n.due_date
+        from public.companies c
+        cross join lateral public.get_notices(c.id, null) n
+       where n.status in ('closed','responded') and n.is_overdue
+    `);
+    expect(rows, `resolved notices still flagged overdue:\n${offenders(rows)}`).toEqual([]);
+  });
+
+  it("is_overdue is true only for an open notice whose due_date has passed", async () => {
+    // The positive side of the same guard — re-derives the flag independently
+    // rather than trusting the function's own boolean, so a later refactor
+    // that inverts the comparison or drops the status check fails here too.
+    const rows = await sql(`
+      select c.name, n.notice_type, n.status, n.due_date, n.is_overdue
+        from public.companies c
+        cross join lateral public.get_notices(c.id, null) n
+       where n.is_overdue is distinct from
+             (n.status = 'open' and n.due_date is not null and n.due_date < current_date)
+    `);
+    expect(rows, `is_overdue disagrees with its own definition:\n${offenders(rows)}`).toEqual([]);
+  });
+
+  it("every notice's due_date is on or after its notice_date, and response_date on or after received_date", async () => {
+    // Guards the two CHECK constraints directly — if either were ever
+    // dropped by a careless ALTER TABLE, this still catches data that
+    // couldn't have happened in the real world (a deadline before the
+    // notice was even dated, a response before the notice arrived).
+    const rows = await sql(`
+      select id, notice_type, notice_date, due_date, received_date, response_date
+        from public.notices
+       where (due_date is not null and due_date < notice_date)
+          or (response_date is not null and response_date < received_date)
+    `);
+    expect(rows, `notices with an impossible date order:\n${offenders(rows)}`).toEqual([]);
+  });
+});
+
+// ---------------------------------------------------------------------------
 // Tenancy: what the catalog can prove without fixtures
 // ---------------------------------------------------------------------------
 describeDb(`tenancy and RLS, catalog-level (${hasDb ? "live" : noDbReason})`, () => {
