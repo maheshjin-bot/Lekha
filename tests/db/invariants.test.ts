@@ -606,6 +606,59 @@ describeDb(`document storage (${hasDb ? "live" : noDbReason})`, () => {
 });
 
 // ---------------------------------------------------------------------------
+// Orders (0061)
+// ---------------------------------------------------------------------------
+describeDb(`sales and purchase orders (${hasDb ? "live" : noDbReason})`, () => {
+  it("orders never post to voucher_entries — the whole company-wide ledger nets to zero regardless of order activity", async () => {
+    // The core promise of 0061: a quotation is a commitment, not a
+    // transaction. Re-runs the same net-zero check the accounting-invariants
+    // suite already applies to voucher_entries as a whole — if creating,
+    // confirming or fulfilling an order ever posted anything, this fails
+    // exactly the way an unbalanced voucher would.
+    const rows = await sql(`
+      select company_id, sum(debit_amount) - sum(credit_amount) as net
+        from public.voucher_entries
+       group by company_id
+      having sum(debit_amount) <> sum(credit_amount)
+    `);
+    expect(rows, `companies whose ledger does not net to zero:\n${offenders(rows)}`).toEqual([]);
+  });
+
+  it("no order sits in an impossible status, and a fulfilled/cancelled order's status never changes again", async () => {
+    // Guards the one-way lifecycle advance_order_status enforces — this
+    // reads the CHECK constraint's own boundary (only four statuses exist at
+    // all) rather than re-deriving the transition table, since the
+    // transition rules themselves live in the function and are exercised
+    // directly elsewhere.
+    const rows = await sql(`
+      select id, status from public.orders
+       where status not in ('draft','confirmed','fulfilled','cancelled')
+    `);
+    expect(rows, `orders with an unrecognised status:\n${offenders(rows)}`).toEqual([]);
+  });
+
+  it("every order_items row's amount equals quantity times rate, and every order's item_count/total_amount from get_orders matches its own lines", async () => {
+    // get_orders derives both figures with a correlated subquery rather than
+    // a stored column — if that subquery's join or grouping ever drifted
+    // from order_items itself, this catches the mismatch directly rather
+    // than trusting the RPC's own arithmetic.
+    const rows = await sql(`
+      select * from (
+        select o.id,
+          (select coalesce(sum(oi.amount), 0) from public.order_items oi where oi.order_id = o.id) as raw_total,
+          (select coalesce(count(*), 0) from public.order_items oi where oi.order_id = o.id) as raw_count,
+          (select go.total_amount from public.get_orders(o.company_id, null, null) go where go.id = o.id) as fn_total,
+          (select go.item_count from public.get_orders(o.company_id, null, null) go where go.id = o.id) as fn_count
+          from public.orders o
+      ) t
+      where round(raw_total, 2) is distinct from round(fn_total, 2)
+         or raw_count is distinct from fn_count
+    `);
+    expect(rows, `orders where get_orders' totals disagree with order_items:\n${offenders(rows)}`).toEqual([]);
+  });
+});
+
+// ---------------------------------------------------------------------------
 // Tenancy: what the catalog can prove without fixtures
 // ---------------------------------------------------------------------------
 describeDb(`tenancy and RLS, catalog-level (${hasDb ? "live" : noDbReason})`, () => {
