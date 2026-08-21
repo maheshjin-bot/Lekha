@@ -723,6 +723,60 @@ describeDb(`ROC compliance calendar (${hasDb ? "live" : noDbReason})`, () => {
 });
 
 // ---------------------------------------------------------------------------
+// Public API keys (0063)
+// ---------------------------------------------------------------------------
+describeDb(`public API keys (${hasDb ? "live" : noDbReason})`, () => {
+  it("no api_keys row stores anything that looks like a raw key — only a fixed-length hash", async () => {
+    // The core promise of 0063: the raw value exists only for the moment
+    // create_api_key returns it. A hash is always exactly 64 hex chars
+    // (sha256); anything else in that column, or a key_hash that looks like
+    // it still carries the 'lekha_' prefix, means a raw key leaked into
+    // storage somewhere outside the one function meant to generate it.
+    const rows = await sql(`
+      select id, name, key_hash
+        from public.api_keys
+       where key_hash !~ '^[0-9a-f]{64}$' or key_hash like 'lekha\\_%'
+    `);
+    expect(rows, `api_keys rows with a non-hash value in key_hash:\n${offenders(rows)}`).toEqual([]);
+  });
+
+  it("the two api_get_* dispatcher functions are NOT marked stable/immutable", async () => {
+    // Regression guard for the exact bug caught live while building this:
+    // authenticate_api_key has a real side effect (bumping last_used_at),
+    // so marking its callers stable made PostgREST open a read-only
+    // transaction and refuse that UPDATE outright. provolatile 'v' is
+    // volatile (the default); 's' is stable, 'i' is immutable — either of
+    // the latter two would silently break every anon call again.
+    const rows = await sql(`
+      select proname, provolatile
+        from pg_proc
+       where proname in ('api_get_trial_balance','api_get_dashboard_kpis')
+         and provolatile <> 'v'
+    `);
+    expect(rows, `api_get_* functions incorrectly marked stable/immutable:\n${offenders(rows)}`).toEqual([]);
+  });
+
+  it("only the two intended api_get_* functions are granted to anon among this session's Aug 21 functions", async () => {
+    // The deliberate, narrow exception to this whole session's convention
+    // (every other function explicitly revokes anon) — this asserts the
+    // exception stayed exactly as narrow as intended: exactly two grantees,
+    // both read-only dispatchers, and nothing else (create_api_key,
+    // revoke_api_key, or authenticate_api_key itself) picked up an anon
+    // grant by accident.
+    const rows = await sql(`
+      select p.proname
+        from pg_proc p
+        join pg_namespace n on n.oid = p.pronamespace
+       where n.nspname = 'public'
+         and p.proname in ('create_api_key','revoke_api_key','api_get_trial_balance','api_get_dashboard_kpis')
+         and has_function_privilege('anon', p.oid, 'EXECUTE')
+         and p.proname not in ('api_get_trial_balance','api_get_dashboard_kpis')
+    `);
+    expect(rows, `key-management functions unexpectedly executable by anon:\n${offenders(rows)}`).toEqual([]);
+  });
+});
+
+// ---------------------------------------------------------------------------
 // Tenancy: what the catalog can prove without fixtures
 // ---------------------------------------------------------------------------
 describeDb(`tenancy and RLS, catalog-level (${hasDb ? "live" : noDbReason})`, () => {
