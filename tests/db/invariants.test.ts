@@ -439,6 +439,75 @@ describeDb(`cost centre allocation (${hasDb ? "live" : noDbReason})`, () => {
 });
 
 // ---------------------------------------------------------------------------
+// Budgets (0058)
+// ---------------------------------------------------------------------------
+describeDb(`budgets and variance (${hasDb ? "live" : noDbReason})`, () => {
+  it("at most one active budget per company", async () => {
+    // Guards the partial unique index directly, not just its side effect —
+    // if the index were ever dropped or narrowed, a report defaulting to
+    // "the" active budget would silently pick whichever row sorted first.
+    const rows = await sql(`
+      select company_id, count(*) as active_count
+        from public.budgets
+       where is_active
+       group by company_id
+      having count(*) > 1
+    `);
+    expect(rows, `companies with more than one active budget:\n${offenders(rows)}`).toEqual([]);
+  });
+
+  it("no budget line is set against a balance-sheet ledger", async () => {
+    // set_budget_lines refuses these, but budget_lines has no CHECK tying it
+    // to ledger nature — a future write path (a CSV importer, a direct
+    // insert) could bypass the function's own guard.
+    const rows = await sql(`
+      select bl.id, l.name as ledger, g.nature
+        from public.budget_lines bl
+        join public.ledgers l on l.id = bl.ledger_id
+        join public.account_groups g on g.id = l.group_id
+       where g.nature not in ('direct_income','indirect_income','direct_expense','indirect_expense')
+    `);
+    expect(rows, `budget lines on non-P&L ledgers:\n${offenders(rows)}`).toEqual([]);
+  });
+
+  it("budget variance actual matches a plain postings sum, per active budget", async () => {
+    // Re-derives the actual side independently of get_budget_variance's own
+    // SQL, using the whole-of-time window so nothing is cut off by a date
+    // range — a drift here means the function's join or sign convention
+    // diverged from the postings it claims to summarise.
+    const rows = await sql(`
+      select * from (
+        select b.id as budget_id, c.name,
+          (select coalesce(sum(actual), 0)
+             from public.get_budget_variance(c.id, b.id, '1900-01-01'::date, '2999-12-31'::date)
+          ) as fn_actual,
+          (select coalesce(sum(
+                    case when g.nature in ('direct_income','indirect_income')
+                         then e.credit_amount - e.debit_amount
+                         else e.debit_amount - e.credit_amount end
+                  ), 0)
+             from public.voucher_entries e
+             join public.vouchers v on v.id = e.voucher_id and v.company_id = e.company_id
+             join public.ledgers l on l.id = e.ledger_id
+             join public.account_groups g on g.id = l.group_id
+            where e.company_id = c.id and not v.is_deleted
+              and g.nature in ('direct_income','indirect_income','direct_expense','indirect_expense')
+              and l.id in (select ledger_id from public.budget_lines where budget_id = b.id
+                           union select ledger_id from public.voucher_entries e2
+                                  join public.vouchers v2 on v2.id = e2.voucher_id
+                                 where e2.company_id = c.id and not v2.is_deleted)
+          ) as raw_actual
+          from public.budgets b
+          join public.companies c on c.id = b.company_id
+         where b.is_active
+      ) t
+      where round(fn_actual, 2) is distinct from round(raw_actual, 2)
+    `);
+    expect(rows, `active budgets where get_budget_variance's actual disagrees with raw postings:\n${offenders(rows)}`).toEqual([]);
+  });
+});
+
+// ---------------------------------------------------------------------------
 // Tenancy: what the catalog can prove without fixtures
 // ---------------------------------------------------------------------------
 describeDb(`tenancy and RLS, catalog-level (${hasDb ? "live" : noDbReason})`, () => {
