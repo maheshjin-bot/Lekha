@@ -1133,6 +1133,80 @@ describeDb(`manufacturing and BOM (${hasDb ? "live" : noDbReason})`, () => {
 });
 
 // ---------------------------------------------------------------------------
+// Forex revaluation (0071)
+// ---------------------------------------------------------------------------
+describeDb(`forex revaluation (${hasDb ? "live" : noDbReason})`, () => {
+  it("record_forex_revaluation is not reachable by anon or public", async () => {
+    const rows = await sql(`
+      select p.proname, r.rolname
+        from pg_proc p
+        join pg_namespace n on n.oid = p.pronamespace
+        cross join (values ('anon'), ('public')) as r(rolname)
+       where n.nspname = 'public' and p.proname = 'record_forex_revaluation'
+         and has_function_privilege(r.rolname, p.oid, 'EXECUTE')
+    `);
+    expect(rows, `record_forex_revaluation reachable by a role it shouldn't be:\n${offenders(rows)}`).toEqual([]);
+  });
+
+  it("every FC voucher's own party-ledger balance equals fc_amount x its carrying rate — the whole feature's core promise", async () => {
+    // Recomputed structurally from raw postings, not trusted from
+    // get_open_fc_vouchers' own return value: for every non-INR voucher
+    // that carries an fc_amount leg, sum every voucher_entries row ever
+    // posted against that SAME ledger by either the original voucher, its
+    // own revaluations, or (if settled) its settlement voucher, and
+    // confirm it nets to zero once settled, or to fc_amount x carrying
+    // rate while still open. This is the exact property the additive-
+    // postings design (rather than editing the original row) depends on
+    // holding true.
+    const rows = await sql(`
+      with fc_vouchers as (
+        select v.id as original_id, e.ledger_id, e.fc_amount,
+               coalesce(v.fc_last_revalued_rate, v.exchange_rate) as carrying_rate,
+               v.fc_settled_at, v.fc_settlement_voucher_id
+          from public.vouchers v
+          join public.voucher_entries e on e.voucher_id = v.id and e.fc_amount is not null
+         where v.txn_currency is not null and trim(v.txn_currency) <> 'INR'
+      ),
+      related_vouchers as (
+        -- every voucher that could have posted against this same party
+        -- ledger as part of this FC voucher's own lifecycle: itself, any
+        -- revaluation (a real FK — fc_revalues_voucher_id, not inferred
+        -- from narration text, which p_narration lets a caller override),
+        -- and its settlement.
+        select fv.original_id, fv.ledger_id, fv.fc_amount, fv.carrying_rate, fv.fc_settled_at, v2.id as related_voucher_id
+          from fc_vouchers fv
+          join public.vouchers v2 on v2.id = fv.original_id
+             or v2.id = fv.fc_settlement_voucher_id
+             or v2.fc_revalues_voucher_id = fv.original_id
+      ),
+      ledger_net as (
+        select rv.original_id, rv.fc_amount, rv.carrying_rate, rv.fc_settled_at,
+               sum(e.debit_amount - e.credit_amount) as net_balance
+          from related_vouchers rv
+          join public.voucher_entries e on e.voucher_id = rv.related_voucher_id and e.ledger_id = rv.ledger_id
+         group by rv.original_id, rv.fc_amount, rv.carrying_rate, rv.fc_settled_at
+      )
+      select original_id, fc_amount, carrying_rate, fc_settled_at, net_balance,
+             round(fc_amount * carrying_rate, 2) as expected_open_balance
+        from ledger_net
+       where (fc_settled_at is null and abs(net_balance - round(fc_amount * carrying_rate, 2)) > 0.01)
+          or (fc_settled_at is not null and abs(net_balance) > 0.01)
+    `);
+    expect(rows, `FC vouchers whose party-ledger balance doesn't match their expected carrying/settled state:\n${offenders(rows)}`).toEqual([]);
+  });
+
+  it("no voucher was ever revalued to a date before its own last revaluation or before its own voucher date", async () => {
+    const rows = await sql(`
+      select id, voucher_number, voucher_date, fc_last_revalued_at
+        from public.vouchers
+       where fc_last_revalued_at is not null
+         and fc_last_revalued_at < voucher_date
+    `);
+    expect(rows, `vouchers revalued to a date before their own voucher_date:\n${offenders(rows)}`).toEqual([]);
+  });
+});
+
+// ---------------------------------------------------------------------------
 // Tenancy: what the catalog can prove without fixtures
 // ---------------------------------------------------------------------------
 describeDb(`tenancy and RLS, catalog-level (${hasDb ? "live" : noDbReason})`, () => {

@@ -27,6 +27,8 @@ type OpenVoucher = {
   voucher_type: string;
   txn_currency: string;
   exchange_rate: number;
+  carrying_rate: number;
+  last_revalued_at: string | null;
   party_ledger_id: string;
   party_ledger_name: string;
   fc_amount: number;
@@ -267,7 +269,8 @@ export function ForexManager({
                 <th className={th}>Voucher</th>
                 <th className={th}>Ledger</th>
                 <th className={th + " text-right"}>FC amount</th>
-                <th className={th + " text-right"}>Booked (₹)</th>
+                <th className={th + " text-right"}>Carrying value (₹)</th>
+                <th className={th}>Revalue</th>
                 <th className={th}>Settle</th>
               </tr>
             </thead>
@@ -287,7 +290,21 @@ export function ForexManager({
                   <td className={num}>
                     {v.txn_currency} {formatINR(v.fc_amount, { showZero: true })}
                   </td>
-                  <td className={num}>{formatINR(v.inr_amount, { showZero: true })}</td>
+                  <td className={num}>
+                    {formatINR(v.inr_amount, { showZero: true })}
+                    <div className="text-xs text-ink-faint">
+                      @ {v.carrying_rate}
+                      {v.last_revalued_at ? ` (revalued ${v.last_revalued_at})` : " (booked rate)"}
+                    </div>
+                  </td>
+                  <td className={td}>
+                    <RevalueRow
+                      companyId={companyId}
+                      branches={branches}
+                      v={v}
+                      onDone={() => router.refresh()}
+                    />
+                  </td>
                   <td className={td}>
                     <SettleRow
                       companyId={companyId}
@@ -304,10 +321,127 @@ export function ForexManager({
         </TableContainer>
       )}
       <p className="text-xs text-ink-faint">
-        Full settlement only — v1 doesn&rsquo;t split one voucher&rsquo;s foreign-currency
-        amount across several receipts. Realized gain/loss posts to a per-company
-        &ldquo;Exchange Gain/Loss&rdquo; ledger, created automatically on first use.
+        <b>Revalue</b> restates a still-open voucher to today&rsquo;s rate as an unrealized
+        gain/loss — no cash moves, the voucher stays open. <b>Settle</b> is the real,
+        realized close-out once actual money moves; full settlement only, v1 doesn&rsquo;t
+        split one voucher&rsquo;s foreign-currency amount across several receipts. Either
+        way the gain/loss posts to a per-company &ldquo;Exchange Gain/Loss&rdquo; ledger,
+        created automatically on first use — and a voucher revalued one or more times
+        before it&rsquo;s finally settled is only ever charged the movement since its last
+        revaluation, never the same movement twice.
       </p>
+    </div>
+  );
+}
+
+function RevalueRow({
+  companyId,
+  branches,
+  v,
+  onDone,
+}: {
+  companyId: string;
+  branches: Branch[];
+  v: OpenVoucher;
+  onDone: () => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const [date, setDate] = useState(new Date().toISOString().slice(0, 10));
+  const [rate, setRate] = useState("");
+  const [rateSource, setRateSource] = useState("rbi");
+  const [busy, setBusy] = useState(false);
+
+  const newCarrying = Number(rate) > 0 ? Number(rate) * v.fc_amount : null;
+  const delta = newCarrying != null ? newCarrying - v.inr_amount : null;
+  const gainLoss = delta != null ? (v.direction === "debit" ? delta : -delta) : null;
+
+  async function revalue() {
+    if (!(Number(rate) > 0)) {
+      toast.error("Enter the closing rate.");
+      return;
+    }
+    setBusy(true);
+    const { error } = await createClient().rpc("record_forex_revaluation", {
+      p_company_id: companyId,
+      p_branch_id: branches[0]?.id,
+      p_original_voucher_id: v.voucher_id,
+      p_as_at: date,
+      p_closing_rate: Number(rate),
+      p_rate_source: rateSource || undefined,
+    });
+    setBusy(false);
+    if (error) {
+      toast.error(error.message);
+      return;
+    }
+    toast.success("Revaluation posted.");
+    setOpen(false);
+    onDone();
+  }
+
+  if (!open) {
+    return (
+      <button
+        type="button"
+        onClick={() => setOpen(true)}
+        className="rounded-md border border-border-strong px-2.5 py-1 text-xs font-medium text-ink hover:bg-accent-soft"
+      >
+        Revalue
+      </button>
+    );
+  }
+
+  return (
+    <div className="flex flex-col gap-2 rounded-lg border border-border-strong bg-surface-2 p-2">
+      <div className="flex flex-wrap items-center gap-2">
+        <input
+          type="date"
+          value={date}
+          onChange={(e) => setDate(e.target.value)}
+          className="h-8 rounded-md border border-border-strong bg-surface px-2 text-xs"
+        />
+        <input
+          type="number"
+          min={0}
+          step="any"
+          value={rate}
+          onChange={(e) => setRate(e.target.value)}
+          placeholder={`Closing rate (${v.txn_currency})`}
+          className="h-8 w-36 rounded-md border border-border-strong bg-surface px-2 text-xs"
+        />
+        <select
+          value={rateSource}
+          onChange={(e) => setRateSource(e.target.value)}
+          className="h-8 rounded-md border border-border-strong bg-surface px-2 text-xs"
+        >
+          {RATE_SOURCES.map((r) => (
+            <option key={r.value} value={r.value}>
+              {r.label}
+            </option>
+          ))}
+        </select>
+      </div>
+      {gainLoss != null && (
+        <p className="text-xs text-ink-faint">
+          New carrying value {formatINR(newCarrying ?? 0, { showZero: true })} vs. current{" "}
+          {formatINR(v.inr_amount, { showZero: true })} ={" "}
+          {gainLoss === 0 ? (
+            "no change"
+          ) : (
+            <span className={gainLoss > 0 ? "text-success" : "text-error"}>
+              unrealized {gainLoss > 0 ? "gain" : "loss"} of {formatINR(Math.abs(gainLoss), { showZero: true })}
+            </span>
+          )}
+        </p>
+      )}
+      <div className="flex gap-2">
+        <Button type="button" size="sm" onClick={revalue} busy={busy} busyLabel="Posting…">
+          Confirm revaluation
+        </Button>
+        <button type="button" onClick={() => setOpen(false)} className="text-xs text-ink-faint hover:text-ink">
+          Cancel
+        </button>
+      </div>
     </div>
   );
 }
