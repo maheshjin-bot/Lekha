@@ -1207,6 +1207,51 @@ describeDb(`forex revaluation (${hasDb ? "live" : noDbReason})`, () => {
 });
 
 // ---------------------------------------------------------------------------
+// ITC-04 prep (0072)
+// ---------------------------------------------------------------------------
+describeDb(`ITC-04 prep (${hasDb ? "live" : noDbReason})`, () => {
+  it("the two new RPCs are not reachable by anon or public", async () => {
+    const rows = await sql(`
+      select p.proname, r.rolname
+        from pg_proc p
+        join pg_namespace n on n.oid = p.pronamespace
+        cross join (values ('anon'), ('public')) as r(rolname)
+       where n.nspname = 'public'
+         and p.proname in ('get_itc04_table4', 'get_itc04_table5a')
+         and has_function_privilege(r.rolname, p.oid, 'EXECUTE')
+    `);
+    expect(rows, `ITC-04 function reachable by a role it shouldn't be:\n${offenders(rows)}`).toEqual([]);
+  });
+
+  it("Table 4's total quantity_sent across all time matches job_work_challans' own raw total — the period filter never drops or double-counts a row", async () => {
+    const rows = await sql(`
+      select
+        (select coalesce(sum(quantity_sent), 0) from public.job_work_challans) as via_raw_table,
+        (select coalesce(sum(t.quantity_sent), 0)
+           from (select distinct company_id from public.job_work_challans) co
+           cross join lateral public.get_itc04_table4(co.company_id, '1900-01-01', '2999-12-31') t) as via_rpc
+    `);
+    expect(Number(rows[0]?.via_rpc)).toBeCloseTo(Number(rows[0]?.via_raw_table), 2);
+  });
+
+  it("Table 5A's total received+loss across all time matches job_work_returns' own raw totals", async () => {
+    const rows = await sql(`
+      select
+        (select coalesce(sum(quantity_received), 0) from public.job_work_returns) as received_raw,
+        (select coalesce(sum(quantity_loss_or_waste), 0) from public.job_work_returns) as loss_raw,
+        (select coalesce(sum(t.quantity_received), 0)
+           from (select distinct company_id from public.job_work_returns) co
+           cross join lateral public.get_itc04_table5a(co.company_id, '1900-01-01', '2999-12-31') t) as received_rpc,
+        (select coalesce(sum(t.quantity_loss_or_waste), 0)
+           from (select distinct company_id from public.job_work_returns) co
+           cross join lateral public.get_itc04_table5a(co.company_id, '1900-01-01', '2999-12-31') t) as loss_rpc
+    `);
+    expect(Number(rows[0]?.received_rpc)).toBeCloseTo(Number(rows[0]?.received_raw), 2);
+    expect(Number(rows[0]?.loss_rpc)).toBeCloseTo(Number(rows[0]?.loss_raw), 2);
+  });
+});
+
+// ---------------------------------------------------------------------------
 // Tenancy: what the catalog can prove without fixtures
 // ---------------------------------------------------------------------------
 describeDb(`tenancy and RLS, catalog-level (${hasDb ? "live" : noDbReason})`, () => {
