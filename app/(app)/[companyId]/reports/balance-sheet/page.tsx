@@ -1,3 +1,4 @@
+import Link from "next/link";
 import { createClient } from "@/lib/supabase/server";
 import { formatINR } from "@/lib/utils/currency";
 import { defaultPeriod } from "@/lib/utils/period";
@@ -79,15 +80,25 @@ export default async function BalanceSheetPage({
     to: typeof sp.as_at === "string" ? sp.as_at : undefined,
   });
 
+  const { data: branches } = await supabase
+    .from("branches")
+    .select("id, code, name")
+    .eq("company_id", companyId)
+    .eq("is_active", true)
+    .order("is_head_office", { ascending: false });
+  const branchId = typeof sp.branch === "string" ? sp.branch : undefined;
+
   const [{ data: rows }, { data: pl }] = await Promise.all([
     supabase.rpc("get_balance_sheet", {
       p_company_id: companyId,
       p_as_at: period.to,
+      p_branch_id: branchId,
     }),
     supabase.rpc("get_profit_and_loss", {
       p_company_id: companyId,
       p_from: period.from,
       p_to: period.to,
+      p_branch_id: branchId,
     }),
   ]);
 
@@ -223,6 +234,8 @@ export default async function BalanceSheetPage({
     );
   };
 
+  const selectedBranch = (branches ?? []).find((b) => b.id === branchId);
+
   return (
     <ReportShell
       title="Balance Sheet"
@@ -234,6 +247,35 @@ export default async function BalanceSheetPage({
         tone: balanced ? "ok" : "bad",
       }}
     >
+      {(branches ?? []).length > 1 && (
+        <div className="flex flex-wrap gap-2 border-b border-border px-4 py-2.5 text-sm">
+          <Link
+            href="?"
+            className={
+              "rounded-md border px-2.5 py-1 " +
+              (!branchId
+                ? "border-accent bg-accent-soft text-accent"
+                : "border-border-strong hover:bg-surface-2")
+            }
+          >
+            All branches
+          </Link>
+          {(branches ?? []).map((b) => (
+            <Link
+              key={b.id}
+              href={`?branch=${b.id}`}
+              className={
+                "rounded-md border px-2.5 py-1 " +
+                (branchId === b.id
+                  ? "border-accent bg-accent-soft text-accent"
+                  : "border-border-strong hover:bg-surface-2")
+              }
+            >
+              {b.name}
+            </Link>
+          ))}
+        </div>
+      )}
       <div className="grid divide-y divide-border md:grid-cols-2 md:divide-x md:divide-y-0">
         {renderSide({
           label: scheduleIII ? "Equity and Liabilities" : "Liabilities",
@@ -241,6 +283,17 @@ export default async function BalanceSheetPage({
         })}
         {renderSide({ label: "Assets", sideKey: "assets" })}
       </div>
+      {selectedBranch && (
+        <p className="border-t border-border px-4 py-3 text-xs text-ink-faint">
+          Showing {selectedBranch.name} only — the &ldquo;Balanced&rdquo; status above is
+          this branch&rsquo;s own assets against its own liabilities, exactly the same
+          check the whole-company view runs, just scoped down. If it ever reads
+          &ldquo;Out by&rdquo; for one branch while the whole company balances, that means
+          a voucher somewhere split its lines across more than one branch — worth tracing
+          directly, since nothing here currently posts an inter-branch clearing entry to
+          absorb that automatically.
+        </p>
+      )}
       {scheduleIII && (
         <p className="border-t border-border px-4 py-3 text-xs text-ink-faint">
           Shareholders&rsquo; Funds and Non-current Liabilities show Schedule

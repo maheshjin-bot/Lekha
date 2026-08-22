@@ -1,3 +1,4 @@
+import Link from "next/link";
 import { createClient } from "@/lib/supabase/server";
 import { formatINR } from "@/lib/utils/currency";
 import { defaultPeriod } from "@/lib/utils/period";
@@ -61,10 +62,19 @@ export default async function ProfitLossPage({
     to: typeof sp.to === "string" ? sp.to : undefined,
   });
 
+  const { data: branches } = await supabase
+    .from("branches")
+    .select("id, code, name")
+    .eq("company_id", companyId)
+    .eq("is_active", true)
+    .order("is_head_office", { ascending: false });
+  const branchId = typeof sp.branch === "string" ? sp.branch : undefined;
+
   const { data: rows } = await supabase.rpc("get_profit_and_loss", {
     p_company_id: companyId,
     p_from: period.from,
     p_to: period.to,
+    p_branch_id: branchId,
   });
 
   const all = rows ?? [];
@@ -85,6 +95,8 @@ export default async function ProfitLossPage({
 
   const section = (nature: string) => all.filter((r) => r.nature === nature);
 
+  const selectedBranch = (branches ?? []).find((b) => b.id === branchId);
+
   return (
     <ReportShell
       title="Profit &amp; Loss"
@@ -94,6 +106,35 @@ export default async function ProfitLossPage({
         tone: netProfit >= 0 ? "ok" : "bad",
       }}
     >
+      {(branches ?? []).length > 1 && (
+        <div className="flex flex-wrap gap-2 border-b border-border px-4 py-2.5 text-sm">
+          <Link
+            href="?"
+            className={
+              "rounded-md border px-2.5 py-1 " +
+              (!branchId
+                ? "border-accent bg-accent-soft text-accent"
+                : "border-border-strong hover:bg-surface-2")
+            }
+          >
+            All branches
+          </Link>
+          {(branches ?? []).map((b) => (
+            <Link
+              key={b.id}
+              href={`?branch=${b.id}`}
+              className={
+                "rounded-md border px-2.5 py-1 " +
+                (branchId === b.id
+                  ? "border-accent bg-accent-soft text-accent"
+                  : "border-border-strong hover:bg-surface-2")
+              }
+            >
+              {b.name}
+            </Link>
+          ))}
+        </div>
+      )}
       <table className="w-full min-w-[560px] text-sm">
         <thead>
           <tr className="border-b border-border text-left">
@@ -176,6 +217,14 @@ export default async function ProfitLossPage({
           </tfoot>
         )}
       </table>
+      {selectedBranch && (
+        <p className="border-t border-border px-4 py-3 text-xs text-ink-faint">
+          Showing {selectedBranch.name} only — income and expense lines posted directly
+          to this branch. If any voucher ever splits its own lines across more than one
+          branch (uncommon; every voucher in this company today stays within one), this
+          branch&rsquo;s own total can differ from its share of the whole-company figure.
+        </p>
+      )}
       {scheduleIII && (
         <p className="border-t border-border px-4 py-3 text-xs text-ink-faint">
           This shows Schedule III&rsquo;s outer structure only. Expenses are
