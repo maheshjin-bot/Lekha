@@ -4382,6 +4382,15 @@ export type Database = {
         Args: { p_statement_line_id: string; p_voucher_entry_id: string }
         Returns: undefined
       }
+      post_closing_stock: {
+        Args: {
+          p_as_at: string
+          p_branch_id: string
+          p_company_id: string
+          p_narration?: string
+        }
+        Returns: string
+      }
       post_payroll_run: {
         Args: {
           p_branch_id: string

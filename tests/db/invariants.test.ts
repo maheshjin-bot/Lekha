@@ -1460,6 +1460,72 @@ describeDb(`payroll statutory correctness (${hasDb ? "live" : noDbReason})`, () 
 });
 
 // ---------------------------------------------------------------------------
+// Closing stock posting (0076)
+// ---------------------------------------------------------------------------
+describeDb(`closing stock posting (${hasDb ? "live" : noDbReason})`, () => {
+  it("post_closing_stock is not reachable by anon or public", async () => {
+    const rows = await sql(`
+      select p.proname, r.rolname
+        from pg_proc p
+        join pg_namespace n on n.oid = p.pronamespace
+        cross join (values ('anon'), ('public')) as r(rolname)
+       where n.nspname = 'public'
+         and p.proname = 'post_closing_stock'
+         and has_function_privilege(r.rolname, p.oid, 'EXECUTE')
+    `);
+    expect(rows, `post_closing_stock reachable by a role it shouldn't be:\n${offenders(rows)}`).toEqual([]);
+  });
+
+  it("the CMA inventory line agrees with the Stock-in-Hand ledger on the balance sheet", async () => {
+    // These two disagreed before 0076 and both go to the same lender: CMA read
+    // ledger balances (empty, because nothing ever posted stock) while
+    // get_drawing_power read get_stock_summary. Measured at the time: CMA
+    // reported inventory 0.00 against a real 12,142.69, and because the quick
+    // ratio subtracts a zero it came out identical to the current ratio.
+    const rows = await sql(`
+      with c as (select id, name from public.companies),
+      d as (
+        select c.id, c.name, dt::date as as_at
+          from c
+          cross join lateral (
+            select generate_series(date '2026-04-01', date '2027-06-01', interval '2 month') as dt
+          ) g
+      ),
+      cmp as (
+        select d.name, d.as_at,
+          (select coalesce(sum(bs.amount), 0) from public.get_balance_sheet(d.id, d.as_at) bs
+            where bs.group_name = 'Stock-in-Hand') as ledger_stock,
+          (select coalesce(sum(value), 0) from public.get_cma_ratios(d.id, d.as_at - 90, d.as_at)
+            where metric_code = 'inventory') as cma_stock
+        from d
+      )
+      select name, as_at, ledger_stock, cma_stock,
+             round(ledger_stock - cma_stock, 2) as drift
+        from cmp
+       where round(abs(ledger_stock - cma_stock), 2) > 0.01
+       order by 1, 2
+    `);
+    expect(rows, `CMA inventory disagrees with the balance sheet:\n${offenders(rows)}`).toEqual([]);
+  });
+
+  it("the closing-stock contra sits in Direct Expenses, never in an income group", async () => {
+    // Deliberate: get_cma_ratios derives sales from direct_income, so booking
+    // closing stock there would have inflated reported turnover in the lender
+    // pack. As a negative expense it gives the same gross profit and leaves
+    // sales alone — and matches Schedule III's own "Changes in inventories"
+    // line, which is an expense that is routinely negative.
+    const rows = await sql(`
+      select l.name, g.name as group_name, g.nature
+        from public.ledgers l
+        join public.account_groups g on g.id = l.group_id
+       where l.name = 'Changes in Inventories'
+         and g.nature <> 'direct_expense'
+    `);
+    expect(rows, `closing-stock contra is in the wrong group:\n${offenders(rows)}`).toEqual([]);
+  });
+});
+
+// ---------------------------------------------------------------------------
 // Tenancy: what the catalog can prove without fixtures
 // ---------------------------------------------------------------------------
 describeDb(`tenancy and RLS, catalog-level (${hasDb ? "live" : noDbReason})`, () => {
