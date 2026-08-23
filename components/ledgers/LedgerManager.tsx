@@ -22,6 +22,7 @@ type Ledger = {
   is_related_party: boolean;
   is_loan_or_deposit: boolean;
   sec43b_category: string | null;
+  gst_registration_type: string | null;
 };
 
 type Group = {
@@ -48,6 +49,31 @@ const SEC43B_LABEL: Record<string, string> = {
   leave_encashment: "Leave encashment",
 };
 
+// Mirrors ledgers_gst_registration_type_check exactly (0006, extended in
+// meaning but not in values by 0087). 'regular' is left out of the dropdown
+// on purpose — a GSTIN attached to the ledger already sets it automatically
+// (enforce_ledger_gst_identity, 0006), and offering it here would invite
+// someone to pick it for a party that has no GSTIN at all.
+const GST_REG_TYPE_LABEL: Record<string, string> = {
+  regular: "Regular",
+  composition: "Composition",
+  unregistered: "Unregistered",
+  sez: "SEZ unit",
+  sez_developer: "SEZ developer",
+  overseas: "Overseas (export)",
+  uin: "UIN holder",
+  deemed_export: "Deemed export (Sec 147)",
+};
+const GST_REG_TYPE_OPTIONS = [
+  "composition",
+  "unregistered",
+  "sez",
+  "sez_developer",
+  "overseas",
+  "uin",
+  "deemed_export",
+];
+
 export function LedgerManager({
   companyId,
   initialLedgers,
@@ -59,6 +85,7 @@ export function LedgerManager({
   relatedPartyOn,
   loanTrackingOn,
   sec43bOn,
+  gstOn,
 }: {
   companyId: string;
   initialLedgers: Ledger[];
@@ -70,6 +97,7 @@ export function LedgerManager({
   relatedPartyOn: boolean;
   loanTrackingOn: boolean;
   sec43bOn: boolean;
+  gstOn: boolean;
 }) {
   const router = useRouter();
   const [name, setName] = useState("");
@@ -91,6 +119,7 @@ export function LedgerManager({
   const [isRelatedParty, setIsRelatedParty] = useState(false);
   const [isLoanOrDeposit, setIsLoanOrDeposit] = useState(false);
   const [sec43bCategory, setSec43bCategory] = useState("");
+  const [gstRegType, setGstRegType] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -121,6 +150,7 @@ export function LedgerManager({
       is_related_party: isRelatedParty,
       is_loan_or_deposit: isLoanOrDeposit,
       sec43b_category: sec43bCategory || null,
+      gst_registration_type: gstRegType || null,
     });
 
     if (error) {
@@ -142,6 +172,7 @@ export function LedgerManager({
     setIsRelatedParty(false);
     setIsLoanOrDeposit(false);
     setSec43bCategory("");
+    setGstRegType("");
     setBusy(false);
     router.refresh();
   }
@@ -165,6 +196,7 @@ export function LedgerManager({
                 {relatedPartyOn && <th className="px-4 py-2.5 font-medium">Related party</th>}
                 {loanTrackingOn && <th className="px-4 py-2.5 font-medium">Loan/deposit</th>}
                 {sec43bOn && <th className="px-4 py-2.5 font-medium">Sec 43B</th>}
+                {gstOn && <th className="px-4 py-2.5 font-medium">GST type</th>}
                 <th className="px-4 py-2.5 text-right font-medium">Opening</th>
               </tr>
             </thead>
@@ -179,7 +211,8 @@ export function LedgerManager({
                       (partnerRemunerationOn ? 1 : 0) +
                       (relatedPartyOn ? 1 : 0) +
                       (loanTrackingOn ? 1 : 0) +
-                      (sec43bOn ? 1 : 0)
+                      (sec43bOn ? 1 : 0) +
+                      (gstOn ? 1 : 0)
                     }
                     className="px-4 py-10 text-center text-ink-faint"
                   >
@@ -262,6 +295,19 @@ export function LedgerManager({
                         <span className="text-xs">{SEC43B_LABEL[l.sec43b_category] ?? l.sec43b_category}</span>
                       ) : (
                         <span className="text-ink-faint">—</span>
+                      )}
+                    </td>
+                  )}
+                  {gstOn && (
+                    <td className="px-4 py-2.5 text-ink-soft">
+                      {l.gst_registration_type && l.gst_registration_type !== "regular" ? (
+                        <span className="text-xs">
+                          {GST_REG_TYPE_LABEL[l.gst_registration_type] ?? l.gst_registration_type}
+                        </span>
+                      ) : (
+                        <span className="text-ink-faint">
+                          {l.gst_registration_type === "regular" ? "Regular" : "—"}
+                        </span>
                       )}
                     </td>
                   )}
@@ -549,6 +595,36 @@ export function LedgerManager({
                 3CD clause 26. Don&rsquo;t use &ldquo;Interest&rdquo; for a
                 director or other unspecified lender — Sec 43B only reaches
                 interest owed to a bank, PFI or NBFC.
+              </span>
+            </div>
+          )}
+
+          {gstOn && (
+            <div className="rounded-md border border-border p-3">
+              <label className="flex flex-col gap-1.5">
+                <span className="text-sm font-medium">GST registration type</span>
+                <select
+                  value={gstRegType}
+                  onChange={(e) => setGstRegType(e.target.value)}
+                  className={field}
+                >
+                  <option value="">Regular / not set</option>
+                  {GST_REG_TYPE_OPTIONS.map((t) => (
+                    <option key={t} value={t}>
+                      {GST_REG_TYPE_LABEL[t]}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <span className="mt-1 block text-xs text-ink-faint">
+                Only needed for a party that isn&rsquo;t an ordinary
+                registered/unregistered domestic buyer or seller. A sale to
+                &ldquo;Overseas&rdquo; or an SEZ party is zero-rated
+                automatically when this company&rsquo;s GST registration has
+                an active LUT on file (set on the Registrations page) — full
+                IGST is charged instead when it doesn&rsquo;t.
+                &ldquo;Deemed export&rdquo; is taxed normally; only its
+                refund eligibility differs, so nothing here changes the tax.
               </span>
             </div>
           )}

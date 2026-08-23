@@ -12,7 +12,7 @@ export default async function LedgersPage({
       supabase
         .from("ledgers")
         .select(
-          "id, name, group_id, opening_balance_amount, opening_balance_type, is_active, pan, is_tds_deductee, default_tds_section, udyam_number, msme_category, msme_payment_days, is_partner_remuneration, is_related_party, is_loan_or_deposit, sec43b_category"
+          "id, name, group_id, opening_balance_amount, opening_balance_type, is_active, pan, is_tds_deductee, default_tds_section, udyam_number, msme_category, msme_payment_days, is_partner_remuneration, is_related_party, is_loan_or_deposit, sec43b_category, gst_registration_type"
         )
         .eq("company_id", companyId)
         .order("name"),
@@ -32,6 +32,7 @@ export default async function LedgersPage({
 
   const tdsOn = (modules ?? []).some((m) => m.code === "tds" && m.active);
   const msmeOn = (modules ?? []).some((m) => m.code === "msme" && m.active);
+  const gstOn = (modules ?? []).some((m) => m.code === "gst" && m.active);
   // Sec 40(b)'s remuneration slab ceiling only ever applies to firms/LLPs —
   // the flag is meaningless (and the income tax report never reads it) for
   // any other entity type.
@@ -63,6 +64,7 @@ export default async function LedgersPage({
         relatedPartyOn={relatedPartyOn}
         loanTrackingOn={loanTrackingOn}
         sec43bOn={sec43bOn}
+        gstOn={gstOn}
       />
     </main>
   );

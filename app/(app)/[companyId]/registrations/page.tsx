@@ -11,7 +11,9 @@ export default async function RegistrationsPage({
     await Promise.all([
       supabase
         .from("gst_registrations")
-        .select("id, gstin, state_code, registration_type, filing_frequency, registered_from, is_active")
+        .select(
+          "id, gstin, state_code, registration_type, filing_frequency, registered_from, is_active, lut_number, lut_valid_from, lut_valid_to, lut_arn"
+        )
         .eq("company_id", companyId)
         .order("registered_from"),
       supabase
