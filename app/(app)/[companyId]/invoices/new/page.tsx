@@ -90,18 +90,18 @@ export default async function NewInvoicePage({
 
   return (
     <main className="mx-auto max-w-5xl px-6 py-10">
-      <h1 className="text-2xl font-semibold tracking-tight">New invoice</h1>
-      <p className="mt-1.5 max-w-2xl text-sm text-zinc-600 dark:text-zinc-400">
+      <h1 className="font-display text-2xl font-semibold tracking-tight text-ink">New invoice</h1>
+      <p className="mt-1.5 max-w-2xl text-sm text-ink-soft">
         Item lines drive both effects: the stock moves and the ledger entries are
         posted from the same figures, so the two cannot disagree.
       </p>
 
       {blocked ? (
-        <p className="mt-8 rounded-lg border border-dashed border-zinc-300 px-5 py-8 text-center text-sm text-zinc-500 dark:border-zinc-700">
+        <p className="mt-8 rounded-lg border border-dashed border-border-strong px-5 py-8 text-center text-sm text-ink-faint">
           You need {blocked.what} before you can raise an invoice.{" "}
           <Link
             href={blocked.href}
-            className="text-emerald-800 underline underline-offset-4 dark:text-emerald-400"
+            className="text-accent underline underline-offset-4"
           >
             {blocked.label}
           </Link>

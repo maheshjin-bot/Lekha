@@ -47,7 +47,7 @@ function todayLocal(): string {
 }
 
 const field =
-  "rounded-md border border-zinc-300 bg-white px-3 py-2 text-sm outline-none focus-visible:ring-2 focus-visible:ring-emerald-600 dark:border-zinc-700 dark:bg-zinc-900";
+  "rounded-lg border border-border-strong bg-surface px-3 py-2 text-sm text-ink outline-none focus-visible:border-accent focus-visible:ring-2 focus-visible:ring-accent/30";
 
 export function FixedAssetManager({
   companyId,
@@ -156,10 +156,10 @@ export function FixedAssetManager({
   return (
     <div className="mt-8 grid gap-8 lg:grid-cols-[1fr_320px]">
       <section className="min-w-0">
-        <div className="overflow-x-auto rounded-lg border border-zinc-200 bg-white dark:border-zinc-800 dark:bg-zinc-900">
+        <div className="overflow-x-auto rounded-lg border border-border bg-surface">
           <table className="w-full min-w-[920px] text-sm">
             <thead>
-              <tr className="border-b border-zinc-200 text-left text-[11px] uppercase tracking-wide text-zinc-500 dark:border-zinc-800">
+              <tr className="border-b border-border text-left text-[11px] uppercase tracking-wide text-ink-faint">
                 <th className="px-4 py-2.5 font-medium">Asset</th>
                 <th className="px-4 py-2.5 font-medium">Category</th>
                 <th className="px-4 py-2.5 font-medium">IT block</th>
@@ -173,7 +173,7 @@ export function FixedAssetManager({
             <tbody>
               {assets.length === 0 && (
                 <tr>
-                  <td colSpan={8} className="px-4 py-10 text-center text-zinc-500">
+                  <td colSpan={8} className="px-4 py-10 text-center text-ink-faint">
                     No fixed assets yet. Create one on the right.
                   </td>
                 </tr>
@@ -185,17 +185,17 @@ export function FixedAssetManager({
 
                 return (
                   <Fragment key={a.asset_id}>
-                    <tr className="border-b border-zinc-100 last:border-0 dark:border-zinc-800/60">
+                    <tr className="border-b border-border last:border-0">
                       <td className="px-4 py-2.5">
                         <span className="font-medium">{a.name}</span>
                         {a.asset_code && (
-                          <div className="font-mono text-xs text-zinc-500">{a.asset_code}</div>
+                          <div className="font-mono text-xs text-ink-faint">{a.asset_code}</div>
                         )}
                       </td>
                       <td className="px-4 py-2.5">
                         {a.category_description}
                         {category && (
-                          <div className="text-xs text-zinc-500">
+                          <div className="text-xs text-ink-faint">
                             {category.useful_life_years} yrs
                           </div>
                         )}
@@ -203,38 +203,38 @@ export function FixedAssetManager({
                       <td className="px-4 py-2.5">
                         <span className="font-mono text-xs">{a.it_block}</span>
                         {block && (
-                          <div className="text-xs text-zinc-500">{block.rate_percent}%</div>
+                          <div className="text-xs text-ink-faint">{block.rate_percent}%</div>
                         )}
                       </td>
                       <td className="px-4 py-2.5">
-                        <span className="rounded bg-zinc-100 px-1.5 py-0.5 text-[10px] uppercase tracking-wide text-zinc-600 dark:bg-zinc-800 dark:text-zinc-400">
+                        <span className="rounded bg-surface-2 px-1.5 py-0.5 text-[10px] uppercase tracking-wide text-ink-soft">
                           {a.book_method}
                         </span>
                       </td>
-                      <td className="px-4 py-2.5 text-right tabular-nums">
+                      <td className="px-4 py-2.5 text-right tabular-nums font-mono">
                         {formatINR(Number(a.gross_value))}
                       </td>
-                      <td className="px-4 py-2.5 text-right tabular-nums">
+                      <td className="px-4 py-2.5 text-right tabular-nums font-mono">
                         {formatINR(Number(a.accumulated_depreciation))}
                       </td>
-                      <td className="px-4 py-2.5 text-right font-medium tabular-nums">
+                      <td className="px-4 py-2.5 text-right font-medium tabular-nums font-mono">
                         {formatINR(Number(a.net_book_value))}
                       </td>
                       <td className="px-4 py-2.5">
                         {disposed ? (
-                          <span className="rounded bg-zinc-100 px-2 py-0.5 text-xs font-medium text-zinc-600 dark:bg-zinc-800 dark:text-zinc-400">
+                          <span className="rounded bg-surface-2 px-2 py-0.5 text-xs font-medium text-ink-soft">
                             Disposed
                           </span>
                         ) : (
                           <div className="flex items-center gap-2">
-                            <span className="rounded bg-emerald-100 px-2 py-0.5 text-xs font-medium text-emerald-800 dark:bg-emerald-950 dark:text-emerald-300">
+                            <span className="rounded bg-success-soft px-2 py-0.5 text-xs font-medium text-success">
                               Active
                             </span>
                             {disposingId !== a.asset_id && (
                               <button
                                 type="button"
                                 onClick={() => startDispose(a.asset_id)}
-                                className="text-xs text-zinc-500 underline underline-offset-4 hover:text-zinc-800 dark:hover:text-zinc-300"
+                                className="text-xs text-ink-faint underline underline-offset-4 hover:text-ink"
                               >
                                 Dispose
                               </button>
@@ -244,7 +244,7 @@ export function FixedAssetManager({
                       </td>
                     </tr>
                     {disposingId === a.asset_id && (
-                      <tr className="border-b border-zinc-100 bg-zinc-50 dark:border-zinc-800/60 dark:bg-zinc-900/60">
+                      <tr className="border-b border-border bg-bg">
                         <td colSpan={8} className="px-4 py-3">
                           <form
                             onSubmit={(e) => onDispose(e, a.asset_id)}
@@ -272,19 +272,19 @@ export function FixedAssetManager({
                             <button
                               type="submit"
                               disabled={disposeBusy}
-                              className="rounded-md bg-red-700 px-4 py-2 text-sm font-medium text-white transition hover:bg-red-600 disabled:opacity-50"
+                              className="rounded-lg bg-error px-4 py-2 text-sm font-semibold text-white transition-colors hover:opacity-90 disabled:opacity-50"
                             >
                               {disposeBusy ? "Recording…" : "Confirm disposal"}
                             </button>
                             <button
                               type="button"
                               onClick={cancelDispose}
-                              className="rounded-md border border-zinc-300 bg-white px-4 py-2 text-sm font-medium transition hover:bg-zinc-50 dark:border-zinc-700 dark:bg-zinc-900 dark:hover:bg-zinc-800"
+                              className="rounded-lg border border-border-strong bg-surface px-4 py-2 text-sm font-medium transition-colors hover:bg-surface-2"
                             >
                               Cancel
                             </button>
                             {disposeError && (
-                              <p className="w-full rounded-md bg-red-50 px-3 py-2 text-sm text-red-700 dark:bg-red-950 dark:text-red-300">
+                              <p className="w-full rounded-md bg-error-soft px-3 py-2 text-sm text-error">
                                 {disposeError}
                               </p>
                             )}
@@ -300,7 +300,7 @@ export function FixedAssetManager({
         </div>
       </section>
 
-      <section className="rounded-lg border border-zinc-200 bg-white p-5 dark:border-zinc-800 dark:bg-zinc-900">
+      <section className="rounded-lg border border-border bg-surface p-5">
         <h2 className="font-semibold">New asset</h2>
         <form onSubmit={onSubmit} className="mt-4 flex flex-col gap-3">
           <label className="flex flex-col gap-1.5">
@@ -310,7 +310,7 @@ export function FixedAssetManager({
 
           <label className="flex flex-col gap-1.5">
             <span className="text-sm font-medium">
-              Asset code <span className="font-normal text-zinc-500">optional</span>
+              Asset code <span className="font-normal text-ink-faint">optional</span>
             </span>
             <input
               value={assetCode}
@@ -358,8 +358,8 @@ export function FixedAssetManager({
                 className={
                   "flex-1 cursor-pointer rounded-md border px-3 py-1.5 text-center text-sm uppercase transition " +
                   (bookMethod === m
-                    ? "border-emerald-600 bg-emerald-50 dark:bg-emerald-950/40"
-                    : "border-zinc-300 hover:bg-zinc-50 dark:border-zinc-700 dark:hover:bg-zinc-800/60")
+                    ? "border-accent bg-accent-soft"
+                    : "border-border-strong hover:bg-surface-2")
                 }
               >
                 <input
@@ -382,7 +382,7 @@ export function FixedAssetManager({
               onChange={(e) => setResidualPercent(e.target.value)}
               className={field + " text-right tabular-nums"}
             />
-            <span className="text-xs text-zinc-500">Companies Act ceiling is 5% of cost</span>
+            <span className="text-xs text-ink-faint">Companies Act ceiling is 5% of cost</span>
           </label>
 
           <label className="flex flex-col gap-1.5">
@@ -405,7 +405,7 @@ export function FixedAssetManager({
               onChange={(e) => setPutToUseDate(e.target.value)}
               className={field}
             />
-            <span className="text-xs text-zinc-500">
+            <span className="text-xs text-ink-faint">
               Depreciation and the 180-day rule run from this date, not the acquisition date
             </span>
           </label>
@@ -422,7 +422,7 @@ export function FixedAssetManager({
           </label>
 
           {error && (
-            <p className="rounded-md bg-red-50 px-3 py-2 text-sm text-red-700 dark:bg-red-950 dark:text-red-300">
+            <p className="rounded-md bg-error-soft px-3 py-2 text-sm text-error">
               {error}
             </p>
           )}
@@ -430,7 +430,7 @@ export function FixedAssetManager({
           <button
             type="submit"
             disabled={busy}
-            className="mt-1 rounded-md bg-emerald-800 px-4 py-2 text-sm font-medium text-white transition hover:bg-emerald-700 disabled:opacity-50 dark:bg-emerald-700 dark:hover:bg-emerald-600"
+            className="mt-1 rounded-lg bg-accent px-4 py-2 text-sm font-semibold text-accent-ink transition-colors hover:opacity-90 disabled:opacity-50"
           >
             {busy ? "Adding…" : "Add asset"}
           </button>

@@ -1,7 +1,8 @@
-import Link from "next/link";
 import { notFound } from "next/navigation";
+import { headers, cookies } from "next/headers";
 import { createClient } from "@/lib/supabase/server";
-import { SignOutButton } from "@/components/auth/SignOutButton";
+import { NavRail } from "@/components/nav/NavRail";
+import { CompanyUnlockGate } from "@/components/companies/CompanyUnlockGate";
 
 export default async function CompanyLayout({
   params,
@@ -15,60 +16,33 @@ export default async function CompanyLayout({
   // "this company exists but is not yours" is itself information.
   const { data } = await supabase
     .from("companies")
-    .select("id, name")
+    .select("id, name, password_protected")
     .eq("id", companyId)
     .maybeSingle();
 
   if (!data) notFound();
 
-  const nav = [
-    { href: `/${companyId}`, label: "Overview" },
-    { href: `/${companyId}/ledgers`, label: "Ledgers" },
-    { href: `/${companyId}/items`, label: "Items" },
-    { href: `/${companyId}/fixed-assets`, label: "Fixed assets" },
-    { href: `/${companyId}/godowns`, label: "Godowns" },
-    { href: `/${companyId}/registrations`, label: "GST" },
-    { href: `/${companyId}/invoices/new`, label: "New invoice" },
-    { href: `/${companyId}/vouchers/new`, label: "New voucher" },
-    { href: `/${companyId}/import`, label: "Import" },
-    { href: `/${companyId}/reports/daybook`, label: "Daybook" },
-    { href: `/${companyId}/reports/ledger-statement`, label: "Ledger" },
-    { href: `/${companyId}/reports/trial-balance`, label: "Trial balance" },
-    { href: `/${companyId}/reports/profit-loss`, label: "P&L" },
-    { href: `/${companyId}/reports/balance-sheet`, label: "Balance sheet" },
-    { href: `/${companyId}/reports/stock`, label: "Stock" },
-    { href: `/${companyId}/reports/outstanding`, label: "Outstanding" },
-    { href: `/${companyId}/reports/msme`, label: "MSME dues" },
-    { href: `/${companyId}/reports/tax-depreciation`, label: "Tax depreciation" },
-    { href: `/${companyId}/reports/income-tax`, label: "Income tax" },
-    { href: `/${companyId}/reports/compliance-calendar`, label: "Calendar" },
-    { href: `/${companyId}/reconciliation`, label: "Reconcile" },
-    { href: `/${companyId}/year-end`, label: "Year-end" },
-    { href: `/${companyId}/settings`, label: "Settings" },
-  ];
+  // A password-protected company that this browser hasn't unlocked this
+  // session shows only the unlock prompt — the nav rail and children (and
+  // whatever they'd fetch) never render, so nothing sensitive reaches the
+  // client ahead of the password. See app/api/companies/[companyId]/unlock.
+  if (data.password_protected) {
+    const unlocked = (await cookies()).get(`co_unlock_${companyId}`)?.value === "1";
+    if (!unlocked) {
+      return <CompanyUnlockGate companyId={companyId} companyName={data.name} />;
+    }
+  }
+
+  // proxy.ts stamps the pathname on every request (originally so the auth
+  // guard could remember where a signed-out visitor was headed) — the rail
+  // reuses it to know which link to mark active, without needing a client
+  // component to own the whole layout.
+  const activePath = (await headers()).get("x-pathname") ?? `/${companyId}`;
 
   return (
-    <div className="min-h-screen">
-      <header className="border-b border-zinc-200 bg-white dark:border-zinc-800 dark:bg-zinc-900">
-        <div className="mx-auto flex max-w-6xl items-center gap-6 px-6 py-3">
-          <Link href="/companies" className="shrink-0 font-semibold tracking-tight">
-            {data.name}
-          </Link>
-          <nav className="flex flex-1 flex-wrap gap-1 overflow-x-auto">
-            {nav.map((n) => (
-              <Link
-                key={n.href}
-                href={n.href}
-                className="whitespace-nowrap rounded px-2.5 py-1.5 text-sm text-zinc-600 transition hover:bg-zinc-100 hover:text-zinc-900 dark:text-zinc-400 dark:hover:bg-zinc-800 dark:hover:text-zinc-100"
-              >
-                {n.label}
-              </Link>
-            ))}
-          </nav>
-          <SignOutButton />
-        </div>
-      </header>
-      {children}
+    <div className="flex min-h-screen bg-bg">
+      <NavRail companyId={companyId} companyName={data.name} activePath={activePath} />
+      <div className="min-w-0 flex-1">{children}</div>
     </div>
   );
 }

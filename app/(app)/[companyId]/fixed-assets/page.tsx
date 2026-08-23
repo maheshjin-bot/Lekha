@@ -23,8 +23,8 @@ export default async function FixedAssetsPage({
 
   return (
     <main className="mx-auto max-w-5xl px-6 py-10">
-      <h1 className="text-2xl font-semibold tracking-tight">Fixed assets</h1>
-      <p className="mt-1.5 max-w-2xl text-sm text-zinc-600 dark:text-zinc-400">
+      <h1 className="font-display text-2xl font-semibold tracking-tight text-ink">Fixed assets</h1>
+      <p className="mt-1.5 max-w-2xl text-sm text-ink-soft">
         Book depreciation, one asset at a time. The Schedule II category sets
         the useful life used here; the Income-tax block sets the WDV rate used
         on the tax depreciation report — the two run independently.

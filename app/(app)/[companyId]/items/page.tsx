@@ -25,8 +25,8 @@ export default async function ItemsPage({
 
   return (
     <main className="mx-auto max-w-5xl px-6 py-10">
-      <h1 className="text-2xl font-semibold tracking-tight">Items</h1>
-      <p className="mt-1.5 max-w-2xl text-sm text-zinc-600 dark:text-zinc-400">
+      <h1 className="font-display text-2xl font-semibold tracking-tight text-ink">Items</h1>
+      <p className="mt-1.5 max-w-2xl text-sm text-ink-soft">
         Goods carry an HSN and move stock; services carry a SAC and do not. The
         unit comes from the notified UQC list, because a GST return will not
         accept anything else.

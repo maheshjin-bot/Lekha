@@ -32,6 +32,7 @@ export function CompanySettingsForm({
   stockMarginPercent,
   debtorMarginPercent,
   debtorEligibilityDays,
+  passwordProtected,
 }: {
   companyId: string;
   entityType: string;
@@ -44,6 +45,7 @@ export function CompanySettingsForm({
   stockMarginPercent: number;
   debtorMarginPercent: number;
   debtorEligibilityDays: number;
+  passwordProtected: boolean;
 }) {
   const router = useRouter();
   const [tanInput, setTanInput] = useState(tan ?? "");
@@ -73,6 +75,17 @@ export function CompanySettingsForm({
   const [drawingPowerBusy, setDrawingPowerBusy] = useState(false);
   const [drawingPowerError, setDrawingPowerError] = useState<string | null>(null);
   const [drawingPowerSaved, setDrawingPowerSaved] = useState(false);
+
+  const [isProtected, setIsProtected] = useState(passwordProtected);
+  // Two-step reveal for both setting/changing and removing — same pattern as
+  // FixedAssetManager's disposal flow, not a confirm() and not a modal.
+  const [changingPassword, setChangingPassword] = useState(false);
+  const [removingPassword, setRemovingPassword] = useState(false);
+  const [newPassword, setNewPassword] = useState("");
+  const [confirmNewPassword, setConfirmNewPassword] = useState("");
+  const [passwordBusy, setPasswordBusy] = useState(false);
+  const [passwordError, setPasswordError] = useState<string | null>(null);
+  const [passwordSaved, setPasswordSaved] = useState(false);
 
   // Structural pre-check only — app_private.is_valid_tan on the companies.tan
   // check constraint is the real gate; this just catches an obvious typo
@@ -188,6 +201,68 @@ export function CompanySettingsForm({
     router.refresh();
   }
 
+  function startChangePassword() {
+    setChangingPassword(true);
+    setRemovingPassword(false);
+    setNewPassword("");
+    setConfirmNewPassword("");
+    setPasswordError(null);
+    setPasswordSaved(false);
+  }
+
+  async function onPasswordSubmit(e: React.FormEvent) {
+    e.preventDefault();
+    setPasswordError(null);
+    setPasswordSaved(false);
+
+    if (newPassword.length < 4) {
+      setPasswordError("Password must be at least 4 characters.");
+      return;
+    }
+    if (newPassword !== confirmNewPassword) {
+      setPasswordError("Password and confirmation don't match.");
+      return;
+    }
+
+    setPasswordBusy(true);
+    const { error } = await createClient().rpc("set_company_password", {
+      p_company_id: companyId,
+      p_password: newPassword,
+    });
+    setPasswordBusy(false);
+
+    if (error) {
+      setPasswordError(error.message);
+      return;
+    }
+    setIsProtected(true);
+    setChangingPassword(false);
+    setNewPassword("");
+    setConfirmNewPassword("");
+    setPasswordSaved(true);
+    router.refresh();
+  }
+
+  async function onRemovePassword() {
+    setPasswordError(null);
+    setPasswordBusy(true);
+    // An empty string clears protection, same as null — see set_company_password.
+    const { error } = await createClient().rpc("set_company_password", {
+      p_company_id: companyId,
+      p_password: "",
+    });
+    setPasswordBusy(false);
+
+    if (error) {
+      setPasswordError(error.message);
+      return;
+    }
+    setIsProtected(false);
+    setRemovingPassword(false);
+    setPasswordSaved(true);
+    router.refresh();
+  }
+
   const field =
     "rounded-lg border border-border-strong bg-surface px-3 py-2 text-sm text-ink outline-none focus-visible:border-accent focus-visible:ring-2 focus-visible:ring-accent/30";
 
@@ -246,6 +321,133 @@ export function CompanySettingsForm({
             {busy ? "Saving…" : "Save"}
           </button>
         </form>
+      </section>
+
+      <section className="rounded-lg border border-border bg-surface p-5">
+        <h2 className="font-semibold">Company password</h2>
+        <p className="mt-1 text-sm text-ink-soft">
+          A Tally-style open-company gate — separate from your own sign-in.
+          When set, opening this company asks for it once per browser
+          session, whoever is signed in.
+        </p>
+
+        <div className="mt-4 flex items-center justify-between gap-4">
+          <span
+            className={
+              "rounded px-2 py-0.5 text-[11px] font-medium uppercase tracking-wide " +
+              (isProtected ? "bg-success-soft text-success" : "bg-surface-2 text-ink-soft")
+            }
+          >
+            {isProtected ? "Protected" : "Not protected"}
+          </span>
+
+          {!changingPassword && !removingPassword && (
+            <div className="flex gap-2">
+              <button
+                type="button"
+                onClick={startChangePassword}
+                className="rounded-lg border border-border-strong px-3 py-1.5 text-xs font-semibold text-ink transition-colors hover:bg-surface-2"
+              >
+                {isProtected ? "Change password" : "Set password"}
+              </button>
+              {isProtected && (
+                <button
+                  type="button"
+                  onClick={() => setRemovingPassword(true)}
+                  className="rounded-lg border border-border-strong px-3 py-1.5 text-xs font-semibold text-ink transition-colors hover:bg-surface-2"
+                >
+                  Remove
+                </button>
+              )}
+            </div>
+          )}
+        </div>
+
+        {removingPassword && (
+          <div className="mt-4 flex items-center justify-between gap-4 rounded-md bg-warning-soft px-3 py-2">
+            <span className="text-sm text-warning">
+              Remove the password? Anyone with access to this company will be
+              able to open it without one.
+            </span>
+            <div className="flex shrink-0 gap-2">
+              <button
+                type="button"
+                onClick={onRemovePassword}
+                disabled={passwordBusy}
+                className="rounded-lg bg-error px-3 py-1.5 text-xs font-semibold text-white transition-colors hover:opacity-90 disabled:opacity-50"
+              >
+                {passwordBusy ? "Removing…" : "Confirm removal"}
+              </button>
+              <button
+                type="button"
+                onClick={() => setRemovingPassword(false)}
+                className="rounded-lg border border-border-strong px-3 py-1.5 text-xs font-semibold text-ink hover:bg-surface-2"
+              >
+                Cancel
+              </button>
+            </div>
+          </div>
+        )}
+
+        {changingPassword && (
+          <form onSubmit={onPasswordSubmit} className="mt-4 flex flex-col gap-3">
+            <div className="grid gap-3 sm:grid-cols-2">
+              <label className="flex flex-col gap-1.5">
+                <span className="text-sm font-medium">New password</span>
+                <input
+                  type="password"
+                  required
+                  minLength={4}
+                  autoComplete="new-password"
+                  value={newPassword}
+                  onChange={(e) => setNewPassword(e.target.value)}
+                  className={field}
+                />
+              </label>
+              <label className="flex flex-col gap-1.5">
+                <span className="text-sm font-medium">Confirm password</span>
+                <input
+                  type="password"
+                  required
+                  minLength={4}
+                  autoComplete="new-password"
+                  value={confirmNewPassword}
+                  onChange={(e) => setConfirmNewPassword(e.target.value)}
+                  className={field}
+                />
+              </label>
+            </div>
+
+            {passwordError && (
+              <p className="rounded-md bg-error-soft px-3 py-2 text-sm text-error">
+                {passwordError}
+              </p>
+            )}
+
+            <div className="flex gap-2">
+              <button
+                type="submit"
+                disabled={passwordBusy}
+                className="self-start rounded-lg bg-accent px-4 py-2 text-sm font-semibold text-accent-ink transition-colors hover:opacity-90 disabled:opacity-50"
+              >
+                {passwordBusy ? "Saving…" : "Save password"}
+              </button>
+              <button
+                type="button"
+                onClick={() => setChangingPassword(false)}
+                className="self-start rounded-lg border border-border-strong px-4 py-2 text-sm font-semibold text-ink hover:bg-surface-2"
+              >
+                Cancel
+              </button>
+            </div>
+          </form>
+        )}
+
+        {passwordSaved && !changingPassword && !removingPassword && !passwordError && (
+          <p className="mt-3 rounded-md bg-success-soft px-3 py-2 text-sm text-success">
+            Saved.
+          </p>
+        )}
       </section>
 
       <section className="rounded-lg border border-border bg-surface p-5">

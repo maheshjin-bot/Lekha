@@ -66,7 +66,7 @@ export default async function TaxDepreciationPage({
     >
       <table className="w-full min-w-[760px] text-sm">
         <thead>
-          <tr className="border-b border-zinc-200 text-left dark:border-zinc-800">
+          <tr className="border-b border-border text-left">
             <th className={th}>Block</th>
             <th className={th + " text-right"}>Rate</th>
             <th className={th + " text-right"}>Opening WDV</th>
@@ -79,7 +79,7 @@ export default async function TaxDepreciationPage({
         <tbody>
           {blocks.length === 0 && (
             <tr>
-              <td colSpan={7} className="px-4 py-12 text-center text-zinc-500">
+              <td colSpan={7} className="px-4 py-12 text-center text-ink-faint">
                 No tax blocks with activity in FY {label}.
               </td>
             </tr>
@@ -93,13 +93,13 @@ export default async function TaxDepreciationPage({
               <Fragment key={b.block_code}>
                 <tr
                   className={
-                    "border-b border-zinc-100 last:border-0 dark:border-zinc-800/60 " +
-                    (flagged ? "bg-amber-50 dark:bg-amber-950/20" : "")
+                    "border-b border-border last:border-0  " +
+                    (flagged ? "bg-warning-soft" : "")
                   }
                 >
                   <td className={td + " font-medium"}>
                     {b.block_description}
-                    <div className="font-mono text-xs text-zinc-500">{b.block_code}</div>
+                    <div className="font-mono text-xs text-ink-faint">{b.block_code}</div>
                   </td>
                   <td className={num}>{Number(b.rate_percent)}%</td>
                   <td className={num}>{formatINR(Number(b.opening_wdv))}</td>
@@ -109,8 +109,8 @@ export default async function TaxDepreciationPage({
                   <td className={num + " font-medium"}>{formatINR(Number(b.closing_wdv))}</td>
                 </tr>
                 {flagged && (
-                  <tr className="border-b border-amber-200 bg-amber-50 dark:border-amber-900 dark:bg-amber-950/20">
-                    <td colSpan={7} className="px-4 py-2.5 text-xs text-amber-900 dark:text-amber-300">
+                  <tr className="border-b border-warning/30 bg-warning-soft">
+                    <td colSpan={7} className="px-4 py-2.5 text-xs text-warning">
                       <span className="font-semibold">Sec 50 capital gains, not depreciation</span>{" "}
                       — this block{" "}
                       {b.block_ceased
@@ -132,7 +132,7 @@ export default async function TaxDepreciationPage({
         </tbody>
       </table>
 
-      <p className="border-t border-zinc-200 px-4 py-3 text-xs text-zinc-500 dark:border-zinc-800">
+      <p className="border-t border-border px-4 py-3 text-xs text-ink-faint">
         This is TAX depreciation — block-of-assets WDV under the Income-tax
         Act, always computed on the calendar April–March year regardless of
         this company&rsquo;s own financial year setting. It is a separate

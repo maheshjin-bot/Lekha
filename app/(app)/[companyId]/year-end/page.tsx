@@ -30,8 +30,8 @@ export default async function YearEndPage({
 
   return (
     <main className="mx-auto max-w-3xl px-6 py-10">
-      <h1 className="text-2xl font-semibold tracking-tight">Year-end closing</h1>
-      <p className="mt-1.5 max-w-2xl text-sm text-zinc-600 dark:text-zinc-400">
+      <h1 className="font-display text-2xl font-semibold tracking-tight text-ink">Year-end closing</h1>
+      <p className="mt-1.5 max-w-2xl text-sm text-ink-soft">
         Closing a period locks every voucher dated on or before it — nothing
         can be added, edited, or deleted there, by anyone, including an admin.
       </p>

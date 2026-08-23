@@ -118,7 +118,7 @@ export function VoucherImport({
   }
 
   const field =
-    "rounded-md border border-zinc-300 bg-white px-3 py-2 text-sm outline-none focus-visible:ring-2 focus-visible:ring-emerald-600 dark:border-zinc-700 dark:bg-zinc-900";
+    "rounded-lg border border-border-strong bg-surface px-3 py-2 text-sm text-ink outline-none focus-visible:border-accent focus-visible:ring-2 focus-visible:ring-accent/30";
 
   // ---- result -------------------------------------------------------------
   if (result) {
@@ -128,8 +128,8 @@ export function VoucherImport({
           className={
             "rounded-lg border p-6 " +
             (result.failed.length
-              ? "border-amber-300 bg-amber-50 dark:border-amber-900 dark:bg-amber-950/40"
-              : "border-emerald-300 bg-emerald-50 dark:border-emerald-900 dark:bg-emerald-950/40")
+              ? "border-warning/30 bg-warning-soft"
+              : "border-accent bg-accent-soft")
           }
         >
           <h2 className="text-lg font-semibold">
@@ -160,7 +160,7 @@ export function VoucherImport({
             setFileName(null);
             if (fileRef.current) fileRef.current.value = "";
           }}
-          className="mt-5 rounded-md border border-zinc-300 px-3 py-1.5 text-sm transition hover:bg-zinc-100 dark:border-zinc-700 dark:hover:bg-zinc-800"
+          className="mt-5 rounded-lg border border-border-strong px-3 py-1.5 text-sm transition-colors hover:bg-accent-soft"
         >
           Import another file
         </button>
@@ -177,12 +177,12 @@ export function VoucherImport({
           type="file"
           accept=".csv,text/csv"
           onChange={(e) => e.target.files?.[0] && onFile(e.target.files[0])}
-          className="text-sm file:mr-3 file:rounded-md file:border file:border-zinc-300 file:bg-white file:px-3 file:py-1.5 file:text-sm dark:file:border-zinc-700 dark:file:bg-zinc-900"
+          className="text-sm file:mr-3 file:rounded-lg file:border file:border-border-strong file:bg-surface file:px-3 file:py-1.5 file:text-sm"
         />
         <button
           type="button"
           onClick={downloadTemplate}
-          className="text-sm text-emerald-800 underline underline-offset-4 dark:text-emerald-400"
+          className="text-sm text-accent underline underline-offset-4"
         >
           Download template
         </button>
@@ -201,14 +201,14 @@ export function VoucherImport({
       </div>
 
       {parseError && (
-        <p className="mt-4 rounded-md bg-red-50 px-3 py-2 text-sm text-red-700 dark:bg-red-950 dark:text-red-300">
+        <p className="mt-4 rounded-md bg-error-soft px-3 py-2 text-sm text-error">
           {parseError}
         </p>
       )}
 
       {/* ---- date order ----------------------------------------------------- */}
       {inference && !inference.certain && !orderConfirmed && (
-        <div className="mt-6 rounded-lg border border-amber-300 bg-amber-50 p-5 dark:border-amber-900 dark:bg-amber-950/40">
+        <div className="mt-6 rounded-lg border border-warning/30 bg-warning-soft p-5">
           <h2 className="font-semibold">Which way round are these dates?</h2>
           <p className="mt-1.5 text-sm">
             {inference.reason} Getting this wrong shifts every date by months
@@ -226,12 +226,12 @@ export function VoucherImport({
                     setDateOrder(order);
                     setOrderConfirmed(true);
                   }}
-                  className="rounded-md border border-zinc-300 bg-white p-3 text-left text-sm transition hover:border-emerald-600 dark:border-zinc-700 dark:bg-zinc-900"
+                  className="rounded-md border border-border-strong bg-surface p-3 text-left text-sm transition hover:border-accent"
                 >
                   <span className="block font-medium">
                     {order === "dmy" ? "Day first" : "Month first"}
                   </span>
-                  <span className="mt-0.5 block text-xs text-zinc-600 dark:text-zinc-400">
+                  <span className="mt-0.5 block text-xs text-ink-soft">
                     <span className="font-mono">{example}</span> reads as{" "}
                     <strong>{describeDate(example, order)}</strong>
                   </span>
@@ -247,17 +247,17 @@ export function VoucherImport({
         <>
           <div className="mt-8 flex flex-wrap items-baseline gap-x-5 gap-y-1 text-sm">
             <span className="font-medium">{fileName}</span>
-            <span className="text-zinc-600 dark:text-zinc-400">
+            <span className="text-ink-soft">
               {preview.validGroupCount} voucher
               {preview.validGroupCount === 1 ? "" : "s"} ready
             </span>
             {preview.invalidRowCount > 0 && (
-              <span className="text-amber-800 dark:text-amber-300">
+              <span className="text-warning">
                 {preview.invalidRowCount} row
                 {preview.invalidRowCount === 1 ? "" : "s"} need attention
               </span>
             )}
-            <span className="text-zinc-500">
+            <span className="text-ink-faint">
               dates read {dateOrder === "dmy" ? "day first" : "month first"}
               {!inference?.certain && (
                 <button
@@ -272,7 +272,7 @@ export function VoucherImport({
           </div>
 
           {preview.groupIssues.length > 0 && (
-            <div className="mt-4 rounded-lg border border-amber-300 bg-amber-50 p-4 dark:border-amber-900 dark:bg-amber-950/40">
+            <div className="mt-4 rounded-lg border border-warning/30 bg-warning-soft p-4">
               <h3 className="text-sm font-semibold">Voucher-level problems</h3>
               <ul className="mt-2 space-y-1 text-sm">
                 {preview.groupIssues.map((g, i) => (
@@ -285,10 +285,10 @@ export function VoucherImport({
             </div>
           )}
 
-          <div className="mt-4 overflow-x-auto rounded-lg border border-zinc-200 bg-white dark:border-zinc-800 dark:bg-zinc-900">
+          <div className="mt-4 overflow-x-auto rounded-lg border border-border bg-surface">
             <table className="w-full min-w-[820px] text-sm">
               <thead>
-                <tr className="border-b border-zinc-200 text-left text-[11px] uppercase tracking-wide text-zinc-500 dark:border-zinc-800">
+                <tr className="border-b border-border text-left text-[11px] uppercase tracking-wide text-ink-faint">
                   <th className="px-3 py-2.5 font-medium">Row</th>
                   <th className="px-3 py-2.5 font-medium">Ref</th>
                   <th className="px-3 py-2.5 font-medium">Date</th>
@@ -303,29 +303,29 @@ export function VoucherImport({
                   <tr
                     key={r.rowNumber}
                     className={
-                      "border-b border-zinc-100 last:border-0 dark:border-zinc-800/60 " +
-                      (r.data ? "" : "bg-amber-50/60 dark:bg-amber-950/20")
+                      "border-b border-border last:border-0  " +
+                      (r.data ? "" : "bg-warning-soft")
                     }
                   >
-                    <td className="px-3 py-2 tabular-nums text-zinc-500">{r.rowNumber}</td>
+                    <td className="px-3 py-2 tabular-nums text-ink-faint font-mono">{r.rowNumber}</td>
                     <td className="px-3 py-2 font-mono text-xs">{r.data?.groupId ?? "—"}</td>
-                    <td className="px-3 py-2 tabular-nums">{r.data?.date ?? "—"}</td>
+                    <td className="px-3 py-2 tabular-nums font-mono">{r.data?.date ?? "—"}</td>
                     <td className="px-3 py-2">
                       {r.data
                         ? ledgers.find((l) => l.id === r.data!.ledgerId)?.name
                         : "—"}
                     </td>
                     <td className="px-3 py-2 uppercase">{r.data?.side ?? "—"}</td>
-                    <td className="px-3 py-2 text-right tabular-nums">
+                    <td className="px-3 py-2 text-right tabular-nums font-mono">
                       {r.data ? formatINR(r.data.amount) : "—"}
                     </td>
-                    <td className="px-3 py-2 text-amber-900 dark:text-amber-300">
+                    <td className="px-3 py-2 text-warning">
                       {r.issues.map((iss, i) => (
                         <div key={i}>
                           {iss.field && <span className="font-medium">{iss.field}: </span>}
                           {iss.message}
                           {iss.suggestion && (
-                            <span className="text-zinc-600 dark:text-zinc-400">
+                            <span className="text-ink-soft">
                               {" "}Did you mean <strong>{iss.suggestion}</strong>?
                             </span>
                           )}
@@ -339,7 +339,7 @@ export function VoucherImport({
           </div>
 
           {preview.rows.length > 200 && (
-            <p className="mt-2 text-xs text-zinc-500">
+            <p className="mt-2 text-xs text-ink-faint">
               Showing the first 200 of {preview.rows.length} rows. All of them
               are validated and all valid ones will be imported.
             </p>
@@ -350,14 +350,14 @@ export function VoucherImport({
               type="button"
               onClick={commit}
               disabled={busy || preview.validGroupCount === 0}
-              className="rounded-md bg-emerald-800 px-4 py-2 text-sm font-medium text-white transition hover:bg-emerald-700 disabled:opacity-50 dark:bg-emerald-700 dark:hover:bg-emerald-600"
+              className="rounded-lg bg-accent px-4 py-2 text-sm font-semibold text-accent-ink transition-colors hover:opacity-90 disabled:opacity-50"
             >
               {busy
                 ? "Importing…"
                 : `Import ${preview.validGroupCount} voucher${preview.validGroupCount === 1 ? "" : "s"}`}
             </button>
             {preview.invalidRowCount > 0 && (
-              <span className="text-sm text-zinc-600 dark:text-zinc-400">
+              <span className="text-sm text-ink-soft">
                 Rows with problems are skipped, not guessed at. Fix them in the
                 file and import again.
               </span>

@@ -69,7 +69,7 @@ export default async function LedgerStatementPage({
       >
         <table className="w-full min-w-[720px] text-sm">
           <thead>
-            <tr className="border-b border-zinc-200 text-left dark:border-zinc-800">
+            <tr className="border-b border-border text-left">
               <th className={th}>Date</th>
               <th className={th}>Number</th>
               <th className={th}>Particulars</th>
@@ -81,7 +81,7 @@ export default async function LedgerStatementPage({
           <tbody>
             {lines.length === 0 && (
               <tr>
-                <td colSpan={6} className="px-4 py-12 text-center text-zinc-500">
+                <td colSpan={6} className="px-4 py-12 text-center text-ink-faint">
                   {ledgerId
                     ? "No entries for this ledger in the period."
                     : "Create a ledger first."}
@@ -91,20 +91,20 @@ export default async function LedgerStatementPage({
             {lines.map((r, i) => (
               <tr
                 key={`${r.voucher_id}-${i}`}
-                className="border-b border-zinc-100 last:border-0 dark:border-zinc-800/60"
+                className="border-b border-border last:border-0"
               >
                 <td className={td + " whitespace-nowrap tabular-nums"}>{r.voucher_date}</td>
                 <td className={td + " whitespace-nowrap font-mono text-xs"}>
                   {r.voucher_number}
                 </td>
-                <td className={td + " text-zinc-600 dark:text-zinc-400"}>
+                <td className={td + " text-ink-soft "}>
                   {r.contra_ledgers ?? r.narration ?? "—"}
                 </td>
                 <td className={num}>{formatINR(Number(r.debit_amount))}</td>
                 <td className={num}>{formatINR(Number(r.credit_amount))}</td>
                 <td className={num + " font-medium"}>
                   {formatINR(Math.abs(Number(r.running_balance)), { showZero: true })}
-                  <span className="ml-1 text-[10px] uppercase text-zinc-500">
+                  <span className="ml-1 text-[10px] uppercase text-ink-faint">
                     {Number(r.running_balance) >= 0 ? "Dr" : "Cr"}
                   </span>
                 </td>

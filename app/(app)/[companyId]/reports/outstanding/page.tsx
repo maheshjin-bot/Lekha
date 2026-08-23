@@ -33,17 +33,17 @@ export default async function OutstandingPage({
           : { label: formatINR(total, { showZero: true }), tone: "ok" }
       }
     >
-      <div className="border-b border-zinc-200 px-4 py-2.5 text-sm dark:border-zinc-800 print:hidden">
+      <div className="border-b border-border px-4 py-2.5 text-sm print:hidden">
         <a
           href={`?role=debtor`}
-          className={role === "debtor" ? "font-semibold" : "text-zinc-600 underline underline-offset-4 dark:text-zinc-400"}
+          className={role === "debtor" ? "font-semibold" : "text-ink-soft underline underline-offset-4 "}
         >
           Receivables
         </a>
-        <span className="mx-3 text-zinc-300">|</span>
+        <span className="mx-3 text-ink-faint">|</span>
         <a
           href={`?role=creditor`}
-          className={role === "creditor" ? "font-semibold" : "text-zinc-600 underline underline-offset-4 dark:text-zinc-400"}
+          className={role === "creditor" ? "font-semibold" : "text-ink-soft underline underline-offset-4 "}
         >
           Payables
         </a>
@@ -51,7 +51,7 @@ export default async function OutstandingPage({
 
       <table className="w-full min-w-[760px] text-sm">
         <thead>
-          <tr className="border-b border-zinc-200 text-left dark:border-zinc-800">
+          <tr className="border-b border-border text-left">
             <th className={th}>Party</th>
             <th className={th + " text-right"}>Not due</th>
             <th className={th + " text-right"}>0–30</th>
@@ -64,7 +64,7 @@ export default async function OutstandingPage({
         <tbody>
           {parties.length === 0 && (
             <tr>
-              <td colSpan={7} className="px-4 py-12 text-center text-zinc-500">
+              <td colSpan={7} className="px-4 py-12 text-center text-ink-faint">
                 Nothing outstanding.
               </td>
             </tr>
@@ -72,12 +72,12 @@ export default async function OutstandingPage({
           {parties.map((r) => (
             <tr
               key={r.ledger_id}
-              className="border-b border-zinc-100 last:border-0 dark:border-zinc-800/60"
+              className="border-b border-border last:border-0"
             >
               <td className={td + " font-medium"}>
                 {r.ledger_name}
                 {r.oldest_date && Number(r.days_over_90) > 0 && (
-                  <span className="ml-2 text-xs font-normal text-amber-800 dark:text-amber-300">
+                  <span className="ml-2 text-xs font-normal text-warning">
                     oldest {r.oldest_date}
                   </span>
                 )}
@@ -86,7 +86,7 @@ export default async function OutstandingPage({
               <td className={num}>{formatINR(Number(r.days_0_30))}</td>
               <td className={num}>{formatINR(Number(r.days_31_60))}</td>
               <td className={num}>{formatINR(Number(r.days_61_90))}</td>
-              <td className={num + (Number(r.days_over_90) > 0 ? " font-semibold text-amber-800 dark:text-amber-300" : "")}>
+              <td className={num + (Number(r.days_over_90) > 0 ? " font-semibold text-warning" : "")}>
                 {formatINR(Number(r.days_over_90))}
               </td>
               <td className={num + " font-medium"}>{formatINR(Number(r.outstanding))}</td>
@@ -95,7 +95,7 @@ export default async function OutstandingPage({
         </tbody>
         {parties.length > 0 && (
           <tfoot>
-            <tr className="border-t-2 border-zinc-300 bg-zinc-50 font-semibold dark:border-zinc-700 dark:bg-zinc-800/50">
+            <tr className="border-t-2 border-border-strong bg-bg font-semibold">
               <td className="px-4 py-2.5">Total</td>
               <td className={num}>{formatINR(sum("not_due"), { showZero: true })}</td>
               <td className={num}>{formatINR(sum("days_0_30"), { showZero: true })}</td>
@@ -108,7 +108,7 @@ export default async function OutstandingPage({
         )}
       </table>
 
-      <p className="border-t border-zinc-200 px-4 py-3 text-xs text-zinc-500 dark:border-zinc-800">
+      <p className="border-t border-border px-4 py-3 text-xs text-ink-faint">
         Ageing is inferred: receipts are applied to the oldest invoices first,
         not matched to the invoices they actually settle. Bill-wise allocation
         comes later — worth knowing before this number goes to a lender.

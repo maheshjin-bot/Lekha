@@ -13,7 +13,7 @@
  * date arithmetic is observable, and this module mixes them.
  */
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { defaultPeriod, financialYearLabel, financialYearStart } from "@/lib/utils/period";
+import { defaultPeriod, financialYearLabel, financialYearStart, periodPreset } from "@/lib/utils/period";
 
 const iso = (d: Date) => d.toISOString().slice(0, 10);
 /** Noon UTC — far from any date boundary, so the input itself is unambiguous. */
@@ -134,5 +134,74 @@ describe("defaultPeriod", () => {
     ).toBe(true);
     expect(p.to).toBe("2026-04-01");
     expect(p.from).toBe("2026-04-01");
+  });
+});
+
+describe("periodPreset", () => {
+  function at(date: string) {
+    vi.useFakeTimers();
+    vi.setSystemTime(on(date));
+  }
+
+  it("currentFY matches defaultPeriod's own to-date range", () => {
+    at("2026-08-17");
+    expect(periodPreset("currentFY", 4)).toEqual({ from: "2026-04-01", to: "2026-08-17" });
+  });
+
+  it("currentMonth runs from the 1st to today", () => {
+    at("2026-08-17");
+    expect(periodPreset("currentMonth", 4)).toEqual({ from: "2026-08-01", to: "2026-08-17" });
+  });
+
+  it("previousMonth is the full prior month, not to-date", () => {
+    at("2026-08-17");
+    expect(periodPreset("previousMonth", 4)).toEqual({ from: "2026-07-01", to: "2026-07-31" });
+  });
+
+  it("previousMonth crosses the calendar year boundary in January", () => {
+    at("2026-01-15");
+    expect(periodPreset("previousMonth", 4)).toEqual({ from: "2025-12-01", to: "2025-12-31" });
+  });
+
+  it("thisQuarter is Apr-Jun for an April-year company sitting in May", () => {
+    at("2026-05-15");
+    expect(periodPreset("thisQuarter", 4)).toEqual({ from: "2026-04-01", to: "2026-05-15" });
+  });
+
+  it("previousQuarter is Jan-Mar for an April-year company sitting in Q1", () => {
+    // Q4 of FY2025-26 lands entirely inside calendar 2026 for an April-start
+    // year — the boundary case worth separately testing is below.
+    at("2026-05-15");
+    expect(periodPreset("previousQuarter", 4)).toEqual({ from: "2026-01-01", to: "2026-03-31" });
+  });
+
+  it("thisQuarter is Jan-Mar (Q4) for an April-year company sitting in February, spanning into the next calendar year", () => {
+    at("2027-02-10");
+    expect(periodPreset("thisQuarter", 4)).toEqual({ from: "2027-01-01", to: "2027-02-10" });
+  });
+
+  it("previousQuarter is Oct-Dec for an April-year company sitting in Q4", () => {
+    at("2027-02-10");
+    expect(periodPreset("previousQuarter", 4)).toEqual({ from: "2026-10-01", to: "2026-12-31" });
+  });
+
+  it("previousQuarter crosses the calendar year for a January-start company", () => {
+    // Jan-year Q1 (Jan-Mar) sitting in February — its previous quarter is
+    // Q4 of the PRIOR fiscal year, Oct-Dec of the PRIOR calendar year.
+    at("2026-02-15");
+    expect(periodPreset("previousQuarter", 1)).toEqual({ from: "2025-10-01", to: "2025-12-31" });
+  });
+
+  it("previousQuarter crosses the calendar year for a February-start company", () => {
+    // Feb-year Q1 (Feb-Apr) sitting in March — its previous quarter is
+    // Q4 of the prior FY, Nov-Jan, which itself spans two calendar years.
+    at("2026-03-10");
+    expect(periodPreset("previousQuarter", 2)).toEqual({ from: "2025-11-01", to: "2026-01-31" });
+  });
+
+  it("honours a non-April year start for quarter boundaries (July-year Q1)", () => {
+    at("2026-08-10");
+    expect(periodPreset("thisQuarter", 7)).toEqual({ from: "2026-07-01", to: "2026-08-10" });
+    expect(periodPreset("previousQuarter", 7)).toEqual({ from: "2026-04-01", to: "2026-06-30" });
   });
 });

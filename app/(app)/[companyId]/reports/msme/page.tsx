@@ -91,7 +91,7 @@ export default async function MsmeDuesPage({
     >
       <table className="w-full min-w-[720px] text-sm">
         <thead>
-          <tr className="border-b border-zinc-200 text-left dark:border-zinc-800">
+          <tr className="border-b border-border text-left">
             <th className={th}>Supplier</th>
             <th className={th}>Category</th>
             <th className={th}>Udyam</th>
@@ -104,7 +104,7 @@ export default async function MsmeDuesPage({
         <tbody>
           {rows.length === 0 && (
             <tr>
-              <td colSpan={7} className="px-4 py-12 text-center text-zinc-500">
+              <td colSpan={7} className="px-4 py-12 text-center text-ink-faint">
                 No outstanding dues to a micro or small supplier.
               </td>
             </tr>
@@ -112,17 +112,17 @@ export default async function MsmeDuesPage({
           {rows.map((r) => (
             <tr
               key={r.ledger_id}
-              className="border-b border-zinc-100 last:border-0 dark:border-zinc-800/60"
+              className="border-b border-border last:border-0"
             >
               <td className={td + " font-medium"}>{r.ledger_name}</td>
-              <td className={td + " capitalize text-zinc-600 dark:text-zinc-400"}>
+              <td className={td + " capitalize text-ink-soft "}>
                 {r.ledger!.msme_category}
               </td>
-              <td className={td + " font-mono text-xs text-zinc-500"}>
+              <td className={td + " font-mono text-xs text-ink-faint"}>
                 {r.ledger!.udyam_number}
               </td>
               <td className={td}>{r.oldest_date ?? "—"}</td>
-              <td className={td + " text-zinc-600 dark:text-zinc-400"}>
+              <td className={td + " text-ink-soft "}>
                 {r.deadlineDays} days
               </td>
               <td className={num + " font-medium"}>{formatINR(Number(r.outstanding))}</td>
@@ -131,10 +131,10 @@ export default async function MsmeDuesPage({
                   className={
                     "rounded px-2 py-0.5 text-xs font-medium " +
                     (r.status === "disallowed"
-                      ? "bg-red-100 text-red-800 dark:bg-red-950 dark:text-red-300"
+                      ? "bg-error-soft text-error"
                       : r.status === "due_soon"
-                        ? "bg-amber-100 text-amber-900 dark:bg-amber-950 dark:text-amber-300"
-                        : "bg-emerald-100 text-emerald-800 dark:bg-emerald-950 dark:text-emerald-300")
+                        ? "bg-warning-soft text-warning"
+                        : "bg-success-soft text-success")
                   }
                 >
                   {r.status === "disallowed"
@@ -150,13 +150,13 @@ export default async function MsmeDuesPage({
       </table>
 
       {mediumExcludedCount > 0 && (
-        <p className="border-t border-zinc-200 px-4 py-3 text-xs text-zinc-500 dark:border-zinc-800">
+        <p className="border-t border-border px-4 py-3 text-xs text-ink-faint">
           {mediumExcludedCount} Medium-flagged supplier
           {mediumExcludedCount === 1 ? "" : "s"} with dues outstanding not shown
           — Sec 43B(h) applies only to Micro and Small enterprises.
         </p>
       )}
-      <p className="border-t border-zinc-200 px-4 py-3 text-xs text-zinc-500 dark:border-zinc-800">
+      <p className="border-t border-border px-4 py-3 text-xs text-ink-faint">
         &ldquo;Oldest since&rdquo; is inferred the same way as the Payables
         report — receipts and payments applied to the oldest bill first, not
         matched to the bill they actually settle. A supplier with no payment

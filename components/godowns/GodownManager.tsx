@@ -66,15 +66,15 @@ export function GodownManager({
   }
 
   const field =
-    "rounded-md border border-zinc-300 bg-white px-3 py-2 text-sm outline-none focus-visible:ring-2 focus-visible:ring-emerald-600 dark:border-zinc-700 dark:bg-zinc-900";
+    "rounded-lg border border-border-strong bg-surface px-3 py-2 text-sm text-ink outline-none focus-visible:border-accent focus-visible:ring-2 focus-visible:ring-accent/30";
 
   return (
     <div className="mt-8 grid gap-8 lg:grid-cols-[1fr_300px]">
       <section className="min-w-0">
-        <div className="overflow-x-auto rounded-lg border border-zinc-200 bg-white dark:border-zinc-800 dark:bg-zinc-900">
+        <div className="overflow-x-auto rounded-lg border border-border bg-surface">
           <table className="w-full min-w-[520px] text-sm">
             <thead>
-              <tr className="border-b border-zinc-200 text-left text-[11px] uppercase tracking-wide text-zinc-500 dark:border-zinc-800">
+              <tr className="border-b border-border text-left text-[11px] uppercase tracking-wide text-ink-faint">
                 <th className="px-4 py-2.5 font-medium">Code</th>
                 <th className="px-4 py-2.5 font-medium">Godown</th>
                 <th className="px-4 py-2.5 font-medium">Branch</th>
@@ -84,7 +84,7 @@ export function GodownManager({
             <tbody>
               {godowns.length === 0 && (
                 <tr>
-                  <td colSpan={4} className="px-4 py-10 text-center text-zinc-500">
+                  <td colSpan={4} className="px-4 py-10 text-center text-ink-faint">
                     No godowns yet.
                   </td>
                 </tr>
@@ -92,21 +92,21 @@ export function GodownManager({
               {godowns.map((g) => (
                 <tr
                   key={g.id}
-                  className="border-b border-zinc-100 last:border-0 dark:border-zinc-800/60"
+                  className="border-b border-border last:border-0"
                 >
                   <td className="px-4 py-2.5 font-mono text-xs">{g.code}</td>
                   <td className="px-4 py-2.5 font-medium">
                     {g.name}
                     {g.is_default && (
-                      <span className="ml-2 rounded bg-zinc-100 px-1.5 py-0.5 text-[10px] uppercase tracking-wide text-zinc-600 dark:bg-zinc-800 dark:text-zinc-400">
+                      <span className="ml-2 rounded bg-surface-2 px-1.5 py-0.5 text-[10px] uppercase tracking-wide text-ink-soft">
                         Default
                       </span>
                     )}
                   </td>
-                  <td className="px-4 py-2.5 text-zinc-600 dark:text-zinc-400">
+                  <td className="px-4 py-2.5 text-ink-soft">
                     {branchName(g.branch_id)}
                   </td>
-                  <td className="px-4 py-2.5 text-zinc-600 dark:text-zinc-400">
+                  <td className="px-4 py-2.5 text-ink-soft">
                     {g.address ?? "—"}
                   </td>
                 </tr>
@@ -116,12 +116,12 @@ export function GodownManager({
         </div>
       </section>
 
-      <section className="rounded-lg border border-zinc-200 bg-white p-5 dark:border-zinc-800 dark:bg-zinc-900">
+      <section className="rounded-lg border border-border bg-surface p-5">
         <h2 className="font-semibold">New godown</h2>
         <form onSubmit={onSubmit} className="mt-4 flex flex-col gap-3">
           <label className="flex flex-col gap-1.5">
             <span className="text-sm font-medium">
-              Code <span className="font-normal text-zinc-500">up to 6, A–Z and 0–9</span>
+              Code <span className="font-normal text-ink-faint">up to 6, A–Z and 0–9</span>
             </span>
             <input
               required
@@ -150,13 +150,13 @@ export function GodownManager({
 
           <label className="flex flex-col gap-1.5">
             <span className="text-sm font-medium">
-              Address <span className="font-normal text-zinc-500">optional</span>
+              Address <span className="font-normal text-ink-faint">optional</span>
             </span>
             <textarea rows={2} value={address} onChange={(e) => setAddress(e.target.value)} className={field} />
           </label>
 
           {error && (
-            <p className="rounded-md bg-red-50 px-3 py-2 text-sm text-red-700 dark:bg-red-950 dark:text-red-300">
+            <p className="rounded-md bg-error-soft px-3 py-2 text-sm text-error">
               {error}
             </p>
           )}
@@ -164,7 +164,7 @@ export function GodownManager({
           <button
             type="submit"
             disabled={busy}
-            className="mt-1 rounded-md bg-emerald-800 px-4 py-2 text-sm font-medium text-white transition hover:bg-emerald-700 disabled:opacity-50 dark:bg-emerald-700 dark:hover:bg-emerald-600"
+            className="mt-1 rounded-lg bg-accent px-4 py-2 text-sm font-semibold text-accent-ink transition-colors hover:opacity-90 disabled:opacity-50"
           >
             {busy ? "Adding…" : "Add godown"}
           </button>

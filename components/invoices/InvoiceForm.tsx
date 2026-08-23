@@ -35,6 +35,34 @@ const TYPES = [
 type Line = { itemId: string; quantity: string; rate: string; description: string };
 const emptyLine = (): Line => ({ itemId: "", quantity: "1", rate: "", description: "" });
 
+/**
+ * An existing invoice being edited. voucherType and branchId are read but
+ * not editable once numbered — same reason VoucherForm's ExistingVoucher
+ * treats them the same way: the voucher number's prefix already encodes the
+ * type, and re-deriving it would desync the number from what it claims.
+ */
+export type ExistingInvoice = {
+  id: string;
+  voucherNumber: string;
+  voucherType: (typeof TYPES)[number]["value"];
+  financialYearLabel: string;
+  branchId: string;
+  date: string;
+  partyId: string;
+  tradingId: string;
+  godownId: string;
+  placeOfSupply: string;
+  reference: string;
+  narration: string;
+  lines: Line[];
+};
+
+function todayLocal(): string {
+  const d = new Date();
+  const p = (n: number) => String(n).padStart(2, "0");
+  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`;
+}
+
 export function InvoiceForm({
   companyId,
   items,
@@ -45,6 +73,7 @@ export function InvoiceForm({
   tcsOn,
   tcsSections,
   states,
+  existing,
 }: {
   companyId: string;
   items: Item[];
@@ -55,23 +84,23 @@ export function InvoiceForm({
   tcsOn: boolean;
   tcsSections: TcsSection[];
   states: StateOption[];
+  existing?: ExistingInvoice;
 }) {
   const router = useRouter();
-  const [voucherType, setVoucherType] = useState<(typeof TYPES)[number]["value"]>("sales");
-  const [branchId, setBranchId] = useState(branches[0]?.id ?? "");
-  const [godownId, setGodownId] = useState(godowns[0]?.id ?? "");
-  const [date, setDate] = useState(() => {
-    const d = new Date();
-    const p = (n: number) => String(n).padStart(2, "0");
-    return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`;
-  });
-  const [partyId, setPartyId] = useState("");
-  const [tradingId, setTradingId] = useState("");
-  const [placeOfSupply, setPlaceOfSupply] = useState("");
-  const [placeOfSupplyTouched, setPlaceOfSupplyTouched] = useState(false);
-  const [reference, setReference] = useState("");
-  const [narration, setNarration] = useState("");
-  const [lines, setLines] = useState<Line[]>([emptyLine()]);
+  const isEdit = Boolean(existing);
+  const [voucherType, setVoucherType] = useState<(typeof TYPES)[number]["value"]>(existing?.voucherType ?? "sales");
+  const [branchId, setBranchId] = useState(existing?.branchId ?? branches[0]?.id ?? "");
+  const [godownId, setGodownId] = useState(existing?.godownId ?? godowns[0]?.id ?? "");
+  const [date, setDate] = useState(existing?.date ?? todayLocal);
+  const [partyId, setPartyId] = useState(existing?.partyId ?? "");
+  const [tradingId, setTradingId] = useState(existing?.tradingId ?? "");
+  const [placeOfSupply, setPlaceOfSupply] = useState(existing?.placeOfSupply ?? "");
+  // Editing an invoice whose place of supply is already on file must not let
+  // the party-change effect below silently override it with a guess.
+  const [placeOfSupplyTouched, setPlaceOfSupplyTouched] = useState(isEdit);
+  const [reference, setReference] = useState(existing?.reference ?? "");
+  const [narration, setNarration] = useState(existing?.narration ?? "");
+  const [lines, setLines] = useState<Line[]>(existing?.lines.length ? existing.lines : [emptyLine()]);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -202,24 +231,38 @@ export function InvoiceForm({
     if (gstOn && !placeOfSupply) return setError("Select a place of supply.");
 
     setBusy(true);
-    const { data, error } = await createClient().rpc("create_invoice", {
-      p_company_id: companyId,
-      p_branch_id: branchId,
-      p_voucher_type: voucherType,
-      p_voucher_date: date,
-      p_party_ledger_id: partyId,
-      p_trading_ledger_id: tradingId,
-      p_godown_id: godownId,
-      p_items: filled.map((l) => ({
-        item_id: l.itemId,
-        quantity: Number(l.quantity),
-        rate: Number(l.rate) || 0,
-        description: l.description.trim() || null,
-      })),
-      p_narration: narration.trim() || undefined,
-      p_reference_number: reference.trim() || undefined,
-      p_place_of_supply: placeOfSupply || undefined,
-    });
+    const items_payload = filled.map((l) => ({
+      item_id: l.itemId,
+      quantity: Number(l.quantity),
+      rate: Number(l.rate) || 0,
+      description: l.description.trim() || null,
+    }));
+
+    const { data, error } = existing
+      ? await createClient().rpc("update_invoice", {
+          p_voucher_id: existing.id,
+          p_voucher_date: date,
+          p_party_ledger_id: partyId,
+          p_trading_ledger_id: tradingId,
+          p_godown_id: godownId,
+          p_items: items_payload,
+          p_narration: narration.trim() || undefined,
+          p_reference_number: reference.trim() || undefined,
+          p_place_of_supply: placeOfSupply || undefined,
+        })
+      : await createClient().rpc("create_invoice", {
+          p_company_id: companyId,
+          p_branch_id: branchId,
+          p_voucher_type: voucherType,
+          p_voucher_date: date,
+          p_party_ledger_id: partyId,
+          p_trading_ledger_id: tradingId,
+          p_godown_id: godownId,
+          p_items: items_payload,
+          p_narration: narration.trim() || undefined,
+          p_reference_number: reference.trim() || undefined,
+          p_place_of_supply: placeOfSupply || undefined,
+        });
 
     if (error) {
       setError(error.message);
@@ -227,7 +270,7 @@ export function InvoiceForm({
       return;
     }
 
-    router.push(`/${companyId}/vouchers/${data}`);
+    router.push(`/${companyId}/vouchers/${existing ? existing.id : data}`);
     router.refresh();
   }
 
@@ -243,12 +286,13 @@ export function InvoiceForm({
           <span className="text-sm font-medium">Type</span>
           <select
             value={voucherType}
+            disabled={isEdit}
             onChange={(e) => {
               setVoucherType(e.target.value as typeof voucherType);
               selectParty("");
               setTradingId("");
             }}
-            className={field}
+            className={field + (isEdit ? " opacity-60" : "")}
           >
             {TYPES.map((t) => (
               <option key={t.value} value={t.value}>
@@ -277,7 +321,12 @@ export function InvoiceForm({
 
         <label className="flex flex-col gap-1.5">
           <span className="text-sm font-medium">Branch</span>
-          <select value={branchId} onChange={(e) => setBranchId(e.target.value)} className={field}>
+          <select
+            value={branchId}
+            disabled={isEdit}
+            onChange={(e) => setBranchId(e.target.value)}
+            className={field + (isEdit ? " opacity-60" : "")}
+          >
             {branches.map((b) => (
               <option key={b.id} value={b.id}>
                 {b.code} — {b.name}
@@ -520,7 +569,7 @@ export function InvoiceForm({
         disabled={busy || taxable <= 0}
         className="mt-3 rounded-lg bg-accent px-4 py-2 text-sm font-semibold text-accent-ink transition-colors hover:opacity-90 disabled:opacity-50"
       >
-        {busy ? "Saving…" : `Save ${config.label.toLowerCase()}`}
+        {busy ? "Saving…" : isEdit ? "Save changes" : `Save ${config.label.toLowerCase()}`}
       </button>
     </form>
   );

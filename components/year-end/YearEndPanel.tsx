@@ -12,7 +12,7 @@ type HistoryRow = {
 };
 
 const field =
-  "rounded-md border border-zinc-300 bg-white px-3 py-2 text-sm outline-none focus-visible:ring-2 focus-visible:ring-emerald-600 dark:border-zinc-700 dark:bg-zinc-900";
+  "rounded-lg border border-border-strong bg-surface px-3 py-2 text-sm text-ink outline-none focus-visible:border-accent focus-visible:ring-2 focus-visible:ring-accent/30";
 
 function formatDate(iso: string): string {
   const [y, m, d] = iso.split("-").map(Number);
@@ -103,11 +103,11 @@ export function YearEndPanel({
 
   return (
     <div className="mt-8 flex flex-col gap-8">
-      <section className="rounded-lg border border-zinc-200 bg-white p-5 dark:border-zinc-800 dark:bg-zinc-900">
+      <section className="rounded-lg border border-border bg-surface p-5">
         <div className="flex items-baseline justify-between gap-3">
           <h2 className="font-semibold">Status</h2>
           {bookBeginningDate && (
-            <span className="text-xs text-zinc-500">
+            <span className="text-xs text-ink-faint">
               Books began {formatDate(bookBeginningDate)}
             </span>
           )}
@@ -115,23 +115,23 @@ export function YearEndPanel({
 
         {lockDate ? (
           <p className="mt-2 text-sm">
-            <span className="rounded bg-amber-100 px-2 py-0.5 font-medium text-amber-900 dark:bg-amber-950 dark:text-amber-200">
+            <span className="rounded bg-warning-soft px-2 py-0.5 font-medium text-warning">
               Closed through {formatDate(lockDate)}
             </span>{" "}
-            <span className="text-zinc-600 dark:text-zinc-400">
+            <span className="text-ink-soft">
               — no voucher dated on or before this can be added, edited, or deleted.
             </span>
           </p>
         ) : (
-          <p className="mt-2 text-sm text-zinc-600 dark:text-zinc-400">
+          <p className="mt-2 text-sm text-ink-soft">
             Books are open. Every period can still be edited.
           </p>
         )}
       </section>
 
-      <section className="rounded-lg border border-zinc-200 bg-white p-5 dark:border-zinc-800 dark:bg-zinc-900">
+      <section className="rounded-lg border border-border bg-surface p-5">
         <h2 className="font-semibold">Close a period</h2>
-        <p className="mt-1 text-sm text-zinc-600 dark:text-zinc-400">
+        <p className="mt-1 text-sm text-ink-soft">
           Closing only moves forward — pick the last date that should be locked.
         </p>
         <form onSubmit={onClose} className="mt-4 flex flex-wrap items-end gap-3">
@@ -148,22 +148,22 @@ export function YearEndPanel({
           <button
             type="submit"
             disabled={closeBusy}
-            className="rounded-md bg-emerald-800 px-4 py-2 text-sm font-medium text-white transition hover:bg-emerald-700 disabled:opacity-50 dark:bg-emerald-700 dark:hover:bg-emerald-600"
+            className="rounded-lg bg-accent px-4 py-2 text-sm font-semibold text-accent-ink transition-colors hover:opacity-90 disabled:opacity-50"
           >
             {closeBusy ? "Closing…" : "Close books"}
           </button>
         </form>
         {closeError && (
-          <p className="mt-3 rounded-md bg-red-50 px-3 py-2 text-sm text-red-700 dark:bg-red-950 dark:text-red-300">
+          <p className="mt-3 rounded-md bg-error-soft px-3 py-2 text-sm text-error">
             {closeError}
           </p>
         )}
       </section>
 
       {lockDate && (
-        <section className="rounded-lg border border-red-200 bg-red-50/40 p-5 dark:border-red-900 dark:bg-red-950/20">
-          <h2 className="font-semibold text-red-900 dark:text-red-200">Reopen</h2>
-          <p className="mt-1 text-sm text-red-800/80 dark:text-red-300/80">
+        <section className="rounded-lg border border-error/30 bg-error-soft p-5">
+          <h2 className="font-semibold text-error">Reopen</h2>
+          <p className="mt-1 text-sm text-error/80">
             Moves the lock date back, letting vouchers be entered or edited in
             a period that was already closed. Every use of this is recorded
             in the audit trail below.
@@ -173,7 +173,7 @@ export function YearEndPanel({
             <button
               type="button"
               onClick={() => setReopenOpen(true)}
-              className="mt-4 rounded-md border border-red-300 bg-white px-4 py-2 text-sm font-medium text-red-800 transition hover:bg-red-50 dark:border-red-800 dark:bg-zinc-900 dark:text-red-300 dark:hover:bg-red-950/40"
+              className="mt-4 rounded-lg border border-error/40 bg-surface px-4 py-2 text-sm font-medium text-error transition-colors hover:bg-error-soft"
             >
               Reopen…
             </button>
@@ -209,7 +209,7 @@ export function YearEndPanel({
                 <button
                   type="submit"
                   disabled={reopenBusy}
-                  className="rounded-md bg-red-700 px-4 py-2 text-sm font-medium text-white transition hover:bg-red-600 disabled:opacity-50"
+                  className="rounded-lg bg-error px-4 py-2 text-sm font-semibold text-white transition-colors hover:opacity-90 disabled:opacity-50"
                 >
                   {reopenBusy ? "Reopening…" : "Yes, reopen"}
                 </button>
@@ -219,13 +219,13 @@ export function YearEndPanel({
                     setReopenOpen(false);
                     setReopenError(null);
                   }}
-                  className="rounded-md border border-zinc-300 bg-white px-4 py-2 text-sm font-medium transition hover:bg-zinc-50 dark:border-zinc-700 dark:bg-zinc-900 dark:hover:bg-zinc-800"
+                  className="rounded-lg border border-border-strong bg-surface px-4 py-2 text-sm font-medium transition-colors hover:bg-surface-2"
                 >
                   Cancel
                 </button>
               </div>
               {reopenError && (
-                <p className="rounded-md bg-red-50 px-3 py-2 text-sm text-red-700 dark:bg-red-950 dark:text-red-300">
+                <p className="rounded-md bg-error-soft px-3 py-2 text-sm text-error">
                   {reopenError}
                 </p>
               )}
@@ -237,15 +237,15 @@ export function YearEndPanel({
       <section>
         <h2 className="mb-3 font-semibold">Closing history</h2>
         {history.length === 0 ? (
-          <p className="text-sm text-zinc-500">No closes or reopens yet.</p>
+          <p className="text-sm text-ink-faint">No closes or reopens yet.</p>
         ) : (
-          <ul className="divide-y divide-zinc-200 rounded-lg border border-zinc-200 bg-white dark:divide-zinc-800 dark:border-zinc-800 dark:bg-zinc-900">
+          <ul className="divide-y divide-border rounded-lg border border-border bg-surface">
             {history.map((h) => (
               <li key={h.id} className="flex items-center justify-between gap-3 px-4 py-2.5 text-sm">
-                <span className="text-zinc-600 dark:text-zinc-400">
+                <span className="text-ink-soft">
                   {h.changedByName ?? "Someone"} changed the lock date
                 </span>
-                <span className="shrink-0 tabular-nums text-zinc-500">
+                <span className="shrink-0 tabular-nums text-ink-faint font-mono">
                   {new Date(h.changedAt).toLocaleString("en-IN", {
                     dateStyle: "medium",
                     timeStyle: "short",

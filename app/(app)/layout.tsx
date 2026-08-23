@@ -1,6 +1,7 @@
 import { redirect } from "next/navigation";
 import { headers } from "next/headers";
 import { createClient } from "@/lib/supabase/server";
+import { SupportChatWidget } from "@/components/support/SupportChatWidget";
 
 /**
  * Timed getUser() wrapper, kept outside the component. Date.now() is fine
@@ -48,5 +49,10 @@ export default async function AppLayout({
     redirect(pathname ? `/login?next=${encodeURIComponent(pathname)}` : "/login");
   }
 
-  return <>{children}</>;
+  return (
+    <>
+      {children}
+      <SupportChatWidget />
+    </>
+  );
 }

@@ -45,8 +45,8 @@ export default function LoginPage() {
   return (
     <main className="mx-auto flex min-h-screen max-w-md flex-col justify-center px-6">
       <div className="mb-10">
-        <h1 className="text-3xl font-semibold tracking-tight">LEKHA</h1>
-        <p className="mt-2 text-sm text-zinc-600 dark:text-zinc-400">
+        <h1 className="font-display text-3xl font-semibold tracking-tight text-ink">LEKHA</h1>
+        <p className="mt-2 text-sm text-ink-soft">
           Accounting and statutory compliance for Indian businesses.
         </p>
       </div>
@@ -60,7 +60,7 @@ export default function LoginPage() {
             autoComplete="email"
             value={email}
             onChange={(e) => setEmail(e.target.value)}
-            className="rounded-md border border-zinc-300 bg-white px-3 py-2 text-sm outline-none focus-visible:ring-2 focus-visible:ring-emerald-600 dark:border-zinc-700 dark:bg-zinc-900"
+            className="rounded-lg border border-border-strong bg-surface px-3 py-2 text-sm text-ink outline-none focus-visible:border-accent focus-visible:ring-2 focus-visible:ring-accent/30"
           />
         </label>
 
@@ -73,17 +73,17 @@ export default function LoginPage() {
             autoComplete={mode === "signin" ? "current-password" : "new-password"}
             value={password}
             onChange={(e) => setPassword(e.target.value)}
-            className="rounded-md border border-zinc-300 bg-white px-3 py-2 text-sm outline-none focus-visible:ring-2 focus-visible:ring-emerald-600 dark:border-zinc-700 dark:bg-zinc-900"
+            className="rounded-lg border border-border-strong bg-surface px-3 py-2 text-sm text-ink outline-none focus-visible:border-accent focus-visible:ring-2 focus-visible:ring-accent/30"
           />
         </label>
 
         {error && (
-          <p className="rounded-md bg-red-50 px-3 py-2 text-sm text-red-700 dark:bg-red-950 dark:text-red-300">
+          <p className="rounded-md bg-error-soft px-3 py-2 text-sm text-error">
             {error}
           </p>
         )}
         {notice && (
-          <p className="rounded-md bg-emerald-50 px-3 py-2 text-sm text-emerald-800 dark:bg-emerald-950 dark:text-emerald-300">
+          <p className="rounded-md bg-success-soft px-3 py-2 text-sm text-success">
             {notice}
           </p>
         )}
@@ -91,7 +91,7 @@ export default function LoginPage() {
         <button
           type="submit"
           disabled={busy}
-          className="mt-2 rounded-md bg-emerald-800 px-4 py-2 text-sm font-medium text-white transition hover:bg-emerald-700 disabled:opacity-50 dark:bg-emerald-700 dark:hover:bg-emerald-600"
+          className="mt-2 rounded-lg bg-accent px-4 py-2 text-sm font-semibold text-accent-ink transition-colors hover:opacity-90 disabled:opacity-50"
         >
           {busy ? "Working…" : mode === "signin" ? "Sign in" : "Create account"}
         </button>
@@ -104,7 +104,7 @@ export default function LoginPage() {
           setError(null);
           setNotice(null);
         }}
-        className="mt-6 text-sm text-zinc-600 underline underline-offset-4 hover:text-zinc-900 dark:text-zinc-400 dark:hover:text-zinc-100"
+        className="mt-6 text-sm text-ink-soft underline underline-offset-4 hover:text-ink"
       >
         {mode === "signin"
           ? "No account yet? Create one"

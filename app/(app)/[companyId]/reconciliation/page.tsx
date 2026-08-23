@@ -23,8 +23,8 @@ export default async function ReconciliationPage({
   if (!ledgerId) {
     return (
       <main className="mx-auto max-w-5xl px-6 py-10">
-        <h1 className="text-2xl font-semibold tracking-tight">Bank reconciliation</h1>
-        <p className="mt-8 rounded-lg border border-dashed border-zinc-300 px-5 py-8 text-center text-sm text-zinc-500 dark:border-zinc-700">
+        <h1 className="font-display text-2xl font-semibold tracking-tight text-ink">Bank reconciliation</h1>
+        <p className="mt-8 rounded-lg border border-dashed border-border-strong px-5 py-8 text-center text-sm text-ink-faint">
           No cash or bank ledger exists yet.
         </p>
       </main>
@@ -73,8 +73,8 @@ export default async function ReconciliationPage({
 
   return (
     <main className="mx-auto max-w-6xl px-6 py-10">
-      <h1 className="text-2xl font-semibold tracking-tight">Bank reconciliation</h1>
-      <p className="mt-1.5 max-w-2xl text-sm text-zinc-600 dark:text-zinc-400">
+      <h1 className="font-display text-2xl font-semibold tracking-tight text-ink">Bank reconciliation</h1>
+      <p className="mt-1.5 max-w-2xl text-sm text-ink-soft">
         Matching a statement line to a book entry needs the opposite side on
         each: money the bank shows coming in (a credit) matches money your
         books show going into the account (a debit).

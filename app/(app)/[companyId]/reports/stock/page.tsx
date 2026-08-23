@@ -48,7 +48,7 @@ export default async function StockSummaryPage({
     >
       <table className="w-full min-w-[720px] text-sm">
         <thead>
-          <tr className="border-b border-zinc-200 text-left dark:border-zinc-800">
+          <tr className="border-b border-border text-left">
             <th className={th}>Item</th>
             <th className={th}>HSN</th>
             <th className={th}>Unit</th>
@@ -62,7 +62,7 @@ export default async function StockSummaryPage({
         <tbody>
           {stock.length === 0 && (
             <tr>
-              <td colSpan={8} className="px-4 py-12 text-center text-zinc-500">
+              <td colSpan={8} className="px-4 py-12 text-center text-ink-faint">
                 {godowns?.length
                   ? "No stock movement yet."
                   : "No godown configured, so stock cannot be recorded."}
@@ -72,7 +72,7 @@ export default async function StockSummaryPage({
           {stock.map((r) => (
             <tr
               key={r.item_id}
-              className="border-b border-zinc-100 last:border-0 dark:border-zinc-800/60"
+              className="border-b border-border last:border-0"
             >
               <td className={td + " font-medium"}>{r.item_name}</td>
               <td className={td + " font-mono text-xs"}>{r.hsn_sac ?? "—"}</td>
@@ -87,11 +87,11 @@ export default async function StockSummaryPage({
         </tbody>
         {stock.length > 0 && (
           <tfoot>
-            <tr className="border-t-2 border-zinc-300 bg-zinc-50 font-semibold dark:border-zinc-700 dark:bg-zinc-800/50">
+            <tr className="border-t-2 border-border-strong bg-bg font-semibold">
               <td className="px-4 py-2.5" colSpan={7}>
                 Total stock value
               </td>
-              <td className="px-4 py-2.5 text-right tabular-nums">
+              <td className="px-4 py-2.5 text-right tabular-nums font-mono">
                 {formatINR(totalValue, { showZero: true })}
               </td>
             </tr>

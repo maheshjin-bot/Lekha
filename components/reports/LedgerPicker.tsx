@@ -25,7 +25,7 @@ export function LedgerPicker({
             `/${companyId}/reports/ledger-statement?ledger=${encodeURIComponent(e.target.value)}`
           )
         }
-        className="rounded-md border border-zinc-300 bg-white px-3 py-2 text-sm outline-none focus-visible:ring-2 focus-visible:ring-emerald-600 dark:border-zinc-700 dark:bg-zinc-900"
+        className="rounded-lg border border-border-strong bg-surface px-3 py-2 text-sm text-ink outline-none focus-visible:border-accent focus-visible:ring-2 focus-visible:ring-accent/30"
       >
         {ledgers.map((l) => (
           <option key={l.id} value={l.id}>

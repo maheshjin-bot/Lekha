@@ -1,26 +1,108 @@
 @import "tailwindcss";
 
+/*
+ * LEKHA Design System tokens — implements the report at
+ * https://claude.ai/code/artifact/e404d7f8-28c3-4f85-96d2-b57d6e3043b6
+ *
+ * One accent (Ledger Indigo) means "act here" everywhere and nowhere else.
+ * Green/gold/red are reserved strictly for settled/pending/overdue — never
+ * decorative. Warm paper background, never clinical white, to reduce glare
+ * across long data-entry sessions.
+ */
 :root {
-  --background: #ffffff;
-  --foreground: #171717;
-}
+  --bg: #F7F7F5;
+  --surface: #FFFFFF;
+  --surface-2: #F1F0EC;
 
-@theme inline {
-  --color-background: var(--background);
-  --color-foreground: var(--foreground);
-  --font-sans: var(--font-geist-sans);
-  --font-mono: var(--font-geist-mono);
+  --ink: #14171F;
+  --ink-soft: rgba(20, 23, 31, 0.62);
+  --ink-faint: rgba(20, 23, 31, 0.40);
+
+  --border: #E6E4DD;
+  --border-strong: #D7D4C9;
+
+  --accent: #3654D6;
+  --accent-ink: #FFFFFF;
+  --accent-soft: rgba(54, 84, 214, 0.08);
+
+  --success: #1A7F5A;
+  --success-soft: rgba(26, 127, 90, 0.10);
+  --warning: #8A5A0F;
+  --warning-soft: rgba(183, 121, 31, 0.14);
+  --error: #A82E25;
+  --error-soft: rgba(192, 54, 44, 0.09);
+
+  --shadow: 0 1px 2px rgba(20, 23, 31, 0.04), 0 8px 24px rgba(20, 23, 31, 0.06);
+  --radius: 10px;
 }
 
 @media (prefers-color-scheme: dark) {
   :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
+    --bg: #14161B;
+    --surface: #1B1E25;
+    --surface-2: #21242C;
+
+    --ink: #EDEBE4;
+    --ink-soft: rgba(237, 235, 228, 0.66);
+    --ink-faint: rgba(237, 235, 228, 0.42);
+
+    --border: #2C303A;
+    --border-strong: #3A3F4B;
+
+    --accent: #7C93F0;
+    --accent-ink: #0D1020;
+    --accent-soft: rgba(124, 147, 240, 0.12);
+
+    --success: #4FBE94;
+    --success-soft: rgba(79, 190, 148, 0.12);
+    --warning: #E0AE55;
+    --warning-soft: rgba(224, 174, 85, 0.14);
+    --error: #E38177;
+    --error-soft: rgba(227, 129, 119, 0.12);
+
+    --shadow: 0 1px 2px rgba(0, 0, 0, 0.3), 0 8px 24px rgba(0, 0, 0, 0.35);
   }
 }
 
+@theme inline {
+  --color-bg: var(--bg);
+  --color-surface: var(--surface);
+  --color-surface-2: var(--surface-2);
+
+  --color-ink: var(--ink);
+  --color-ink-soft: var(--ink-soft);
+  --color-ink-faint: var(--ink-faint);
+
+  --color-border: var(--border);
+  --color-border-strong: var(--border-strong);
+
+  --color-accent: var(--accent);
+  --color-accent-ink: var(--accent-ink);
+  --color-accent-soft: var(--accent-soft);
+
+  --color-success: var(--success);
+  --color-success-soft: var(--success-soft);
+  --color-warning: var(--warning);
+  --color-warning-soft: var(--warning-soft);
+  --color-error: var(--error);
+  --color-error-soft: var(--error-soft);
+
+  --shadow-card: var(--shadow);
+  --radius-card: var(--radius);
+
+  --font-display: var(--font-lekha-display), Georgia, 'Iowan Old Style', serif;
+  --font-body: var(--font-lekha-body), -apple-system, 'Segoe UI', sans-serif;
+  --font-mono: var(--font-lekha-mono), 'SF Mono', Consolas, monospace;
+}
+
 body {
-  background: var(--background);
-  color: var(--foreground);
-  font-family: Arial, Helvetica, sans-serif;
+  background: var(--bg);
+  color: var(--ink);
+  font-family: var(--font-body);
+}
+
+/* Every money figure, GSTIN/PAN and voucher number gets fixed-width digits so
+   a column of numbers lines up into a straight edge down the page. */
+.font-mono, .tabular-nums {
+  font-variant-numeric: tabular-nums;
 }

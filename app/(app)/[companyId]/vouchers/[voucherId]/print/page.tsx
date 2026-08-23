@@ -98,19 +98,19 @@ export default async function PrintInvoicePage({
         <PrintButton />
       </div>
 
-      <article className="border border-zinc-300 bg-white p-8 text-sm text-zinc-900 print:border-0 print:p-0 dark:border-zinc-700">
-        <header className="border-b-2 border-zinc-900 pb-4">
+      <article className="border border-border-strong bg-surface p-8 text-sm text-ink print:border-0 print:p-0">
+        <header className="border-b-2 border-ink pb-4">
           <h1 className="text-center text-lg font-semibold uppercase tracking-wide">
             {TITLE[voucher.voucher_type] ?? "Voucher"}
           </h1>
         </header>
 
-        <section className="grid gap-6 border-b border-zinc-300 py-4 sm:grid-cols-2">
+        <section className="grid gap-6 border-b border-border-strong py-4 sm:grid-cols-2">
           <div>
-            <div className="text-[10px] uppercase tracking-wide text-zinc-500">From</div>
+            <div className="text-[10px] uppercase tracking-wide text-ink-faint">From</div>
             <div className="mt-1 font-semibold">{company?.legal_name || company?.name}</div>
             {branch && (
-              <div className="mt-0.5 text-xs leading-relaxed text-zinc-700">
+              <div className="mt-0.5 text-xs leading-relaxed text-ink-soft">
                 {[branch.address_line1, branch.address_line2, branch.city, branch.pincode]
                   .filter(Boolean)
                   .join(", ") || branch.name}
@@ -130,12 +130,12 @@ export default async function PrintInvoicePage({
           </div>
 
           <div>
-            <div className="text-[10px] uppercase tracking-wide text-zinc-500">
+            <div className="text-[10px] uppercase tracking-wide text-ink-faint">
               {voucher.voucher_type === "purchase" ? "Supplier" : "Billed to"}
             </div>
             <div className="mt-1 font-semibold">{party?.name ?? "—"}</div>
             {party && (
-              <div className="mt-0.5 text-xs leading-relaxed text-zinc-700">
+              <div className="mt-0.5 text-xs leading-relaxed text-ink-soft">
                 {[party.address, party.city, party.pincode].filter(Boolean).join(", ")}
               </div>
             )}
@@ -147,24 +147,24 @@ export default async function PrintInvoicePage({
           </div>
         </section>
 
-        <section className="grid grid-cols-2 gap-4 border-b border-zinc-300 py-3 text-xs sm:grid-cols-4">
+        <section className="grid grid-cols-2 gap-4 border-b border-border-strong py-3 text-xs sm:grid-cols-4">
           <div>
-            <div className="text-[10px] uppercase tracking-wide text-zinc-500">Number</div>
+            <div className="text-[10px] uppercase tracking-wide text-ink-faint">Number</div>
             <div className="font-mono">{voucher.voucher_number}</div>
           </div>
           <div>
-            <div className="text-[10px] uppercase tracking-wide text-zinc-500">Date</div>
-            <div className="tabular-nums">{voucher.voucher_date}</div>
+            <div className="text-[10px] uppercase tracking-wide text-ink-faint">Date</div>
+            <div className="tabular-nums font-mono">{voucher.voucher_date}</div>
           </div>
           {voucher.place_of_supply && (
             <div>
-              <div className="text-[10px] uppercase tracking-wide text-zinc-500">Place of supply</div>
+              <div className="text-[10px] uppercase tracking-wide text-ink-faint">Place of supply</div>
               <div>{stateName(voucher.place_of_supply)}</div>
             </div>
           )}
           {voucher.reference_number && (
             <div>
-              <div className="text-[10px] uppercase tracking-wide text-zinc-500">Reference</div>
+              <div className="text-[10px] uppercase tracking-wide text-ink-faint">Reference</div>
               <div>{voucher.reference_number}</div>
             </div>
           )}
@@ -172,7 +172,7 @@ export default async function PrintInvoicePage({
 
         <table className="mt-4 w-full text-sm">
           <thead>
-            <tr className="border-b border-zinc-900 text-left text-[10px] uppercase tracking-wide">
+            <tr className="border-b border-ink text-left text-[10px] uppercase tracking-wide">
               <th className="py-2 pr-2 font-medium">#</th>
               <th className="py-2 pr-2 font-medium">Description</th>
               <th className="py-2 pr-2 font-medium">HSN</th>
@@ -185,25 +185,25 @@ export default async function PrintInvoicePage({
           <tbody>
             {lines.length === 0 && (
               <tr>
-                <td colSpan={7} className="py-8 text-center text-zinc-500">
+                <td colSpan={7} className="py-8 text-center text-ink-faint">
                   This voucher has no item lines.
                 </td>
               </tr>
             )}
             {lines.map((l, i) => (
-              <tr key={l.id} className="border-b border-zinc-200">
-                <td className="py-2 pr-2 tabular-nums">{i + 1}</td>
+              <tr key={l.id} className="border-b border-border">
+                <td className="py-2 pr-2 tabular-nums font-mono">{i + 1}</td>
                 <td className="py-2 pr-2">
                   {l.items?.name}
                   {l.description && (
-                    <span className="block text-xs text-zinc-600">{l.description}</span>
+                    <span className="block text-xs text-ink-soft">{l.description}</span>
                   )}
                 </td>
                 <td className="py-2 pr-2 font-mono text-xs">{l.hsn_sac ?? "—"}</td>
-                <td className="py-2 pr-2 text-right tabular-nums">{Number(l.quantity)}</td>
+                <td className="py-2 pr-2 text-right tabular-nums font-mono">{Number(l.quantity)}</td>
                 <td className="py-2 pr-2">{l.uom}</td>
-                <td className="py-2 pr-2 text-right tabular-nums">{formatINR(Number(l.rate))}</td>
-                <td className="py-2 text-right tabular-nums">{formatINR(Number(l.amount))}</td>
+                <td className="py-2 pr-2 text-right tabular-nums font-mono">{formatINR(Number(l.rate))}</td>
+                <td className="py-2 text-right tabular-nums font-mono">{formatINR(Number(l.amount))}</td>
               </tr>
             ))}
           </tbody>
@@ -214,45 +214,45 @@ export default async function PrintInvoicePage({
                   <td className="pt-2" colSpan={6}>
                     Taxable value
                   </td>
-                  <td className="pt-2 text-right tabular-nums">{formatINR(taxable)}</td>
+                  <td className="pt-2 text-right tabular-nums font-mono">{formatINR(taxable)}</td>
                 </tr>
                 {[...taxByKind.entries()].map(([kind, amount]) => (
-                  <tr key={kind} className="text-zinc-700">
+                  <tr key={kind} className="text-ink-soft">
                     <td className="py-0.5" colSpan={6}>
                       {TAX_LABEL[kind] ?? kind.toUpperCase()}
                     </td>
-                    <td className="py-0.5 text-right tabular-nums">{formatINR(amount)}</td>
+                    <td className="py-0.5 text-right tabular-nums font-mono">{formatINR(amount)}</td>
                   </tr>
                 ))}
               </>
             )}
-            <tr className="border-t-2 border-zinc-900 font-semibold">
+            <tr className="border-t-2 border-ink font-semibold">
               <td className="py-2.5" colSpan={6}>
                 Total
               </td>
-              <td className="py-2.5 text-right tabular-nums">
+              <td className="py-2.5 text-right tabular-nums font-mono">
                 {formatINR(total, { showZero: true })}
               </td>
             </tr>
           </tfoot>
         </table>
 
-        <section className="mt-4 border-t border-zinc-300 pt-3">
-          <div className="text-[10px] uppercase tracking-wide text-zinc-500">Amount in words</div>
+        <section className="mt-4 border-t border-border-strong pt-3">
+          <div className="text-[10px] uppercase tracking-wide text-ink-faint">Amount in words</div>
           <div className="mt-0.5 font-medium">{amountInWords(total)}</div>
         </section>
 
         {voucher.narration && (
-          <p className="mt-4 text-xs text-zinc-700">{voucher.narration}</p>
+          <p className="mt-4 text-xs text-ink-soft">{voucher.narration}</p>
         )}
 
         <footer className="mt-12 flex justify-between text-xs">
-          <div className="text-zinc-500">
+          <div className="text-ink-faint">
             This is a computer-generated document.
           </div>
           <div className="text-right">
             <div className="mb-10">For {company?.legal_name || company?.name}</div>
-            <div className="border-t border-zinc-400 pt-1">Authorised Signatory</div>
+            <div className="border-t border-border-strong pt-1">Authorised Signatory</div>
           </div>
         </footer>
       </article>

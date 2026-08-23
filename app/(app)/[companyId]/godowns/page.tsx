@@ -23,8 +23,8 @@ export default async function GodownsPage({
 
   return (
     <main className="mx-auto max-w-5xl px-6 py-10">
-      <h1 className="text-2xl font-semibold tracking-tight">Godowns</h1>
-      <p className="mt-1.5 max-w-2xl text-sm text-zinc-600 dark:text-zinc-400">
+      <h1 className="font-display text-2xl font-semibold tracking-tight text-ink">Godowns</h1>
+      <p className="mt-1.5 max-w-2xl text-sm text-ink-soft">
         Stock locations sit under a branch, so stock can be reported per
         facility — a lender finances the stock at named locations, not the
         company total.

@@ -94,6 +94,66 @@ export function defaultPeriod(
   };
 }
 
+export type PeriodPresetKey =
+  | "currentFY"
+  | "thisQuarter"
+  | "previousQuarter"
+  | "currentMonth"
+  | "previousMonth";
+
+export const PERIOD_PRESETS: { key: PeriodPresetKey; label: string }[] = [
+  { key: "currentFY", label: "Current financial year" },
+  { key: "thisQuarter", label: "This quarter" },
+  { key: "previousQuarter", label: "Previous quarter" },
+  { key: "currentMonth", label: "Current month" },
+  { key: "previousMonth", label: "Previous month" },
+];
+
+/**
+ * Quarter boundaries are relative to the company's own financial year, not
+ * the calendar — a July-year company's Q1 is July-September, not January-
+ * March, the same reasoning defaultPeriod already applies to the year itself.
+ * "This quarter"/"current month" run to today, matching defaultPeriod's own
+ * to-date convention; "previous quarter"/"previous month" are the full,
+ * already-closed period, since there is no "to date" for something over.
+ */
+export function periodPreset(
+  key: PeriodPresetKey,
+  startMonth: number
+): { from: string; to: string } {
+  const today = todayLocal();
+  const reference = atNoonUTC(today);
+  const fyStart = financialYearStart(startMonth, reference);
+  const fyStartYear = fyStart.getUTCFullYear();
+
+  if (key === "currentFY") {
+    return { from: isoUTC(fyStart), to: today };
+  }
+
+  if (key === "currentMonth" || key === "previousMonth") {
+    const monthOffset = key === "previousMonth" ? -1 : 0;
+    const start = new Date(Date.UTC(reference.getUTCFullYear(), reference.getUTCMonth() + monthOffset, 1));
+    if (key === "currentMonth") return { from: isoUTC(start), to: today };
+    // Day 0 of the *next* month is JS Date's idiom for "last day of this month".
+    const end = new Date(Date.UTC(reference.getUTCFullYear(), reference.getUTCMonth(), 0));
+    return { from: isoUTC(start), to: isoUTC(end) };
+  }
+
+  // Months elapsed since the FY started, 0-11, then which 3-month block that
+  // falls in (0-3) — quarter start/end fall out of simple month arithmetic
+  // from there, and Date.UTC normalises a month index outside 0-11 into the
+  // correct adjacent year on its own.
+  const monthsSinceFyStart = (reference.getUTCMonth() + 1 - startMonth + 12) % 12;
+  const quarterIndex = Math.floor(monthsSinceFyStart / 3);
+  const quarterMonthOffset = quarterIndex * 3 + (key === "previousQuarter" ? -3 : 0);
+  const qStartMonth0 = startMonth - 1 + quarterMonthOffset; // 0-based month index from Jan of fyStartYear
+
+  const qStart = new Date(Date.UTC(fyStartYear, qStartMonth0, 1));
+  if (key === "thisQuarter") return { from: isoUTC(qStart), to: today };
+  const qEnd = new Date(Date.UTC(fyStartYear, qStartMonth0 + 3, 0));
+  return { from: isoUTC(qStart), to: isoUTC(qEnd) };
+}
+
 /**
  * The last day of the financial year before the one containing today — the
  * natural default to suggest when closing books, since it is the most

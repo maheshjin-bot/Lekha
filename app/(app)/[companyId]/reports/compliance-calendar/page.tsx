@@ -28,10 +28,10 @@ function daysBetween(from: string, to: string): number {
 }
 
 const CATEGORY_TONE: Record<string, string> = {
-  GST: "bg-blue-100 text-blue-800 dark:bg-blue-950 dark:text-blue-300",
-  TDS: "bg-violet-100 text-violet-800 dark:bg-violet-950 dark:text-violet-300",
-  TCS: "bg-amber-100 text-amber-900 dark:bg-amber-950 dark:text-amber-300",
-  "Income tax": "bg-emerald-100 text-emerald-800 dark:bg-emerald-950 dark:text-emerald-300",
+  GST: "bg-blue-100 text-blue-800  ",
+  TDS: "bg-violet-100 text-violet-800  ",
+  TCS: "bg-warning-soft text-warning",
+  "Income tax": "bg-success-soft text-success",
 };
 
 export default async function ComplianceCalendarPage({
@@ -74,7 +74,7 @@ export default async function ComplianceCalendarPage({
     >
       <table className="w-full min-w-[680px] text-sm">
         <thead>
-          <tr className="border-b border-zinc-200 text-left dark:border-zinc-800">
+          <tr className="border-b border-border text-left">
             <th className={th}>Due</th>
             <th className={th}>In</th>
             <th className={th}>Category</th>
@@ -85,7 +85,7 @@ export default async function ComplianceCalendarPage({
         <tbody>
           {items.length === 0 && (
             <tr>
-              <td colSpan={5} className="px-4 py-12 text-center text-zinc-500">
+              <td colSpan={5} className="px-4 py-12 text-center text-ink-faint">
                 {company?.compliance_mode === "books_only"
                   ? "This company is in books-only mode, so no statutory return dates apply. Switch to compliance mode in Settings to see them."
                   : "Nothing due in this window — check GST registrations, TAN and module settings if that looks wrong."}
@@ -95,7 +95,7 @@ export default async function ComplianceCalendarPage({
           {items.map((r, i) => (
             <tr
               key={`${r.due_date}-${r.label}-${i}`}
-              className="border-b border-zinc-100 last:border-0 dark:border-zinc-800/60"
+              className="border-b border-border last:border-0"
             >
               <td className={td + " whitespace-nowrap font-medium tabular-nums"}>{r.due_date}</td>
               <td
@@ -103,8 +103,8 @@ export default async function ComplianceCalendarPage({
                   td +
                   " whitespace-nowrap tabular-nums " +
                   (r.daysLeft <= DUE_SOON_WINDOW_DAYS
-                    ? "font-semibold text-amber-800 dark:text-amber-300"
-                    : "text-zinc-500")
+                    ? "font-semibold text-warning"
+                    : "text-ink-faint")
                 }
               >
                 {r.daysLeft === 0 ? "today" : r.daysLeft === 1 ? "1 day" : `${r.daysLeft} days`}
@@ -114,20 +114,20 @@ export default async function ComplianceCalendarPage({
                   className={
                     "rounded px-2 py-0.5 text-xs font-medium " +
                     (CATEGORY_TONE[r.category ?? ""] ??
-                      "bg-zinc-100 text-zinc-700 dark:bg-zinc-800 dark:text-zinc-300")
+                      "bg-surface-2 text-ink-soft  ")
                   }
                 >
                   {r.category}
                 </span>
               </td>
               <td className={td + " font-medium"}>{r.label}</td>
-              <td className={td + " text-zinc-600 dark:text-zinc-400"}>{r.detail}</td>
+              <td className={td + " text-ink-soft "}>{r.detail}</td>
             </tr>
           ))}
         </tbody>
       </table>
 
-      <p className="border-t border-zinc-200 px-4 py-3 text-xs text-zinc-500 dark:border-zinc-800">
+      <p className="border-t border-border px-4 py-3 text-xs text-ink-faint">
         Every date here is computed from a formula (Nth of the month after a
         period), not looked up, and always follows the calendar April–March
         year regardless of this company&rsquo;s own financial year setting —

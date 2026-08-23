@@ -20,7 +20,7 @@ export default async function EditVoucherPage({
 
   if (!voucher) notFound();
 
-  const [{ data: entries }, { data: ledgers }, { data: branches }, { data: tdsSections }] =
+  const [{ data: entries }, { data: ledgers }, { data: branches }, { data: tdsSections }, { data: tdsPayableMap }] =
     await Promise.all([
       supabase
         .from("voucher_entries")
@@ -45,21 +45,31 @@ export default async function EditVoucherPage({
         .select("section_code, description, rate_percent")
         .eq("is_active", true)
         .order("sort_order"),
+      // Company-wide (gst_registration_id null), same lookup shape the print
+      // page already uses for tax_ledger_map — RLS-gated direct select,
+      // rather than a dedicated RPC wrapper.
+      supabase
+        .from("tax_ledger_map")
+        .select("ledger_id")
+        .eq("company_id", companyId)
+        .eq("purpose", "tds_payable")
+        .is("gst_registration_id", null)
+        .maybeSingle(),
     ]);
 
   return (
     <main className="mx-auto max-w-5xl px-6 py-10">
       <Link
         href={`/${companyId}/vouchers/${voucherId}`}
-        className="text-sm text-zinc-600 underline underline-offset-4 hover:text-zinc-900 dark:text-zinc-400 dark:hover:text-zinc-100"
+        className="text-sm text-ink-soft underline underline-offset-4 hover:text-ink"
       >
         ← Back to voucher
       </Link>
 
-      <h1 className="mt-6 text-2xl font-semibold tracking-tight">
+      <h1 className="mt-6 font-display text-2xl font-semibold tracking-tight text-ink">
         Edit <span className="font-mono">{voucher.voucher_number}</span>
       </h1>
-      <p className="mt-1.5 text-sm text-zinc-600 dark:text-zinc-400">
+      <p className="mt-1.5 text-sm text-ink-soft">
         Replacing the lines rewrites the whole voucher. Every change is recorded
         in the audit trail with a before and after snapshot.
       </p>
@@ -79,6 +89,7 @@ export default async function EditVoucherPage({
         }))}
         branches={branches ?? []}
         tdsSections={tdsSections ?? []}
+        tdsPayableLedgerId={tdsPayableMap?.ledger_id ?? null}
         existing={{
           id: voucher.id,
           voucherNumber: voucher.voucher_number,

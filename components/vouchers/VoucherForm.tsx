@@ -117,12 +117,14 @@ export function VoucherForm({
   ledgers,
   branches,
   tdsSections = [],
+  tdsPayableLedgerId = null,
   existing,
 }: {
   companyId: string;
   ledgers: Ledger[];
   branches: Branch[];
   tdsSections?: TdsSection[];
+  tdsPayableLedgerId?: string | null;
   existing?: ExistingVoucher;
 }) {
   const router = useRouter();
@@ -173,15 +175,15 @@ export function VoucherForm({
 
   // Shrinks the deductee's line to the net amount and inserts a new TDS-payable
   // line right after it, on the same side (crediting the deductee less means
-  // crediting something else more). The ledger for that new line is left for
-  // the preparer to pick — this app doesn't auto-select a "TDS Payable"
-  // ledger the way GST auto-posts through tax_ledger_map, since which ledger
-  // that should be varies far more than it does for a fixed GST rate account.
+  // crediting something else more). Pre-selects the company's "TDS Payable"
+  // ledger (0030, wired the same way GST auto-posts through tax_ledger_map)
+  // when one was resolved server-side; falls back to blank — still editable
+  // and removable exactly as before — if a company somehow predates it.
   function splitLineForTds(i: number, suggestion: NonNullable<ReturnType<typeof tdsSuggestion>>) {
     setLines((prev) => {
       const line = prev[i];
       const tdsLine: Line = {
-        ledgerId: "",
+        ledgerId: tdsPayableLedgerId ?? "",
         side: line.side,
         amount: String(suggestion.tdsAmount),
         narration: `TDS ${suggestion.sectionCode}${suggestion.usingLdc ? " (LDC rate)" : ""}`,
@@ -261,7 +263,7 @@ export function VoucherForm({
   }
 
   const field =
-    "rounded-md border border-zinc-300 bg-white px-3 py-2 text-sm outline-none focus-visible:ring-2 focus-visible:ring-emerald-600 dark:border-zinc-700 dark:bg-zinc-900";
+    "rounded-lg border border-border-strong bg-surface px-3 py-2 text-sm text-ink outline-none focus-visible:border-accent focus-visible:ring-2 focus-visible:ring-accent/30";
 
   return (
     <form onSubmit={onSubmit} className="mt-8">
@@ -314,7 +316,7 @@ export function VoucherForm({
 
         <label className="flex flex-col gap-1.5">
           <span className="text-sm font-medium">
-            Reference <span className="font-normal text-zinc-500">optional</span>
+            Reference <span className="font-normal text-ink-faint">optional</span>
           </span>
           <input
             value={reference}
@@ -325,10 +327,10 @@ export function VoucherForm({
         </label>
       </div>
 
-      <div className="mt-6 overflow-x-auto rounded-lg border border-zinc-200 bg-white dark:border-zinc-800 dark:bg-zinc-900">
+      <div className="mt-6 overflow-x-auto rounded-lg border border-border bg-surface">
         <table className="w-full min-w-[640px] text-sm">
           <thead>
-            <tr className="border-b border-zinc-200 text-left text-[11px] uppercase tracking-wide text-zinc-500 dark:border-zinc-800">
+            <tr className="border-b border-border text-left text-[11px] uppercase tracking-wide text-ink-faint">
               <th className="px-3 py-2.5 font-medium">Ledger</th>
               <th className="w-24 px-3 py-2.5 font-medium">Dr / Cr</th>
               <th className="w-40 px-3 py-2.5 text-right font-medium">Amount</th>
@@ -355,12 +357,12 @@ export function VoucherForm({
 
               return (
                 <Fragment key={i}>
-                  <tr className="border-b border-zinc-100 dark:border-zinc-800/60">
+                  <tr className="border-b border-border">
                     <td className="px-3 py-2">
                       <select
                         value={line.ledgerId}
                         onChange={(e) => update(i, { ledgerId: e.target.value })}
-                        className="w-full rounded border border-transparent bg-transparent px-2 py-1.5 outline-none focus-visible:border-zinc-300 focus-visible:ring-2 focus-visible:ring-emerald-600 dark:focus-visible:border-zinc-700"
+                        className="w-full rounded border border-transparent bg-transparent px-2 py-1.5 outline-none focus-visible:border-accent focus-visible:ring-2 focus-visible:ring-accent/30"
                       >
                         <option value="">Select a ledger…</option>
                         {ledgers.map((l) => (
@@ -374,7 +376,7 @@ export function VoucherForm({
                       <select
                         value={line.side}
                         onChange={(e) => update(i, { side: e.target.value as "dr" | "cr" })}
-                        className="w-full rounded border border-transparent bg-transparent px-2 py-1.5 font-medium outline-none focus-visible:border-zinc-300 focus-visible:ring-2 focus-visible:ring-emerald-600 dark:focus-visible:border-zinc-700"
+                        className="w-full rounded border border-transparent bg-transparent px-2 py-1.5 font-medium outline-none focus-visible:border-accent focus-visible:ring-2 focus-visible:ring-accent"
                       >
                         <option value="dr">Dr</option>
                         <option value="cr">Cr</option>
@@ -386,14 +388,14 @@ export function VoucherForm({
                         value={line.amount}
                         onChange={(e) => update(i, { amount: e.target.value })}
                         onKeyDown={(e) => onAmountKeyDown(e, i)}
-                        className="w-full rounded border border-transparent bg-transparent px-2 py-1.5 text-right tabular-nums outline-none focus-visible:border-zinc-300 focus-visible:ring-2 focus-visible:ring-emerald-600 dark:focus-visible:border-zinc-700"
+                        className="w-full rounded border border-transparent bg-transparent px-2 py-1.5 text-right tabular-nums outline-none focus-visible:border-accent focus-visible:ring-2 focus-visible:ring-accent font-mono"
                       />
                     </td>
                     <td className="px-3 py-2">
                       <input
                         value={line.narration}
                         onChange={(e) => update(i, { narration: e.target.value })}
-                        className="w-full rounded border border-transparent bg-transparent px-2 py-1.5 outline-none focus-visible:border-zinc-300 focus-visible:ring-2 focus-visible:ring-emerald-600 dark:focus-visible:border-zinc-700"
+                        className="w-full rounded border border-transparent bg-transparent px-2 py-1.5 outline-none focus-visible:border-accent focus-visible:ring-2 focus-visible:ring-accent/30"
                       />
                     </td>
                     <td className="px-2 py-2 text-center">
@@ -402,7 +404,7 @@ export function VoucherForm({
                           type="button"
                           onClick={() => removeLine(i)}
                           aria-label={`Remove line ${i + 1}`}
-                          className="rounded px-1.5 py-0.5 text-zinc-400 transition hover:bg-zinc-100 hover:text-zinc-700 dark:hover:bg-zinc-800"
+                          className="rounded px-1.5 py-0.5 text-ink-faint transition-colors hover:bg-surface-2 hover:text-ink-soft"
                         >
                           ×
                         </button>
@@ -410,8 +412,8 @@ export function VoucherForm({
                     </td>
                   </tr>
                   {suggestion && (
-                    <tr className="border-b border-zinc-100 bg-amber-50/60 dark:border-zinc-800/60 dark:bg-amber-950/20">
-                      <td colSpan={5} className="px-3 py-1.5 text-xs text-amber-900 dark:text-amber-200">
+                    <tr className="border-b border-border bg-warning-soft">
+                      <td colSpan={5} className="px-3 py-1.5 text-xs text-warning">
                         Sec {suggestion.sectionCode}
                         {suggestion.usingLdc ? " (LDC rate)" : ""} at {suggestion.rate}% →
                         TDS {formatINR(suggestion.tdsAmount)}, net{" "}
@@ -421,7 +423,7 @@ export function VoucherForm({
                         <button
                           type="button"
                           onClick={() => splitLineForTds(i, suggestion)}
-                          className="ml-1 underline underline-offset-2 hover:text-amber-950 dark:hover:text-amber-100"
+                          className="ml-1 underline underline-offset-2 hover:text-warning"
                         >
                           Split line
                         </button>
@@ -433,17 +435,17 @@ export function VoucherForm({
             })}
           </tbody>
           <tfoot>
-            <tr className="border-t border-zinc-200 bg-zinc-50 text-sm font-medium dark:border-zinc-800 dark:bg-zinc-800/50">
+            <tr className="border-t border-border bg-bg text-sm font-medium">
               <td className="px-3 py-2.5" colSpan={2}>
                 <button
                   type="button"
                   onClick={addLine}
-                  className="rounded px-2 py-1 text-xs text-emerald-800 underline underline-offset-4 dark:text-emerald-400"
+                  className="rounded px-2 py-1 text-xs text-accent underline underline-offset-4"
                 >
                   Add line
                 </button>
               </td>
-              <td className="px-3 py-2.5 text-right tabular-nums">
+              <td className="px-3 py-2.5 text-right tabular-nums font-mono">
                 <div>{formatINR(totals.dr / 100, { showZero: true })} Dr</div>
                 <div>{formatINR(totals.cr / 100, { showZero: true })} Cr</div>
               </td>
@@ -452,8 +454,8 @@ export function VoucherForm({
                   className={
                     "rounded px-2 py-1 text-xs font-medium " +
                     (totals.balanced
-                      ? "bg-emerald-100 text-emerald-800 dark:bg-emerald-950 dark:text-emerald-300"
-                      : "bg-amber-100 text-amber-900 dark:bg-amber-950 dark:text-amber-300")
+                      ? "bg-success-soft text-success"
+                      : "bg-warning-soft text-warning")
                   }
                 >
                   {totals.balanced
@@ -478,13 +480,13 @@ export function VoucherForm({
       </label>
 
       {error && (
-        <p className="mt-4 rounded-md bg-red-50 px-3 py-2 text-sm text-red-700 dark:bg-red-950 dark:text-red-300">
+        <p className="mt-4 rounded-md bg-error-soft px-3 py-2 text-sm text-error">
           {error}
         </p>
       )}
 
       {isEdit && (
-        <p className="mt-4 rounded-md border border-zinc-200 bg-zinc-50 px-3 py-2 text-xs text-zinc-600 dark:border-zinc-800 dark:bg-zinc-900 dark:text-zinc-400">
+        <p className="mt-4 rounded-md border border-border bg-bg px-3 py-2 text-xs text-ink-soft">
           The date must stay inside financial year {existing!.financialYearLabel}.
           This voucher&rsquo;s number belongs to that series and may already be
           printed on a document sent to the other party — the database refuses
@@ -495,7 +497,7 @@ export function VoucherForm({
       <button
         type="submit"
         disabled={busy || !totals.balanced}
-        className="mt-5 rounded-md bg-emerald-800 px-4 py-2 text-sm font-medium text-white transition hover:bg-emerald-700 disabled:opacity-50 dark:bg-emerald-700 dark:hover:bg-emerald-600"
+        className="mt-5 rounded-lg bg-accent px-4 py-2 text-sm font-semibold text-accent-ink transition-colors hover:opacity-90 disabled:opacity-50"
       >
         {busy ? "Saving…" : isEdit ? "Save changes" : "Save voucher"}
       </button>

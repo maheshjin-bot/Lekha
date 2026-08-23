@@ -175,7 +175,7 @@ export function ReconciliationScreen({
   }
 
   const field =
-    "rounded-md border border-zinc-300 bg-white px-3 py-2 text-sm outline-none focus-visible:ring-2 focus-visible:ring-emerald-600 dark:border-zinc-700 dark:bg-zinc-900";
+    "rounded-lg border border-border-strong bg-surface px-3 py-2 text-sm text-ink outline-none focus-visible:border-accent focus-visible:ring-2 focus-visible:ring-accent/30";
 
   return (
     <div className="mt-8">
@@ -199,25 +199,25 @@ export function ReconciliationScreen({
 
       {summary && (
         <div className="mt-4 grid gap-3 sm:grid-cols-3">
-          <div className="rounded-lg border border-zinc-200 bg-white p-4 dark:border-zinc-800 dark:bg-zinc-900">
-            <div className="text-[11px] uppercase tracking-wide text-zinc-500">Book balance</div>
-            <div className="mt-1 text-lg font-semibold tabular-nums">
+          <div className="rounded-lg border border-border bg-surface p-4">
+            <div className="text-[11px] uppercase tracking-wide text-ink-faint">Book balance</div>
+            <div className="mt-1 text-lg font-semibold tabular-nums font-mono">
               {formatINR(summary.book_balance, { showZero: true })}
             </div>
           </div>
-          <div className="rounded-lg border border-zinc-200 bg-white p-4 dark:border-zinc-800 dark:bg-zinc-900">
-            <div className="text-[11px] uppercase tracking-wide text-zinc-500">
+          <div className="rounded-lg border border-border bg-surface p-4">
+            <div className="text-[11px] uppercase tracking-wide text-ink-faint">
               Not yet on statement
             </div>
-            <div className="mt-1 text-lg font-semibold tabular-nums">
+            <div className="mt-1 text-lg font-semibold tabular-nums font-mono">
               {summary.unmatched_book_count} entr{summary.unmatched_book_count === 1 ? "y" : "ies"}
             </div>
           </div>
-          <div className="rounded-lg border border-amber-300 bg-amber-50 p-4 dark:border-amber-900 dark:bg-amber-950/40">
-            <div className="text-[11px] uppercase tracking-wide text-amber-800 dark:text-amber-300">
+          <div className="rounded-lg border border-warning/30 bg-warning-soft p-4">
+            <div className="text-[11px] uppercase tracking-wide text-warning">
               Not yet in your books
             </div>
-            <div className="mt-1 text-lg font-semibold tabular-nums">
+            <div className="mt-1 text-lg font-semibold tabular-nums font-mono">
               {summary.unmatched_statement_count} line
               {summary.unmatched_statement_count === 1 ? "" : "s"} ·{" "}
               {formatINR(summary.unmatched_statement_total, { showZero: true })}
@@ -233,7 +233,7 @@ export function ReconciliationScreen({
           type="file"
           accept=".csv,text/csv"
           onChange={(e) => e.target.files?.[0] && onFile(e.target.files[0])}
-          className="text-sm file:mr-3 file:rounded-md file:border file:border-zinc-300 file:bg-white file:px-3 file:py-1.5 file:text-sm dark:file:border-zinc-700 dark:file:bg-zinc-900"
+          className="text-sm file:mr-3 file:rounded-lg file:border file:border-border-strong file:bg-surface file:px-3 file:py-1.5 file:text-sm"
         />
         <button
           type="button"
@@ -245,7 +245,7 @@ export function ReconciliationScreen({
             a.click();
             URL.revokeObjectURL(url);
           }}
-          className="text-sm text-emerald-800 underline underline-offset-4 dark:text-emerald-400"
+          className="text-sm text-accent underline underline-offset-4"
         >
           Download template
         </button>
@@ -253,14 +253,14 @@ export function ReconciliationScreen({
           type="button"
           onClick={runAutoMatch}
           disabled={busy}
-          className="rounded-md border border-zinc-300 px-3 py-1.5 text-sm transition hover:bg-zinc-100 disabled:opacity-50 dark:border-zinc-700 dark:hover:bg-zinc-800"
+          className="rounded-lg border border-border-strong px-3 py-1.5 text-sm transition-colors hover:bg-accent-soft disabled:opacity-50"
         >
           Auto-match exact same-day amounts
         </button>
       </div>
 
       {autoMatchedJustNow !== null && (
-        <p className="mt-2 text-sm text-zinc-600 dark:text-zinc-400">
+        <p className="mt-2 text-sm text-ink-soft">
           {autoMatchedJustNow === 0
             ? "Nothing unambiguous to match automatically."
             : `Matched ${autoMatchedJustNow} pair${autoMatchedJustNow === 1 ? "" : "s"}.`}
@@ -268,13 +268,13 @@ export function ReconciliationScreen({
       )}
 
       {importResult && (
-        <p className="mt-2 rounded-md bg-emerald-50 px-3 py-2 text-sm text-emerald-800 dark:bg-emerald-950 dark:text-emerald-300">
+        <p className="mt-2 rounded-md bg-success-soft px-3 py-2 text-sm text-success">
           Imported {importResult.imported} line{importResult.imported === 1 ? "" : "s"}.
         </p>
       )}
 
       {inference && !inference.certain && !orderConfirmed && (
-        <div className="mt-4 rounded-lg border border-amber-300 bg-amber-50 p-4 dark:border-amber-900 dark:bg-amber-950/40">
+        <div className="mt-4 rounded-lg border border-warning/30 bg-warning-soft p-4">
           <p className="text-sm font-medium">Which way round are these dates?</p>
           {inference.example && (
             <div className="mt-3 grid gap-2 sm:grid-cols-2">
@@ -288,7 +288,7 @@ export function ReconciliationScreen({
                       setDateOrder(order);
                       setOrderConfirmed(true);
                     }}
-                    className="rounded-md border border-zinc-300 bg-white p-3 text-left text-sm transition hover:border-emerald-600 dark:border-zinc-700 dark:bg-zinc-900"
+                    className="rounded-md border border-border-strong bg-surface p-3 text-left text-sm transition hover:border-accent"
                   >
                     {order === "dmy" ? "Day first" : "Month first"} —{" "}
                     <span className="font-mono">{example}</span> is{" "}
@@ -303,10 +303,10 @@ export function ReconciliationScreen({
 
       {preview && (inference?.certain || orderConfirmed) && (
         <div className="mt-4">
-          <div className="overflow-x-auto rounded-lg border border-zinc-200 bg-white dark:border-zinc-800 dark:bg-zinc-900">
+          <div className="overflow-x-auto rounded-lg border border-border bg-surface">
             <table className="w-full min-w-[620px] text-sm">
               <thead>
-                <tr className="border-b border-zinc-200 text-left text-[11px] uppercase tracking-wide text-zinc-500 dark:border-zinc-800">
+                <tr className="border-b border-border text-left text-[11px] uppercase tracking-wide text-ink-faint">
                   <th className="px-3 py-2 font-medium">Date</th>
                   <th className="px-3 py-2 font-medium">Description</th>
                   <th className="px-3 py-2 text-right font-medium">Amount</th>
@@ -315,13 +315,13 @@ export function ReconciliationScreen({
               </thead>
               <tbody>
                 {preview.slice(0, 100).map((r) => (
-                  <tr key={r.rowNumber} className="border-b border-zinc-100 dark:border-zinc-800/60">
-                    <td className="px-3 py-1.5 tabular-nums">{r.date ?? "—"}</td>
+                  <tr key={r.rowNumber} className="border-b border-border">
+                    <td className="px-3 py-1.5 tabular-nums font-mono">{r.date ?? "—"}</td>
                     <td className="px-3 py-1.5">{r.description || "—"}</td>
-                    <td className="px-3 py-1.5 text-right tabular-nums">
+                    <td className="px-3 py-1.5 text-right tabular-nums font-mono">
                       {r.amount ? `${r.side === "debit" ? "Dr" : "Cr"} ${formatINR(r.amount)}` : "—"}
                     </td>
-                    <td className="px-3 py-1.5 text-amber-800 dark:text-amber-300">
+                    <td className="px-3 py-1.5 text-warning">
                       {r.issues.join(" ")}
                       {r.possibleDuplicate && "Looks already imported."}
                     </td>
@@ -334,7 +334,7 @@ export function ReconciliationScreen({
             type="button"
             onClick={commitImport}
             disabled={busy || preview.every((r) => r.issues.length > 0)}
-            className="mt-3 rounded-md bg-emerald-800 px-4 py-2 text-sm font-medium text-white transition hover:bg-emerald-700 disabled:opacity-50 dark:bg-emerald-700 dark:hover:bg-emerald-600"
+            className="mt-3 rounded-lg bg-accent px-4 py-2 text-sm font-semibold text-accent-ink transition-colors hover:opacity-90 disabled:opacity-50"
           >
             Import {preview.filter((r) => r.issues.length === 0).length} line
             {preview.filter((r) => r.issues.length === 0).length === 1 ? "" : "s"}
@@ -343,7 +343,7 @@ export function ReconciliationScreen({
       )}
 
       {error && (
-        <p className="mt-4 rounded-md bg-red-50 px-3 py-2 text-sm text-red-700 dark:bg-red-950 dark:text-red-300">
+        <p className="mt-4 rounded-md bg-error-soft px-3 py-2 text-sm text-error">
           {error}
         </p>
       )}
@@ -354,9 +354,9 @@ export function ReconciliationScreen({
           <h2 className="mb-2 text-sm font-semibold">
             On the statement, not in your books ({unmatchedLines.length})
           </h2>
-          <div className="max-h-[480px] overflow-y-auto rounded-lg border border-zinc-200 bg-white dark:border-zinc-800 dark:bg-zinc-900">
+          <div className="max-h-[480px] overflow-y-auto rounded-lg border border-border bg-surface">
             {unmatchedLines.length === 0 && (
-              <p className="px-4 py-8 text-center text-sm text-zinc-500">Nothing unmatched.</p>
+              <p className="px-4 py-8 text-center text-sm text-ink-faint">Nothing unmatched.</p>
             )}
             {unmatchedLines.map((l) => (
               <button
@@ -364,17 +364,17 @@ export function ReconciliationScreen({
                 type="button"
                 onClick={() => setSelectedLine(selectedLine === l.id ? null : l.id)}
                 className={
-                  "flex w-full items-center justify-between gap-3 border-b border-zinc-100 px-4 py-2.5 text-left text-sm last:border-0 dark:border-zinc-800/60 " +
+                  "flex w-full items-center justify-between gap-3 border-b border-border px-4 py-2.5 text-left text-sm last:border-0  " +
                   (selectedLine === l.id
-                    ? "bg-emerald-50 dark:bg-emerald-950/40"
-                    : "hover:bg-zinc-50 dark:hover:bg-zinc-800/60")
+                    ? "bg-accent-soft"
+                    : "hover:bg-surface-2")
                 }
               >
                 <span>
-                  <span className="tabular-nums text-zinc-500">{l.txn_date}</span>{" "}
+                  <span className="tabular-nums text-ink-faint font-mono">{l.txn_date}</span>{" "}
                   {l.description ?? "—"}
                 </span>
-                <span className="shrink-0 tabular-nums font-medium">
+                <span className="shrink-0 tabular-nums font-medium font-mono">
                   {l.credit_amount > 0 ? "Cr " : "Dr "}
                   {formatINR(l.credit_amount || l.debit_amount)}
                 </span>
@@ -386,11 +386,11 @@ export function ReconciliationScreen({
         <section>
           <h2 className="mb-2 text-sm font-semibold">
             In your books, not on the statement ({unmatchedEntries.length})
-            {line && <span className="ml-2 font-normal text-zinc-500">— pick the match</span>}
+            {line && <span className="ml-2 font-normal text-ink-faint">— pick the match</span>}
           </h2>
-          <div className="max-h-[480px] overflow-y-auto rounded-lg border border-zinc-200 bg-white dark:border-zinc-800 dark:bg-zinc-900">
+          <div className="max-h-[480px] overflow-y-auto rounded-lg border border-border bg-surface">
             {unmatchedEntries.length === 0 && (
-              <p className="px-4 py-8 text-center text-sm text-zinc-500">Nothing unmatched.</p>
+              <p className="px-4 py-8 text-center text-sm text-ink-faint">Nothing unmatched.</p>
             )}
             {unmatchedEntries.map((e) => {
               const canMatch = line ? eligible(e) : true;
@@ -401,20 +401,20 @@ export function ReconciliationScreen({
                   disabled={!line || !canMatch || busy}
                   onClick={() => confirmMatch(e.id)}
                   className={
-                    "flex w-full items-center justify-between gap-3 border-b border-zinc-100 px-4 py-2.5 text-left text-sm last:border-0 dark:border-zinc-800/60 " +
+                    "flex w-full items-center justify-between gap-3 border-b border-border px-4 py-2.5 text-left text-sm last:border-0  " +
                     (!line
-                      ? "text-zinc-400"
+                      ? "text-ink-faint"
                       : canMatch
-                        ? "hover:bg-emerald-50 dark:hover:bg-emerald-950/40"
+                        ? "hover:bg-accent-soft"
                         : "opacity-30")
                   }
                 >
                   <span>
-                    <span className="tabular-nums text-zinc-500">{e.voucher_date}</span>{" "}
+                    <span className="tabular-nums text-ink-faint font-mono">{e.voucher_date}</span>{" "}
                     <span className="font-mono text-xs">{e.voucher_number}</span>{" "}
                     {e.narration ?? ""}
                   </span>
-                  <span className="shrink-0 tabular-nums font-medium">
+                  <span className="shrink-0 tabular-nums font-medium font-mono">
                     {e.debit_amount > 0 ? "Dr " : "Cr "}
                     {formatINR(e.debit_amount || e.credit_amount)}
                   </span>
@@ -426,7 +426,7 @@ export function ReconciliationScreen({
       </div>
 
       {line && (
-        <p className="mt-3 text-xs text-zinc-500">
+        <p className="mt-3 text-xs text-ink-faint">
           Selected the {line.credit_amount > 0 ? "credit" : "debit"} of{" "}
           {formatINR(line.credit_amount || line.debit_amount)} on {line.txn_date}. Only
           entries on the opposite side with the same amount are enabled on the
