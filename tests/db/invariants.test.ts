@@ -2004,6 +2004,55 @@ describeDb(`conditional module resolution (${hasDb ? "live" : noDbReason})`, () 
 });
 
 // ---------------------------------------------------------------------------
+// Payroll compliance calendar (0084)
+// ---------------------------------------------------------------------------
+describeDb(`payroll compliance calendar (${hasDb ? "live" : noDbReason})`, () => {
+  it("PF and ESI fall on the 15th, and the ESI half-yearly return does NOT", async () => {
+    // The monthly obligations are 15 days after the wage month. The half-yearly
+    // Return of Contribution is 42 days after the contribution period, which
+    // lands on 11 November and 12 May — dates that fall out of no monthly rule.
+    // Anyone "simplifying" the half-yearly row onto the 15th would make the
+    // reminder a fortnight late, so both halves are pinned here.
+    //
+    // No grace period is allowed for either: the concessional five days on PF
+    // were withdrawn with effect from the wage month of February 2016.
+    const rows = await sql(`
+      with cal as (
+        select c.name, x.*
+          from public.companies c
+          cross join lateral public.get_compliance_calendar(c.id, '2026-04-01', '2028-03-31') x
+         where x.category = 'Payroll'
+      )
+      select name, label, due_date
+        from cal
+       where (label like '%half-yearly%'
+              and to_char(due_date, 'MM-DD') not in ('11-11', '05-12'))
+          or (label not like '%half-yearly%' and extract(day from due_date) <> 15)
+       order by 1, 3
+    `);
+    expect(rows, `payroll due dates that are not the statutory ones:\n${offenders(rows)}`).toEqual([]);
+  });
+
+  it("payroll reminders appear only where the payroll_statutory module is active", async () => {
+    // These rows are gated on a CONDITIONAL module, which until 0083 could
+    // never activate at all — so the calendar would have stayed empty for
+    // everyone even after the rows were added. Guards both directions of that
+    // coupling.
+    const rows = await sql(`
+      select c.name
+        from public.companies c
+       where not app_private.module_active(c.id, 'payroll_statutory')
+         and exists (
+           select 1 from public.get_compliance_calendar(c.id, '2026-04-01', '2028-03-31') x
+            where x.category = 'Payroll'
+         )
+       order by 1
+    `);
+    expect(rows, `payroll reminders shown without the module:\n${offenders(rows)}`).toEqual([]);
+  });
+});
+
+// ---------------------------------------------------------------------------
 // Tenancy: what the catalog can prove without fixtures
 // ---------------------------------------------------------------------------
 describeDb(`tenancy and RLS, catalog-level (${hasDb ? "live" : noDbReason})`, () => {
