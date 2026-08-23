@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { createClient } from "@/lib/supabase/server";
 import { EmployeeManager } from "@/components/employees/EmployeeManager";
+import { financialYearLabel } from "@/lib/utils/period";
 
 export default async function EmployeesPage({
   params,
@@ -8,8 +9,14 @@ export default async function EmployeesPage({
   const { companyId } = await params;
   const supabase = await createClient();
 
-  const [{ data: employees }, { data: structures }, { data: modules }, { data: branches }] =
-    await Promise.all([
+  const [
+    { data: employees },
+    { data: structures },
+    { data: modules },
+    { data: branches },
+    { data: company },
+    { data: taxDeclarations },
+  ] = await Promise.all([
     supabase
       .from("employees")
       .select("id, name, pan, uan, esi_number, date_of_joining, date_of_leaving, is_active, branch_id")
@@ -29,6 +36,16 @@ export default async function EmployeesPage({
       .eq("company_id", companyId)
       .eq("is_active", true)
       .order("is_head_office", { ascending: false }),
+    supabase.from("companies").select("financial_year_start_month").eq("id", companyId).single(),
+    // Sec 115BAC(1A): the regime each employee declared, per financial year.
+    // Read here only for the "declared for the current FY?" badge/prefill —
+    // the declaration form itself writes through employee_tax_declarations
+    // directly from EmployeeManager.
+    supabase
+      .from("employee_tax_declarations")
+      .select("employee_id, financial_year_label, regime")
+      .eq("company_id", companyId)
+      .order("financial_year_label", { ascending: false }),
   ]);
 
   const payrollOn = (modules ?? []).some((m) => m.code === "payroll" && m.active);
@@ -78,7 +95,16 @@ export default async function EmployeesPage({
           </p>
         </div>
       )}
-      <EmployeeManager companyId={companyId} employees={rows} branches={branches ?? []} />
+      <EmployeeManager
+        companyId={companyId}
+        employees={rows}
+        branches={branches ?? []}
+        // regime is a checked text column ('old' | 'new'), not a generated
+        // enum, so Supabase's typegen widens it to `string` — the CHECK
+        // constraint is what actually guarantees the narrower shape.
+        taxDeclarations={(taxDeclarations ?? []) as { employee_id: string; financial_year_label: string; regime: "old" | "new" }[]}
+        currentFinancialYearLabel={financialYearLabel(company?.financial_year_start_month ?? 4)}
+      />
     </main>
   );
 }
