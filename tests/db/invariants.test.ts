@@ -1526,6 +1526,62 @@ describeDb(`closing stock posting (${hasDb ? "live" : noDbReason})`, () => {
 });
 
 // ---------------------------------------------------------------------------
+// Depreciation posting (0077)
+// ---------------------------------------------------------------------------
+describeDb(`depreciation posting (${hasDb ? "live" : noDbReason})`, () => {
+  it("the depreciation RPCs are not reachable by anon or public", async () => {
+    const rows = await sql(`
+      select p.proname, r.rolname
+        from pg_proc p
+        join pg_namespace n on n.oid = p.pronamespace
+        cross join (values ('anon'), ('public')) as r(rolname)
+       where n.nspname = 'public'
+         and p.proname in ('post_depreciation', 'get_fixed_asset_book_reconciliation')
+         and has_function_privilege(r.rolname, p.oid, 'EXECUTE')
+    `);
+    expect(rows, `depreciation function reachable by a role it shouldn't be:\n${offenders(rows)}`).toEqual([]);
+  });
+
+  it("once depreciation has been posted, the ledger tracks the register exactly", async () => {
+    // Only checks companies that have actually posted something — a company
+    // that has never run it is not in breach of anything, it just has no
+    // depreciation in its books yet. The point of the check is that posting
+    // converges on the register rather than drifting from it, whatever
+    // cadence it is run at.
+    const rows = await sql(`
+      with d as (
+        select c.id, c.name, dt::date as as_at
+          from public.companies c
+          cross join lateral (
+            select generate_series(date '2026-06-01', date '2028-06-01', interval '4 month') as dt
+          ) g
+      )
+      select d.name, d.as_at, rec.register_accumulated, rec.books_accumulated, rec.accumulated_gap
+        from d
+        cross join lateral public.get_fixed_asset_book_reconciliation(d.id, d.as_at) rec
+       where rec.books_accumulated <> 0
+         and round(abs(rec.accumulated_gap), 2) > 0.01
+       order by 1, 2
+    `);
+    expect(rows, `posted depreciation has drifted from the register:\n${offenders(rows)}`).toEqual([]);
+  });
+
+  it("Accumulated Depreciation is a contra inside the asset block, not an expense or a liability", async () => {
+    // It has to sit under a fixed_asset nature for the balance sheet to net it
+    // against gross cost. Parked anywhere else it would either disappear from
+    // the asset block or double-count as a liability.
+    const rows = await sql(`
+      select l.name, g.name as group_name, g.nature
+        from public.ledgers l
+        join public.account_groups g on g.id = l.group_id
+       where l.name = 'Accumulated Depreciation'
+         and g.nature <> 'fixed_asset'
+    `);
+    expect(rows, `Accumulated Depreciation is in the wrong group:\n${offenders(rows)}`).toEqual([]);
+  });
+});
+
+// ---------------------------------------------------------------------------
 // Tenancy: what the catalog can prove without fixtures
 // ---------------------------------------------------------------------------
 describeDb(`tenancy and RLS, catalog-level (${hasDb ? "live" : noDbReason})`, () => {

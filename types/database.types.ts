@@ -3838,6 +3838,17 @@ export type Database = {
           total_drawing_power: number
         }[]
       }
+      get_fixed_asset_book_reconciliation: {
+        Args: { p_as_at?: string; p_company_id: string }
+        Returns: {
+          accumulated_gap: number
+          books_accumulated: number
+          books_gross: number
+          gross_gap: number
+          register_accumulated: number
+          register_gross: number
+        }[]
+      }
       get_fixed_asset_register: {
         Args: { p_as_at?: string; p_company_id: string }
         Returns: {
@@ -4383,6 +4394,15 @@ export type Database = {
         Returns: undefined
       }
       post_closing_stock: {
+        Args: {
+          p_as_at: string
+          p_branch_id: string
+          p_company_id: string
+          p_narration?: string
+        }
+        Returns: string
+      }
+      post_depreciation: {
         Args: {
           p_as_at: string
           p_branch_id: string
