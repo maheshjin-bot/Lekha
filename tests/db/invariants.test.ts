@@ -1790,6 +1790,50 @@ describeDb(`RLS-bypassing grants (${hasDb ? "live" : noDbReason})`, () => {
 });
 
 // ---------------------------------------------------------------------------
+// Audit trail: the log the statute requires
+// ---------------------------------------------------------------------------
+describeDb(`audit trail (${hasDb ? "live" : noDbReason})`, () => {
+  it("every audit_log partition carries its own RLS and policy", async () => {
+    // This has been a real hole in this database before: RLS on a partitioned
+    // PARENT does not cascade to its partitions, and PostgREST exposes each
+    // partition as its own endpoint — so the whole audit log was once readable
+    // by any authenticated user by querying audit_log_2026_08 directly.
+    // ensure_audit_partition() secures each partition it creates; without that
+    // the hole reopens every month, silently, when the next partition is made.
+    // Filtered to relkind 'r' so indexes (which never carry RLS) are excluded.
+    const rows = await sql(`
+      select c.relname, c.relrowsecurity as rls_enabled,
+             (select count(*) from pg_policies p
+               where p.schemaname = 'public' and p.tablename = c.relname) as policies
+        from pg_class c
+        join pg_namespace n on n.oid = c.relnamespace
+       where n.nspname = 'public'
+         and c.relkind = 'r'
+         and c.relname like 'audit\\_log%'
+         and (not c.relrowsecurity
+              or (select count(*) from pg_policies p
+                   where p.schemaname = 'public' and p.tablename = c.relname) = 0)
+       order by 1
+    `);
+    expect(rows, `audit_log partition readable without a policy:\n${offenders(rows)}`).toEqual([]);
+  });
+
+  it("the audit trail is restricted to admin and auditor", async () => {
+    // A log everybody can browse is worth less than one nobody can alter, and
+    // Rule 3(1) is about the record existing and being unalterable rather than
+    // about it being public. If this policy is ever widened it should be a
+    // deliberate act that fails this test first.
+    const rows = await sql(`
+      select policyname, qual::text
+        from pg_policies
+       where schemaname = 'public' and tablename = 'audit_log'
+         and qual::text not like '%admin%'
+    `);
+    expect(rows, `audit_log policy no longer restricts by role:\n${offenders(rows)}`).toEqual([]);
+  });
+});
+
+// ---------------------------------------------------------------------------
 // Tenancy: what the catalog can prove without fixtures
 // ---------------------------------------------------------------------------
 describeDb(`tenancy and RLS, catalog-level (${hasDb ? "live" : noDbReason})`, () => {
