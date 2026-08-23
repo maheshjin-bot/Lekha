@@ -1391,6 +1391,75 @@ describeDb(`stock valuation (${hasDb ? "live" : noDbReason})`, () => {
 });
 
 // ---------------------------------------------------------------------------
+// Payroll statutory correctness (0075)
+// ---------------------------------------------------------------------------
+describeDb(`payroll statutory correctness (${hasDb ? "live" : noDbReason})`, () => {
+  it("the payroll RPCs are not reachable by anon or public", async () => {
+    // get_payroll_run had to be DROPped and recreated (its return type gained
+    // columns), and a drop takes its grants with it. This is the check that a
+    // re-grant was not forgotten.
+    const rows = await sql(`
+      select p.proname, r.rolname
+        from pg_proc p
+        join pg_namespace n on n.oid = p.pronamespace
+        cross join (values ('anon'), ('public')) as r(rolname)
+       where n.nspname = 'public'
+         and p.proname in ('get_payroll_run', 'post_payroll_run', 'get_salary_tds_estimate')
+         and has_function_privilege(r.rolname, p.oid, 'EXECUTE')
+    `);
+    expect(rows, `payroll function reachable by a role it shouldn't be:\n${offenders(rows)}`).toEqual([]);
+  });
+
+  it("net pay is exactly gross less every statutory deduction, including TDS", async () => {
+    // Before 0075 this identity held only because TDS was absent from it
+    // entirely — the app computed the right withholding and then paid it to
+    // the employee anyway. Runs over a full financial year of months so the
+    // check has something to say as soon as any company has employees.
+    const rows = await sql(`
+      with runs as (
+        select c.name, m.mth, r.*
+          from public.companies c
+          cross join lateral (
+            select generate_series(date '2026-04-01', date '2027-03-01', interval '1 month')::date as mth
+          ) m
+          cross join lateral public.get_payroll_run(c.id, m.mth) r
+      )
+      select name, mth, employee_name, gross_pay, net_pay, tds,
+             round(gross_pay - pf_employee - esi_employee - professional_tax - tds - net_pay, 2) as drift
+        from runs
+       where abs(gross_pay - pf_employee - esi_employee - professional_tax - tds - net_pay) > 0.005
+       order by 1, 2, 3
+    `);
+    expect(rows, `net pay does not reconcile to its deductions:\n${offenders(rows)}`).toEqual([]);
+  });
+
+  it("the PF wage never exceeds the ceiling that applies to it, and never ignores DA", async () => {
+    // Two failure modes in one check. The ceiling is prorated for a part
+    // month, so a half-month employee must not attract a full month's cap;
+    // and the base is basic + DA, which is what the old code got wrong by
+    // reading basic alone.
+    const rows = await sql(`
+      with runs as (
+        select c.name, m.mth, r.*
+          from public.companies c
+          cross join lateral (
+            select generate_series(date '2026-04-01', date '2027-03-01', interval '1 month')::date as mth
+          ) m
+          cross join lateral public.get_payroll_run(c.id, m.mth) r
+      )
+      select name, mth, employee_name, days_paid, days_in_month,
+             basic, dearness_allowance, pf_wage,
+             round(15000 * (days_paid::numeric / days_in_month), 2) as proportionate_ceiling
+        from runs
+       where pf_wage > round(15000 * (days_paid::numeric / days_in_month), 2) + 0.01
+          or pf_wage > basic + dearness_allowance + 0.01
+       order by 1, 2, 3
+    `);
+    expect(rows, `PF wage breaches its ceiling or its own base:\n${offenders(rows)}`).toEqual([]);
+  });
+});
+
+// ---------------------------------------------------------------------------
 // Tenancy: what the catalog can prove without fixtures
 // ---------------------------------------------------------------------------
 describeDb(`tenancy and RLS, catalog-level (${hasDb ? "live" : noDbReason})`, () => {

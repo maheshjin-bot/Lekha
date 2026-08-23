@@ -99,15 +99,28 @@ export default async function PayrollRegisterPage({
   const totals = runs.reduce(
     (acc, r) => ({
       gross: acc.gross + Number(r.gross_pay),
+      pfWage: acc.pfWage + Number(r.pf_wage),
       pfEmployee: acc.pfEmployee + Number(r.pf_employee),
       pfEmployer: acc.pfEmployer + Number(r.pf_employer),
+      edli: acc.edli + Number(r.edli_employer),
       esiEmployee: acc.esiEmployee + Number(r.esi_employee),
       esiEmployer: acc.esiEmployer + Number(r.esi_employer),
       pt: acc.pt + Number(r.professional_tax),
+      tds: acc.tds + Number(r.tds),
       net: acc.net + Number(r.net_pay),
     }),
-    { gross: 0, pfEmployee: 0, pfEmployer: 0, esiEmployee: 0, esiEmployer: 0, pt: 0, net: 0 }
+    {
+      gross: 0, pfWage: 0, pfEmployee: 0, pfEmployer: 0, edli: 0,
+      esiEmployee: 0, esiEmployer: 0, pt: 0, tds: 0, net: 0,
+    }
   );
+
+  // EPF administrative charges (A/c 2) are levied on the ESTABLISHMENT, not
+  // per employee — 0.50% of total EPF wages, minimum ₹500 a month — so they
+  // have no per-employee column to sit in. Mirrored from post_payroll_run so
+  // the register shows the same employer cost the posting will book.
+  const adminCharges = totals.pfWage > 0 ? Math.max(Math.round(totals.pfWage * 0.005 * 100) / 100, 500) : 0;
+  const prorated = runs.filter((r) => Number(r.days_paid) < Number(r.days_in_month));
 
   const base = `/${companyId}/reports/payroll-register`;
 
@@ -156,68 +169,109 @@ export default async function PayrollRegisterPage({
         )}
       </div>
 
-      <table className="w-full min-w-[880px] text-sm">
-        <thead>
-          <tr className="border-b border-border text-left">
-            <th className={th}>Employee</th>
-            <th className={th + " text-right"}>Gross</th>
-            <th className={th + " text-right"}>PF (Emp.)</th>
-            <th className={th + " text-right"}>PF (Empr.)</th>
-            <th className={th + " text-right"}>ESI (Emp.)</th>
-            <th className={th + " text-right"}>ESI (Empr.)</th>
-            <th className={th + " text-right"}>PT</th>
-            <th className={th + " text-right"}>Net pay</th>
-          </tr>
-        </thead>
-        <tbody>
-          {runs.length === 0 && (
-            <tr>
-              <td colSpan={8} className="px-4 py-10 text-center text-ink-faint">
-                No employee had an active salary structure this month.
-              </td>
+      <div className="overflow-x-auto">
+        <table className="w-full min-w-[1080px] text-sm">
+          <thead>
+            <tr className="border-b border-border text-left">
+              <th className={th}>Employee</th>
+              <th className={th + " text-right"}>Days</th>
+              <th className={th + " text-right"}>Gross</th>
+              <th className={th + " text-right"}>PF wage</th>
+              <th className={th + " text-right"}>PF (Emp.)</th>
+              <th className={th + " text-right"}>PF (Empr.)</th>
+              <th className={th + " text-right"}>EDLI</th>
+              <th className={th + " text-right"}>ESI (Emp.)</th>
+              <th className={th + " text-right"}>ESI (Empr.)</th>
+              <th className={th + " text-right"}>PT</th>
+              <th className={th + " text-right"}>TDS</th>
+              <th className={th + " text-right"}>Net pay</th>
             </tr>
-          )}
-          {runs.map((r) => (
-            <tr key={r.employee_id} className="border-b border-border last:border-0">
-              <td className={td}>{r.employee_name}</td>
-              <td className={num}>{formatINR(Number(r.gross_pay), { showZero: true })}</td>
-              <td className={num}>{formatINR(Number(r.pf_employee), { showZero: true })}</td>
-              <td className={num}>{formatINR(Number(r.pf_employer), { showZero: true })}</td>
-              <td className={num}>{formatINR(Number(r.esi_employee), { showZero: true })}</td>
-              <td className={num}>{formatINR(Number(r.esi_employer), { showZero: true })}</td>
-              <td className={num}>{formatINR(Number(r.professional_tax), { showZero: true })}</td>
-              <td className={num + " font-medium"}>{formatINR(Number(r.net_pay), { showZero: true })}</td>
-            </tr>
-          ))}
-          {runs.length > 0 && (
-            <tr className="bg-bg font-semibold">
-              <td className={td}>Total</td>
-              <td className={num}>{formatINR(totals.gross, { showZero: true })}</td>
-              <td className={num}>{formatINR(totals.pfEmployee, { showZero: true })}</td>
-              <td className={num}>{formatINR(totals.pfEmployer, { showZero: true })}</td>
-              <td className={num}>{formatINR(totals.esiEmployee, { showZero: true })}</td>
-              <td className={num}>{formatINR(totals.esiEmployer, { showZero: true })}</td>
-              <td className={num}>{formatINR(totals.pt, { showZero: true })}</td>
-              <td className={num}>{formatINR(totals.net, { showZero: true })}</td>
-            </tr>
-          )}
-        </tbody>
-      </table>
+          </thead>
+          <tbody>
+            {runs.length === 0 && (
+              <tr>
+                <td colSpan={12} className="px-4 py-10 text-center text-ink-faint">
+                  No employee had an active salary structure this month.
+                </td>
+              </tr>
+            )}
+            {runs.map((r) => {
+              const partMonth = Number(r.days_paid) < Number(r.days_in_month);
+              return (
+                <tr key={r.employee_id} className="border-b border-border last:border-0">
+                  <td className={td}>{r.employee_name}</td>
+                  <td className={num}>
+                    {r.days_paid}/{r.days_in_month}
+                    {partMonth && <div className="text-xs text-ink-faint">part month</div>}
+                  </td>
+                  <td className={num}>{formatINR(Number(r.gross_pay), { showZero: true })}</td>
+                  <td className={num}>{formatINR(Number(r.pf_wage), { showZero: true })}</td>
+                  <td className={num}>{formatINR(Number(r.pf_employee), { showZero: true })}</td>
+                  <td className={num}>{formatINR(Number(r.pf_employer), { showZero: true })}</td>
+                  <td className={num}>{formatINR(Number(r.edli_employer), { showZero: true })}</td>
+                  <td className={num}>{formatINR(Number(r.esi_employee), { showZero: true })}</td>
+                  <td className={num}>{formatINR(Number(r.esi_employer), { showZero: true })}</td>
+                  <td className={num}>{formatINR(Number(r.professional_tax), { showZero: true })}</td>
+                  <td className={num}>{formatINR(Number(r.tds), { showZero: true })}</td>
+                  <td className={num + " font-medium"}>{formatINR(Number(r.net_pay), { showZero: true })}</td>
+                </tr>
+              );
+            })}
+            {runs.length > 0 && (
+              <tr className="bg-bg font-semibold">
+                <td className={td}>Total</td>
+                <td className={num}>—</td>
+                <td className={num}>{formatINR(totals.gross, { showZero: true })}</td>
+                <td className={num}>{formatINR(totals.pfWage, { showZero: true })}</td>
+                <td className={num}>{formatINR(totals.pfEmployee, { showZero: true })}</td>
+                <td className={num}>{formatINR(totals.pfEmployer, { showZero: true })}</td>
+                <td className={num}>{formatINR(totals.edli, { showZero: true })}</td>
+                <td className={num}>{formatINR(totals.esiEmployee, { showZero: true })}</td>
+                <td className={num}>{formatINR(totals.esiEmployer, { showZero: true })}</td>
+                <td className={num}>{formatINR(totals.pt, { showZero: true })}</td>
+                <td className={num}>{formatINR(totals.tds, { showZero: true })}</td>
+                <td className={num}>{formatINR(totals.net, { showZero: true })}</td>
+              </tr>
+            )}
+          </tbody>
+        </table>
+      </div>
+
+      {runs.length > 0 && (
+        <div className="border-t border-border px-4 py-3 text-sm">
+          <div className="flex flex-wrap items-baseline justify-between gap-2">
+            <span className="font-medium text-ink">
+              EPF administrative charges (A/c 2) — establishment-level
+            </span>
+            <span className="font-mono font-medium tabular-nums">
+              {formatINR(adminCharges, { showZero: true })}
+            </span>
+          </div>
+          <p className="mt-1 text-xs text-ink-faint">
+            0.50% of {formatINR(totals.pfWage, { showZero: true })} total EPF wages
+            {adminCharges > totals.pfWage * 0.005 && ", raised to the ₹500 monthly minimum"}.
+            Levied on the establishment, not per employee, so it has no column above — but it is
+            part of employer cost and is posted with the PF liability.
+          </p>
+        </div>
+      )}
 
       <div className="border-b border-t border-border p-4">
-        <h2 className="font-semibold">Sec 192 — TDS-on-salary estimate</h2>
+        <h2 className="font-semibold">Sec 192 — how the TDS above was worked out</h2>
         <p className="mt-0.5 text-xs text-ink-faint">
-          A starting estimate, not a final Sec 192 computation and not
-          deducted anywhere — annualised gross (this month × 12) less the
-          ₹75,000 standard deduction, taxed at new-regime slab rates (Sec
-          115BAC, the default absent an employee declaration this app
-          doesn&rsquo;t record), with the same rebate/surcharge/cess logic
-          as the Income tax report. Ignores HRA exemption, Chapter VI-A
-          declarations (80C/80D/80CCD), other income the employee has
-          declared, and tax already withheld by a previous employer this
-          year — an employer who wires this straight into payroll without
-          adjusting for an employee&rsquo;s actual declarations will
-          over-withhold for nearly everyone with any deduction at all.
+          This is the basis for the TDS column in the register above, which{" "}
+          <strong className="font-medium text-ink">is</strong> deducted from net pay and posted to
+          TDS Payable (Salary). Annualised gross (this month × 12) less the ₹75,000 standard
+          deduction, taxed at new-regime slab rates (Sec 115BAC, which is the default regime — an
+          employee must opt out of it), with the same rebate/surcharge/cess logic as the Income tax
+          report. Deducting on this basis is what Sec 192 requires when no declaration has been
+          made, and not deducting at all is a Sec 201(1) default — but it remains an estimate: it
+          ignores HRA exemption, Chapter VI-A declarations (80C/80D/80CCD), other income the
+          employee has declared, and tax already withheld by a previous employer this year. For
+          anyone with real deductions it will over-withhold until this app can record their
+          declaration. Two guards are applied: the deduction is never more than the month can bear
+          after PF, ESI and PT, and it is not reduced for a mid-year joiner (the projection still
+          assumes twelve full months).
         </p>
       </div>
       <table className="w-full min-w-[720px] text-sm">
@@ -259,30 +313,40 @@ export default async function PayrollRegisterPage({
       </table>
 
       <p className="border-t border-border px-4 py-3 text-xs text-ink-faint">
-        PF: 12%/12% of PF wage (basic, capped at ₹15,000 unless an employee&rsquo;s
-        structure says otherwise). ESI: 0.75%/3.25% of gross, only while gross
-        is at or under ₹21,000/month. Professional tax is whatever was entered
-        on the employee&rsquo;s own salary structure — not computed from a
-        state slab table, since PT varies by state and several states don&rsquo;t
-        levy it at all. Net pay above does not deduct the Sec 192 TDS
-        estimate below — the two are shown side by side deliberately, not
-        netted, since the estimate needs a human&rsquo;s adjustment before
-        it should touch anyone&rsquo;s actual pay. A full month&rsquo;s
-        structure is used regardless of actual days worked — mid-month
-        joiners and leavers are not prorated.{" "}
-        {posting ? (
+        PF: 12%/12% of PF wage, which is <strong className="font-medium text-ink">basic + DA</strong>{" "}
+        capped at ₹15,000 unless an employee&rsquo;s structure waives the ceiling. EDLI (A/c 21) adds
+        a further 0.50% of PF wage to employer cost, capped at ₹75 per member; EPF administrative
+        charges (A/c 2) are shown separately above because they are levied on the establishment, not
+        per employee. A/c 22 is nil and has been since April 2017. ESI: 0.75%/3.25% of gross, and
+        eligibility is tested against the <em>full month&rsquo;s</em> wage rate rather than
+        part-month pay, so a high earner joining late in the month does not become ESI-eligible by
+        accident. Professional tax is whatever was entered on the employee&rsquo;s own salary
+        structure — not computed from a state slab table, since PT varies by state and several
+        states don&rsquo;t levy it at all; it is a fixed monthly amount, so it is not prorated.{" "}
+        {prorated.length > 0 ? (
           <>
-            Posted as a single journal voucher (Dr Salary Expense + Employer
-            PF/ESI Contribution, Cr PF/ESI/Professional Tax Payable + Salaries
-            Payable) — one aggregate liability ledger, not one per employee.
-            A correction needs a manual reversing entry; there is no unpost
-            action.
+            {prorated.length === 1 ? "One employee is" : `${prorated.length} employees are`} paid for
+            part of this month only — pay is prorated by days in employment, and the PF wage ceiling
+            is prorated with it.{" "}
           </>
         ) : (
           <>
-            Not yet posted — nothing here has touched a ledger. Posting
-            creates one journal voucher for the whole month&rsquo;s totals,
-            not a line per employee.
+            Pay is prorated by days in employment for mid-month joiners and leavers.{" "}
+          </>
+        )}
+        Attendance and loss-of-pay days are <em>not</em> tracked — proration reflects only the
+        joining and leaving dates on record.{" "}
+        {posting ? (
+          <>
+            Posted as a single journal voucher (Dr Salary Expense + Employer PF Contribution
+            including EDLI and admin charges + Employer ESI Contribution, Cr PF/ESI/Professional Tax
+            Payable + TDS Payable (Salary) + Salaries Payable) — one aggregate liability ledger, not
+            one per employee. A correction needs a manual reversing entry; there is no unpost action.
+          </>
+        ) : (
+          <>
+            Not yet posted — nothing here has touched a ledger. Posting creates one journal voucher
+            for the whole month&rsquo;s totals, not a line per employee.
           </>
         )}
       </p>

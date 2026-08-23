@@ -35,6 +35,7 @@ export function EmployeeManager({
   const [esiNumber, setEsiNumber] = useState("");
   const [dateOfJoining, setDateOfJoining] = useState("");
   const [basic, setBasic] = useState("0");
+  const [dearnessAllowance, setDearnessAllowance] = useState("0");
   const [hra, setHra] = useState("0");
   const [specialAllowance, setSpecialAllowance] = useState("0");
   const [otherAllowance, setOtherAllowance] = useState("0");
@@ -78,6 +79,7 @@ export function EmployeeManager({
       company_id: companyId,
       effective_from: dateOfJoining,
       basic: Number(basic) || 0,
+      dearness_allowance: Number(dearnessAllowance) || 0,
       hra: Number(hra) || 0,
       special_allowance: Number(specialAllowance) || 0,
       other_allowance: Number(otherAllowance) || 0,
@@ -238,6 +240,15 @@ export function EmployeeManager({
                 />
               </label>
               <label className="flex flex-col gap-1.5">
+                <span className="text-xs text-ink-faint">Dearness allowance</span>
+                <input
+                  inputMode="decimal"
+                  value={dearnessAllowance}
+                  onChange={(e) => setDearnessAllowance(e.target.value)}
+                  className={field + " text-right tabular-nums"}
+                />
+              </label>
+              <label className="flex flex-col gap-1.5">
                 <span className="text-xs text-ink-faint">HRA</span>
                 <input
                   inputMode="decimal"
@@ -272,7 +283,7 @@ export function EmployeeManager({
                 checked={pfApplicable}
                 onChange={(e) => setPfApplicable(e.target.checked)}
               />
-              PF applicable (12%/12% on basic)
+              PF applicable (12%/12% on basic + DA)
             </label>
             {pfApplicable && (
               <label className="mt-1.5 flex items-center gap-2 pl-6 text-sm">

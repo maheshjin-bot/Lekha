@@ -16,7 +16,7 @@ export default async function EmployeesPage({
       .order("name"),
     supabase
       .from("employee_salary_structures")
-      .select("employee_id, effective_from, basic, hra, special_allowance, other_allowance")
+      .select("employee_id, effective_from, basic, dearness_allowance, hra, special_allowance, other_allowance")
       .eq("company_id", companyId)
       .order("effective_from", { ascending: false }),
     supabase.rpc("get_company_modules", { p_company_id: companyId }),
@@ -31,7 +31,12 @@ export default async function EmployeesPage({
     if (latestByEmployee.has(s.employee_id)) continue;
     latestByEmployee.set(s.employee_id, {
       basic: Number(s.basic),
-      gross: Number(s.basic) + Number(s.hra) + Number(s.special_allowance) + Number(s.other_allowance),
+      gross:
+        Number(s.basic) +
+        Number(s.dearness_allowance) +
+        Number(s.hra) +
+        Number(s.special_allowance) +
+        Number(s.other_allowance),
     });
   }
 
