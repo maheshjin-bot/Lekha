@@ -1326,6 +1326,71 @@ describeDb(`retained earnings carry forward (${hasDb ? "live" : noDbReason})`, (
 });
 
 // ---------------------------------------------------------------------------
+// Stock valuation (0074)
+// ---------------------------------------------------------------------------
+describeDb(`stock valuation (${hasDb ? "live" : noDbReason})`, () => {
+  it("the weighted-average rate is derived only from movements that carry a real cost", async () => {
+    // A credit note (sales return) comes back 'in' at its SALE value, not at
+    // cost. Folding that into the average inflated the carrying rate of every
+    // remaining unit of the item, not just the returned ones — and closing
+    // value feeds get_drawing_power, i.e. a bank's stock statement. Measured
+    // on live data through a real create_invoice call at the time of the fix:
+    // a 5-unit return at 9,000 against a 2,910.67 cost moved the average to
+    // 3,780.57 and closing value from 8,732.00 to 11,341.71 — a 29.9%
+    // overstatement from one return.
+    //
+    // This recomputes the rate independently from raw voucher_items rather
+    // than trusting the function's own arithmetic.
+    const rows = await sql(`
+      with m as (
+        select vi.item_id, vi.quantity, vi.amount, vi.direction, v.voucher_type
+          from public.voucher_items vi
+          join public.vouchers v on v.id = vi.voucher_id
+         where not v.is_deleted
+      ),
+      expect as (
+        select i.company_id, i.id as item_id, i.name,
+               i.opening_quantity + coalesce(sum(m.quantity) filter (
+                 where m.direction = 'in' and m.voucher_type <> 'credit_note'), 0) as costed_qty,
+               i.opening_value + coalesce(sum(m.amount) filter (
+                 where m.direction = 'in' and m.voucher_type <> 'credit_note'), 0) as costed_val
+          from public.items i
+          left join m on m.item_id = i.id
+         where i.item_type = 'goods' and i.maintain_stock
+         group by i.company_id, i.id, i.name, i.opening_quantity, i.opening_value
+      )
+      select e.name, s.average_rate,
+             case when e.costed_qty > 0 then round(e.costed_val / e.costed_qty, 2) else 0 end as expected_rate
+        from expect e
+        join lateral public.get_stock_summary(e.company_id, '2999-12-31', null) s
+          on s.item_id = e.item_id
+       where abs(s.average_rate
+                 - case when e.costed_qty > 0 then round(e.costed_val / e.costed_qty, 2) else 0 end) > 0.01
+       order by 1
+    `);
+    expect(rows, `stock average rate does not match its cost basis:\n${offenders(rows)}`).toEqual([]);
+  });
+
+  it("the schema does not accept a valuation method the engine cannot perform", async () => {
+    // get_stock_summary is weighted average, unconditionally — there is no
+    // FIFO branch and never was. While the CHECK still accepted 'fifo', a
+    // company carrying that flag would have had a false method printed on its
+    // stock report AND declared in Form 3CD clause 14(a), over numbers that
+    // were computed a different way. Re-widen this constraint in the same
+    // migration that adds a real lot/layer costing engine, not before — at
+    // which point this test should be updated deliberately, not deleted.
+    const rows = await sql(`
+      select conname, pg_get_constraintdef(oid) as def
+        from pg_constraint
+       where conrelid = 'public.companies'::regclass
+         and conname = 'companies_inventory_valuation_method_check'
+         and pg_get_constraintdef(oid) ilike '%fifo%'
+    `);
+    expect(rows, `schema accepts a valuation method nothing implements:\n${offenders(rows)}`).toEqual([]);
+  });
+});
+
+// ---------------------------------------------------------------------------
 // Tenancy: what the catalog can prove without fixtures
 // ---------------------------------------------------------------------------
 describeDb(`tenancy and RLS, catalog-level (${hasDb ? "live" : noDbReason})`, () => {
