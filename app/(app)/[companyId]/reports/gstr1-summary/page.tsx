@@ -64,7 +64,10 @@ type OutputRow = {
 
 type HsnRow = {
   hsn_sac: string;
+  description: string | null;
+  gst_rate_percent: number;
   uom: string;
+  b2b_or_b2c: "b2b" | "b2c";
   total_quantity: number;
   taxable_value: number;
   cgst: number;
@@ -72,7 +75,6 @@ type HsnRow = {
   igst: number;
   cess: number;
   total_value: number;
-  effective_rate_percent: number;
 };
 
 type Table9bRow = {
@@ -284,64 +286,72 @@ function B2CSmallTable({ buckets }: { buckets: B2csBucket[] }) {
   );
 }
 
-/** Table 12 — HSN-wise summary. */
-function HsnTable({ rows }: { rows: HsnRow[] }) {
+/** Table 12 — HSN-wise summary, one sub-table per GSTN's mandatory B2B/B2C tab.
+ * Rows are already keyed by (hsn_sac, gst_rate_percent, uom) server-side, so
+ * the same HSN billed at two different rates prints as two separate rows
+ * here rather than one blended one. */
+function HsnTable({ rows, heading }: { rows: HsnRow[]; heading: string }) {
   const taxTotal = sumTax(rows);
   const taxableTotal = rows.reduce((n, r) => n + Number(r.taxable_value), 0);
   return (
-    <table className="w-full min-w-[820px] text-sm">
-      <thead>
-        <tr className="border-b border-border text-left">
-          <th className={th}>HSN/SAC</th>
-          <th className={th}>UOM</th>
-          <th className={th + " text-right"}>Quantity</th>
-          <th className={th + " text-right"}>Taxable</th>
-          <th className={th + " text-right"}>Rate %</th>
-          <th className={th + " text-right"}>CGST</th>
-          <th className={th + " text-right"}>SGST</th>
-          <th className={th + " text-right"}>IGST</th>
-          <th className={th + " text-right"}>Cess</th>
-          <th className={th + " text-right"}>Total</th>
-        </tr>
-      </thead>
-      <tbody>
-        {rows.length === 0 && (
-          <tr>
-            <td colSpan={10} className="px-4 py-8 text-center text-ink-faint">
-              Nothing this month.
-            </td>
+    <div className="border-b border-border">
+      <h3 className="px-4 pt-3 text-xs font-semibold uppercase tracking-wide text-ink-faint">{heading}</h3>
+      <table className="w-full min-w-[960px] text-sm">
+        <thead>
+          <tr className="border-b border-border text-left">
+            <th className={th}>HSN/SAC</th>
+            <th className={th}>Description</th>
+            <th className={th + " text-right"}>Rate %</th>
+            <th className={th}>UOM</th>
+            <th className={th + " text-right"}>Quantity</th>
+            <th className={th + " text-right"}>Taxable</th>
+            <th className={th + " text-right"}>CGST</th>
+            <th className={th + " text-right"}>SGST</th>
+            <th className={th + " text-right"}>IGST</th>
+            <th className={th + " text-right"}>Cess</th>
+            <th className={th + " text-right"}>Total</th>
           </tr>
-        )}
-        {rows.map((r) => (
-          <tr key={`${r.hsn_sac}-${r.uom}`} className="border-b border-border last:border-0">
-            <td className={td + " font-mono text-xs"}>{r.hsn_sac}</td>
-            <td className={td}>{r.uom}</td>
-            <td className={num}>{Number(r.total_quantity).toLocaleString("en-IN")}</td>
-            <td className={num}>{formatINR(Number(r.taxable_value), { showZero: true })}</td>
-            <td className={num}>{Number(r.effective_rate_percent)}%</td>
-            <td className={num}>{formatINR(Number(r.cgst), { showZero: true })}</td>
-            <td className={num}>{formatINR(Number(r.sgst), { showZero: true })}</td>
-            <td className={num}>{formatINR(Number(r.igst), { showZero: true })}</td>
-            <td className={num}>{formatINR(Number(r.cess), { showZero: true })}</td>
-            <td className={num + " font-medium"}>{formatINR(Number(r.total_value), { showZero: true })}</td>
-          </tr>
-        ))}
-        {rows.length > 0 && (
-          <tr className="bg-bg font-semibold">
-            <td className={td} colSpan={3}>
-              Total
-            </td>
-            <td className={num}>{formatINR(taxableTotal, { showZero: true })}</td>
-            <td className={num}></td>
-            <td className={num}>{formatINR(rows.reduce((n, r) => n + Number(r.cgst), 0), { showZero: true })}</td>
-            <td className={num}>{formatINR(rows.reduce((n, r) => n + Number(r.sgst), 0), { showZero: true })}</td>
-            <td className={num}>{formatINR(rows.reduce((n, r) => n + Number(r.igst), 0), { showZero: true })}</td>
-            <td className={num}>{formatINR(rows.reduce((n, r) => n + Number(r.cess), 0), { showZero: true })}</td>
-            <td className={num}>{formatINR(taxableTotal + taxTotal, { showZero: true })}</td>
-          </tr>
-        )}
-      </tbody>
-    </table>
+        </thead>
+        <tbody>
+          {rows.length === 0 && (
+            <tr>
+              <td colSpan={11} className="px-4 py-8 text-center text-ink-faint">
+                Nothing this month.
+              </td>
+            </tr>
+          )}
+          {rows.map((r) => (
+            <tr key={`${r.hsn_sac}-${r.gst_rate_percent}-${r.uom}`} className="border-b border-border last:border-0">
+              <td className={td + " font-mono text-xs"}>{r.hsn_sac}</td>
+              <td className={td + " text-xs text-ink-soft"}>{r.description ?? "—"}</td>
+              <td className={num}>{Number(r.gst_rate_percent)}%</td>
+              <td className={td}>{r.uom}</td>
+              <td className={num}>{Number(r.total_quantity).toLocaleString("en-IN")}</td>
+              <td className={num}>{formatINR(Number(r.taxable_value), { showZero: true })}</td>
+              <td className={num}>{formatINR(Number(r.cgst), { showZero: true })}</td>
+              <td className={num}>{formatINR(Number(r.sgst), { showZero: true })}</td>
+              <td className={num}>{formatINR(Number(r.igst), { showZero: true })}</td>
+              <td className={num}>{formatINR(Number(r.cess), { showZero: true })}</td>
+              <td className={num + " font-medium"}>{formatINR(Number(r.total_value), { showZero: true })}</td>
+            </tr>
+          ))}
+          {rows.length > 0 && (
+            <tr className="bg-bg font-semibold">
+              <td className={td} colSpan={4}>
+                Total
+              </td>
+              <td className={num}>{rows.reduce((n, r) => n + Number(r.total_quantity), 0).toLocaleString("en-IN")}</td>
+              <td className={num}>{formatINR(taxableTotal, { showZero: true })}</td>
+              <td className={num}>{formatINR(rows.reduce((n, r) => n + Number(r.cgst), 0), { showZero: true })}</td>
+              <td className={num}>{formatINR(rows.reduce((n, r) => n + Number(r.sgst), 0), { showZero: true })}</td>
+              <td className={num}>{formatINR(rows.reduce((n, r) => n + Number(r.igst), 0), { showZero: true })}</td>
+              <td className={num}>{formatINR(rows.reduce((n, r) => n + Number(r.cess), 0), { showZero: true })}</td>
+              <td className={num}>{formatINR(taxableTotal + taxTotal, { showZero: true })}</td>
+            </tr>
+          )}
+        </tbody>
+      </table>
+    </div>
   );
 }
 
@@ -554,7 +564,10 @@ export default async function Gstr1SummaryPage({
   ]);
 
   const output = (outputRows ?? []) as OutputRow[];
-  const hsn = (hsnRows ?? []) as HsnRow[];
+  // `as unknown as` — same reason as reports/balance-sheet after 0089: the
+  // generated database.types.ts still describes get_gstr1_hsn_summary's PRE-
+  // 0098 return shape until the integration pass regenerates it.
+  const hsn = (hsnRows ?? []) as unknown as HsnRow[];
   const table9b = (table9bRows ?? []) as Table9bRow[];
   const table13 = (table13Rows ?? []) as Table13Row[];
 
@@ -677,11 +690,13 @@ export default async function Gstr1SummaryPage({
           Table 12 — HSN-wise summary <Badge tone="neutral">outward only</Badge>
         </h2>
         <p className="mt-0.5 text-xs text-ink-faint">
-          Sales and credit notes grouped by HSN/SAC. Tax allocated from actual postings, not the item
-          master&rsquo;s current rate — see the report footer.
+          Sales and credit notes grouped by HSN/SAC and rate, split into GSTN&rsquo;s two mandatory tabs
+          (Phase-3, since the B2B/B2C split of Table 12 became mandatory). The same HSN billed at two
+          different rates now prints as two rows, never one blended rate — see the report footer.
         </p>
       </div>
-      <HsnTable rows={hsn} />
+      <HsnTable rows={hsn.filter((r) => r.b2b_or_b2c === "b2b")} heading="B2B supplies" />
+      <HsnTable rows={hsn.filter((r) => r.b2b_or_b2c === "b2c")} heading="B2C supplies" />
 
       <div className="border-b border-t border-border p-4">
         <h2 className="flex items-center gap-2 font-semibold">
@@ -709,11 +724,16 @@ export default async function Gstr1SummaryPage({
       <p className="border-t border-border px-4 py-3 text-xs text-ink-faint">
         GSTR-1 prep — B2B/B2C(Large)/B2C(Small) is a straight re-bucketing of the GST output register
         (Reports → GST registers) by registration status, supply direction and invoice value; it carries
-        the same figures, so the two reports always reconcile. HSN quantities and tax are read back from
-        actual voucher_items and ledger postings, allocated proportionally where an invoice carries more
-        than one HSN — not recomputed from the item master&rsquo;s current GST rate, which can have changed
-        since the invoice was raised. A single HSN billed at genuinely different rates within the month
-        shows one blended effective rate, not separate rows. Zero-rated exports, nil-rated and exempt
+        the same figures, so the two reports always reconcile. Table 12 is grouped by (HSN/SAC, GST rate,
+        UOM) and split B2B/B2C by whether the party ledger carries a registered gst_registration_type —
+        per GSTN&rsquo;s Phase-3 rules, which now reject a blended rate on the same HSN. The rate itself is
+        read from the item master (voucher_items has no rate column of its own, only hsn_sac), so a rate
+        changed on an item AFTER a historical invoice was raised will group that old line under today&rsquo;s
+        rate, not the one actually charged — the rupee totals still reconcile exactly to real ledger
+        postings (each line&rsquo;s share of its voucher&rsquo;s actual tax is weighted by that line&rsquo;s
+        own taxable value × its own rate, not by taxable value alone), only the rate LABEL and which bucket
+        a historical line falls into can drift. Description is a locally-sourced item name, not GSTN&rsquo;s
+        own HSN-master text, which LEKHA does not hold. Zero-rated exports, nil-rated and exempt
         supplies are not distinguished from standard-rated supplies — this schema does not track that
         bifurcation. As of Aug 2026, GSTR-3B&rsquo;s own outward-supply table is hard-locked and auto-populated
         FROM GSTR-1 (no longer independently editable) — this is exactly why LEKHA targets GSTR-1 rather
