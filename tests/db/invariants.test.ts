@@ -2871,6 +2871,334 @@ describeDb(`GSTR-1 Table 9B and Table 13 (${hasDb ? "live" : noDbReason})`, () =
 });
 
 // ---------------------------------------------------------------------------
+// Filing register (0095)
+// ---------------------------------------------------------------------------
+describeDb(`filing register (${hasDb ? "live" : noDbReason})`, () => {
+  it("filing_register carries the CHECK constraints its data model depends on", async () => {
+    const rows = await sql(`
+      select conname, pg_get_constraintdef(oid) as def
+        from pg_constraint
+       where conrelid = 'public.filing_register'::regclass and contype = 'c'
+    `);
+    const defs = rows.map((r) => r.def as string).join(" | ");
+    expect(defs, "status/filed_date coherence CHECK missing").toContain("filed_date");
+    expect(defs, "non-negative fee CHECK missing").toMatch(/fee_paid|additional_fee/);
+  });
+
+  it("filing_register has a case/whitespace-insensitive one-record-per-(company,form,period,registration) unique index", async () => {
+    // The uniqueness guard here is a plain CREATE UNIQUE INDEX on
+    // upper(btrim(...)) expressions, not a table CONSTRAINT — pg_constraint
+    // never lists it, so this has to come from pg_indexes instead.
+    const rows = await sql(`
+      select indexname, indexdef from pg_indexes
+       where tablename = 'filing_register' and indexdef ilike '%UNIQUE%' and indexname <> 'filing_register_pkey'
+    `);
+    expect(rows.length, "the company/form/period/registration unique index is missing").toBeGreaterThan(0);
+    expect(rows[0].indexdef, "unique index is not case/whitespace-insensitive").toMatch(/upper|btrim/i);
+  });
+
+  it("no filing_register row claims status='filed' without a filed_date, or vice versa", async () => {
+    const rows = await sql(`
+      select id, company_id, form_code, period_label, status, filed_date
+        from public.filing_register
+       where (status = 'filed') <> (filed_date is not null)
+    `);
+    expect(rows, `filed/filed_date mismatch:\n${offenders(rows)}`).toEqual([]);
+  });
+
+  it("filing_register and get_filing_register are RLS/grant-scoped the same as every other master table", async () => {
+    const policies = await sql(`
+      select policyname, cmd, qual from pg_policies where tablename = 'filing_register'
+    `);
+    const read = policies.find((r) => r.policyname === "filing_register_read");
+    const write = policies.find((r) => r.policyname === "filing_register_write");
+    expect(read?.qual, "read policy missing or not member-scoped").toContain("is_company_member");
+    expect(write?.qual, "write policy missing or not can_write_company-scoped").toContain("can_write_company");
+
+    const grants = await sql(`
+      select grantee, privilege_type from information_schema.routine_privileges
+       where routine_name = 'get_filing_register' and grantee in ('PUBLIC', 'anon')
+    `);
+    expect(grants, `get_filing_register reachable by a role it shouldn't be:\n${offenders(grants)}`).toEqual([]);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Rule 37 (180-day) ITC reversal (0096)
+// ---------------------------------------------------------------------------
+describeDb(`180-day ITC reversal (${hasDb ? "live" : noDbReason})`, () => {
+  it("get_itc_180day_reversal is not reachable by anon or public", async () => {
+    const rows = await sql(`
+      select grantee, privilege_type from information_schema.routine_privileges
+       where routine_name = 'get_itc_180day_reversal' and grantee in ('PUBLIC', 'anon')
+    `);
+    expect(rows, `get_itc_180day_reversal reachable by a role it shouldn't be:\n${offenders(rows)}`).toEqual([]);
+  });
+
+  it("reversal_itc never exceeds the ITC originally claimed on the invoice, and is exactly proportionate to what remains unpaid", async () => {
+    // Re-derives the proportionality rule independently of the function body:
+    // reversal_itc / itc_total should equal outstanding_amount / invoice_value,
+    // to the rounding tolerance a numeric(14,2) column allows.
+    const rows = await sql(`
+      select c.name, r.voucher_number, r.invoice_value, r.outstanding_amount, r.itc_total, r.reversal_itc
+        from public.companies c
+        cross join lateral public.get_itc_180day_reversal(c.id, '2999-12-31'::date) r
+       where r.itc_total > 0
+         and abs(
+               round(r.reversal_itc, 2)
+               - round(r.itc_total * r.outstanding_amount / r.invoice_value, 2)
+             ) > 0.02
+    `);
+    expect(rows, `reversal_itc is not proportionate to the unpaid fraction:\n${offenders(rows)}`).toEqual([]);
+  });
+
+  it("no reversal is ever shown for an invoice 180 days old or less (the safe harbour)", async () => {
+    const rows = await sql(`
+      select c.name, r.voucher_number, r.days_overdue
+        from public.companies c
+        cross join lateral public.get_itc_180day_reversal(c.id, '2999-12-31'::date) r
+       where r.days_overdue <= 180
+    `);
+    expect(rows, `a reversal row exists at or under the 180-day safe harbour:\n${offenders(rows)}`).toEqual([]);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// LLP designated-partner contributions (0097)
+// ---------------------------------------------------------------------------
+describeDb(`LLP partner contributions (${hasDb ? "live" : noDbReason})`, () => {
+  it("llp_partner_contributions carries its composite tenancy FK and its cash/kind CHECK constraint", async () => {
+    const rows = await sql(`
+      select conname, pg_get_constraintdef(oid) as def
+        from pg_constraint
+       where conrelid = 'public.llp_partner_contributions'::regclass
+    `);
+    const defs = rows.map((r) => r.def as string).join(" | ");
+    expect(defs, "composite (director_id, company_id) tenancy FK missing").toContain("company_id");
+    expect(defs, "valuation-reference-only-for-kind CHECK missing").toContain("valuation_certificate_reference");
+  });
+
+  it("no cash contribution carries a valuation certificate reference", async () => {
+    const rows = await sql(`
+      select id, company_id, contribution_type, valuation_certificate_reference
+        from public.llp_partner_contributions
+       where contribution_type = 'cash' and valuation_certificate_reference is not null
+    `);
+    expect(rows, `cash contributions wrongly carrying a valuation reference:\n${offenders(rows)}`).toEqual([]);
+  });
+
+  it("get_llp_contribution_summary's cash+kind sums equal the raw contribution rows, per partner", async () => {
+    const rows = await sql(`
+      with raw as (
+        select director_id, company_id,
+               sum(amount) filter (where contribution_type = 'cash') as cash,
+               sum(amount) filter (where contribution_type = 'kind') as kind
+          from public.llp_partner_contributions
+         group by director_id, company_id
+      )
+      select cd.company_id, cd.name, s.total_cash, s.total_kind, r.cash, r.kind
+        from raw r
+        join public.company_directors cd on cd.id = r.director_id
+        cross join lateral public.get_llp_contribution_summary(r.company_id) s
+       where s.director_id = r.director_id
+         and (round(s.total_cash, 2) <> round(coalesce(r.cash, 0), 2)
+              or round(s.total_kind, 2) <> round(coalesce(r.kind, 0), 2))
+    `);
+    expect(rows, `contribution summary does not match the raw rows:\n${offenders(rows)}`).toEqual([]);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// GSTR-1 Table 12 — real per-(HSN, rate) rows + B2B/B2C split (0098)
+// ---------------------------------------------------------------------------
+describeDb(`GSTR-1 Table 12 rate split (${hasDb ? "live" : noDbReason})`, () => {
+  it("get_gstr1_hsn_summary is not reachable by anon or public", async () => {
+    const rows = await sql(`
+      select grantee, privilege_type from information_schema.routine_privileges
+       where routine_name = 'get_gstr1_hsn_summary' and grantee in ('PUBLIC', 'anon')
+    `);
+    expect(rows, `get_gstr1_hsn_summary reachable by a role it shouldn't be:\n${offenders(rows)}`).toEqual([]);
+  });
+
+  it("every row is tagged a genuine single gst_rate_percent and a b2b/b2c value — no blended or missing rate", async () => {
+    const rows = await sql(`
+      select c.name, s.hsn_sac, s.gst_rate_percent, s.b2b_or_b2c
+        from public.companies c
+        cross join lateral public.get_gstr1_hsn_summary(c.id, '1900-01-01'::date, '2999-12-31'::date) s
+       where s.gst_rate_percent is null or s.b2b_or_b2c not in ('b2b', 'b2c')
+    `);
+    expect(rows, `HSN summary rows with a missing rate or invalid B2B/B2C tag:\n${offenders(rows)}`).toEqual([]);
+  });
+
+  it("the whole-company HSN summary tax total equals the GST output register tax total — the reallocation preserves the whole, per company", async () => {
+    const rows = await sql(`
+      with totals as (
+        select c.id, c.name,
+               (select coalesce(sum(cgst) + sum(sgst) + sum(igst) + sum(cess), 0)
+                  from public.get_gstr1_hsn_summary(c.id, '1900-01-01'::date, '2999-12-31'::date)) as hsn_total,
+               (select coalesce(sum(cgst) + sum(sgst) + sum(igst) + sum(cess), 0)
+                  from public.get_gst_output_register(c.id, '1900-01-01'::date, '2999-12-31'::date)) as output_total
+          from public.companies c
+      )
+      select * from totals where round(hsn_total - output_total, 2) <> 0
+    `);
+    expect(rows, `companies where the HSN summary total no longer matches the output register total:\n${offenders(rows)}`).toEqual([]);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Advance tax and Sec 234B/234C (0099)
+// ---------------------------------------------------------------------------
+describeDb(`advance tax (${hasDb ? "live" : noDbReason})`, () => {
+  it("get_advance_tax_status is not reachable by anon or public", async () => {
+    const rows = await sql(`
+      select grantee, privilege_type from information_schema.routine_privileges
+       where routine_name = 'get_advance_tax_status' and grantee in ('PUBLIC', 'anon')
+    `);
+    expect(rows, `get_advance_tax_status reachable by a role it shouldn't be:\n${offenders(rows)}`).toEqual([]);
+  });
+
+  it("only accepts a 31 March financial-year-end date", async () => {
+    await expect(
+      sql(`select * from public.get_advance_tax_status(
+        (select id from public.companies limit 1), '2027-06-30'::date
+      )`)
+    ).rejects.toThrow();
+  });
+
+  it("234C interest is never charged against the 12%/36% safe-harbour tolerance once it has genuinely been met (Jun/Sep instalments only — Dec/Mar carry no such tolerance)", async () => {
+    // Re-derives each instalment's own safe-harbour rupee amount from its
+    // percent and the amount/percent ratio the row already carries
+    // (cumulative_amount_required / cumulative_percent_required is the
+    // rupee value of 1%, so x safe_harbour_percent gives the tolerance
+    // threshold) — independent of the function's own internal arithmetic —
+    // and checks that once cumulative_amount_paid clears that threshold,
+    // sec234c_interest is exactly 0, regardless of whether the 15/45%
+    // headline figure was also met.
+    const rows = await sql(`
+      select c.name, s.instalment_no, s.due_date, s.cumulative_amount_paid, s.sec234c_interest,
+             round((s.cumulative_amount_required / s.cumulative_percent_required) * s.safe_harbour_percent, 2)
+               as safe_harbour_amount
+        from public.companies c
+        cross join lateral public.get_advance_tax_status(c.id, '2027-03-31'::date) s
+       where s.row_kind = 'instalment'
+         and s.applicable
+         and s.safe_harbour_percent is not null
+         and s.cumulative_amount_paid >= round((s.cumulative_amount_required / s.cumulative_percent_required) * s.safe_harbour_percent, 2)
+         and round(s.sec234c_interest, 2) <> 0
+    `);
+    expect(rows, `interest charged despite the safe harbour being met:\n${offenders(rows)}`).toEqual([]);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Cash flow statement, AS 3 / Ind AS 7 (0100)
+// ---------------------------------------------------------------------------
+describeDb(`cash flow statement (${hasDb ? "live" : noDbReason})`, () => {
+  it("get_cash_flow_statement is not reachable by anon or public", async () => {
+    const rows = await sql(`
+      select grantee, privilege_type from information_schema.routine_privileges
+       where routine_name = 'get_cash_flow_statement' and grantee in ('PUBLIC', 'anon')
+    `);
+    expect(rows, `get_cash_flow_statement reachable by a role it shouldn't be:\n${offenders(rows)}`).toEqual([]);
+  });
+
+  it("the bottom-up reconciliation (operating + investing + financing vs actual cash movement) is nil for every company, book-beginning to date", async () => {
+    // The single correctness proof for an indirect-method cash flow
+    // statement: every one of get_balance_sheet's nature buckets lands in
+    // exactly one section, so this difference is an algebraic certainty, not
+    // a hope. A nonzero value here means a bucket was added, renamed, or
+    // dropped from get_balance_sheet/get_profit_and_loss without updating
+    // this function in lockstep — exactly the failure mode 0100's own report
+    // warned about.
+    const rows = await sql(`
+      select c.name, cf.amount as difference
+        from public.companies c
+        cross join lateral public.get_cash_flow_statement(
+          c.id, c.book_beginning_date, greatest(c.book_beginning_date, current_date)
+        ) cf
+       where cf.line_item = 'reconciliation_difference'
+         and round(cf.amount, 2) <> 0
+    `);
+    expect(rows, `cash flow statement does not reconcile:\n${offenders(rows)}`).toEqual([]);
+  });
+
+  it("cash_from_operating + cash_from_investing + cash_from_financing equals net_change_in_cash, per company", async () => {
+    const rows = await sql(`
+      with totals as (
+        select c.id, c.name,
+               max(cf.amount) filter (where cf.line_item = 'cash_from_operating') as op,
+               max(cf.amount) filter (where cf.line_item = 'cash_from_investing') as inv,
+               max(cf.amount) filter (where cf.line_item = 'cash_from_financing') as fin,
+               max(cf.amount) filter (where cf.line_item = 'net_change_in_cash') as net
+          from public.companies c
+          cross join lateral public.get_cash_flow_statement(
+            c.id, c.book_beginning_date, greatest(c.book_beginning_date, current_date)
+          ) cf
+         group by c.id, c.name
+      )
+      select * from totals where round(coalesce(op,0) + coalesce(inv,0) + coalesce(fin,0) - coalesce(net,0), 2) <> 0
+    `);
+    expect(rows, `the three activity sections do not sum to the reported net change in cash:\n${offenders(rows)}`).toEqual([]);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Register of Members / share capital, Sec 88 (0101)
+// ---------------------------------------------------------------------------
+describeDb(`register of members (${hasDb ? "live" : noDbReason})`, () => {
+  it("no share_classes row exists for a company whose entity_type has no share capital", async () => {
+    const rows = await sql(`
+      select sc.id, c.name, c.entity_type
+        from public.share_classes sc
+        join public.companies c on c.id = sc.company_id
+       where c.entity_type not in ('pvt_ltd', 'ltd', 'opc')
+    `);
+    expect(rows, `a share class exists on a company with no share capital:\n${offenders(rows)}`).toEqual([]);
+  });
+
+  it("no class's currently-held shares exceed its authorized_shares (Sec 61)", async () => {
+    const rows = await sql(`
+      select sc.id, c.name, sc.class_name, sc.authorized_shares,
+             coalesce(sum(sh.shares_held) filter (where sh.date_of_cessation is null), 0) as held
+        from public.share_classes sc
+        join public.companies c on c.id = sc.company_id
+        left join public.share_holdings sh on sh.share_class_id = sc.id
+       group by sc.id, c.name, sc.class_name, sc.authorized_shares
+      having coalesce(sum(sh.shares_held) filter (where sh.date_of_cessation is null), 0) > sc.authorized_shares
+    `);
+    expect(rows, `a share class has more currently-held shares than authorized:\n${offenders(rows)}`).toEqual([]);
+  });
+
+  it("get_share_capital_summary's paid-up capital equals currently-held shares times nominal value, per class", async () => {
+    const rows = await sql(`
+      select c.name, s.class_name, s.issued_shares, s.nominal_value_per_share, s.paid_up_capital
+        from public.companies c
+        cross join lateral public.get_share_capital_summary(c.id) s
+       where round(s.issued_shares * s.nominal_value_per_share, 2) <> round(s.paid_up_capital, 2)
+    `);
+    expect(rows, `paid-up capital does not equal issued shares x nominal value:\n${offenders(rows)}`).toEqual([]);
+  });
+
+  it("get_share_capital_summary and share_classes/share_holdings write access are RLS-scoped the same as company_directors", async () => {
+    const grants = await sql(`
+      select grantee, privilege_type from information_schema.routine_privileges
+       where routine_name = 'get_share_capital_summary' and grantee in ('PUBLIC', 'anon')
+    `);
+    expect(grants, `get_share_capital_summary reachable by a role it shouldn't be:\n${offenders(grants)}`).toEqual([]);
+
+    const policies = await sql(`
+      select tablename, policyname, cmd, qual from pg_policies
+       where tablename in ('share_classes', 'share_holdings')
+    `);
+    for (const table of ["share_classes", "share_holdings"]) {
+      const write = policies.find((r) => r.tablename === table && (r.qual as string)?.includes("can_write_company"));
+      expect(write, `${table} has no can_write_company-scoped write policy`).toBeTruthy();
+    }
+  });
+});
+
+// ---------------------------------------------------------------------------
 // Needs fixtures. Seeded database only — never the live project.
 // ---------------------------------------------------------------------------
 describe.skip("post_gst_setoff, post_deferred_tax [needs seed]", () => {

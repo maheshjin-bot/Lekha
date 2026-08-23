@@ -66,6 +66,8 @@ export function NavRail({
         { href: `${base}/employees`, label: "Employees" },
         { href: `${base}/directors`, label: "Directors & KMP" },
         { href: `${base}/meetings`, label: "Meetings" },
+        { href: `${base}/share-capital`, label: "Share capital" },
+        { href: `${base}/filing-register`, label: "Filing register" },
       ],
     },
     {
@@ -74,6 +76,7 @@ export function NavRail({
         { href: `${base}/registrations`, label: "Registrations" },
         { href: `${base}/reports/gst-registers`, label: "Registers" },
         { href: `${base}/reports/gst-setoff`, label: "GST set-off" },
+        { href: `${base}/reports/itc-180day-reversal`, label: "ITC 180-day reversal" },
       ],
     },
     {
@@ -88,6 +91,7 @@ export function NavRail({
         { href: `${base}/reports/trial-balance`, label: "Trial balance" },
         { href: `${base}/reports/profit-loss`, label: "Profit & loss" },
         { href: `${base}/reports/balance-sheet`, label: "Balance sheet" },
+        { href: `${base}/reports/cash-flow`, label: "Cash flow" },
         { href: `${base}/reports/stock`, label: "Stock" },
         { href: `${base}/reports/stock-expiry`, label: "Stock expiry" },
         { href: `${base}/reports/outstanding`, label: "Outstanding" },
@@ -105,6 +109,7 @@ export function NavRail({
         { href: `${base}/reports/tax-depreciation`, label: "Tax depreciation" },
         { href: `${base}/deferred-tax`, label: "Deferred tax" },
         { href: `${base}/reports/income-tax`, label: "Income tax" },
+        { href: `${base}/reports/advance-tax`, label: "Advance tax" },
         { href: `${base}/reports/tax-audit`, label: "Tax audit" },
         { href: `${base}/reports/payroll-register`, label: "Payroll register" },
         { href: `${base}/reports/compliance-calendar`, label: "Calendar" },

@@ -1690,6 +1690,72 @@ export type Database = {
           },
         ]
       }
+      filing_register: {
+        Row: {
+          acknowledgement_number: string | null
+          additional_fee: number
+          company_id: string
+          created_at: string
+          created_by: string | null
+          fee_paid: number
+          filed_date: string | null
+          form_code: string
+          gst_registration_id: string | null
+          id: string
+          notes: string | null
+          period_label: string
+          status: string
+          updated_at: string
+        }
+        Insert: {
+          acknowledgement_number?: string | null
+          additional_fee?: number
+          company_id: string
+          created_at?: string
+          created_by?: string | null
+          fee_paid?: number
+          filed_date?: string | null
+          form_code: string
+          gst_registration_id?: string | null
+          id?: string
+          notes?: string | null
+          period_label: string
+          status?: string
+          updated_at?: string
+        }
+        Update: {
+          acknowledgement_number?: string | null
+          additional_fee?: number
+          company_id?: string
+          created_at?: string
+          created_by?: string | null
+          fee_paid?: number
+          filed_date?: string | null
+          form_code?: string
+          gst_registration_id?: string | null
+          id?: string
+          notes?: string | null
+          period_label?: string
+          status?: string
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "filing_register_company_id_fkey"
+            columns: ["company_id"]
+            isOneToOne: false
+            referencedRelation: "companies"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "filing_register_gst_registration_id_company_id_fkey"
+            columns: ["gst_registration_id", "company_id"]
+            isOneToOne: false
+            referencedRelation: "gst_registrations"
+            referencedColumns: ["id", "company_id"]
+          },
+        ]
+      }
       fixed_assets: {
         Row: {
           acquisition_date: string
@@ -2386,6 +2452,60 @@ export type Database = {
           },
         ]
       }
+      llp_partner_contributions: {
+        Row: {
+          amount: number
+          company_id: string
+          contribution_date: string
+          contribution_type: string
+          created_at: string
+          created_by: string | null
+          director_id: string
+          id: string
+          notes: string | null
+          valuation_certificate_reference: string | null
+        }
+        Insert: {
+          amount: number
+          company_id: string
+          contribution_date: string
+          contribution_type: string
+          created_at?: string
+          created_by?: string | null
+          director_id: string
+          id?: string
+          notes?: string | null
+          valuation_certificate_reference?: string | null
+        }
+        Update: {
+          amount?: number
+          company_id?: string
+          contribution_date?: string
+          contribution_type?: string
+          created_at?: string
+          created_by?: string | null
+          director_id?: string
+          id?: string
+          notes?: string | null
+          valuation_certificate_reference?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "llp_partner_contributions_company_id_fkey"
+            columns: ["company_id"]
+            isOneToOne: false
+            referencedRelation: "companies"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "llp_partner_contributions_director_company_fkey"
+            columns: ["director_id", "company_id"]
+            isOneToOne: false
+            referencedRelation: "company_directors"
+            referencedColumns: ["id", "company_id"]
+          },
+        ]
+      }
       meetings: {
         Row: {
           agenda: string
@@ -3055,6 +3175,116 @@ export type Database = {
           name?: string
         }
         Relationships: []
+      }
+      share_classes: {
+        Row: {
+          authorized_shares: number
+          class_name: string
+          company_id: string
+          created_at: string
+          created_by: string | null
+          id: string
+          nominal_value_per_share: number
+          updated_at: string
+        }
+        Insert: {
+          authorized_shares: number
+          class_name: string
+          company_id: string
+          created_at?: string
+          created_by?: string | null
+          id?: string
+          nominal_value_per_share: number
+          updated_at?: string
+        }
+        Update: {
+          authorized_shares?: number
+          class_name?: string
+          company_id?: string
+          created_at?: string
+          created_by?: string | null
+          id?: string
+          nominal_value_per_share?: number
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "share_classes_company_id_fkey"
+            columns: ["company_id"]
+            isOneToOne: false
+            referencedRelation: "companies"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      share_holdings: {
+        Row: {
+          company_id: string
+          consideration: string | null
+          created_at: string
+          created_by: string | null
+          date_of_allotment: string
+          date_of_cessation: string | null
+          folio_number: string | null
+          holder_address: string | null
+          holder_name: string
+          holder_occupation: string | null
+          holder_pan: string | null
+          id: string
+          share_class_id: string
+          shares_held: number
+          updated_at: string
+        }
+        Insert: {
+          company_id: string
+          consideration?: string | null
+          created_at?: string
+          created_by?: string | null
+          date_of_allotment: string
+          date_of_cessation?: string | null
+          folio_number?: string | null
+          holder_address?: string | null
+          holder_name: string
+          holder_occupation?: string | null
+          holder_pan?: string | null
+          id?: string
+          share_class_id: string
+          shares_held: number
+          updated_at?: string
+        }
+        Update: {
+          company_id?: string
+          consideration?: string | null
+          created_at?: string
+          created_by?: string | null
+          date_of_allotment?: string
+          date_of_cessation?: string | null
+          folio_number?: string | null
+          holder_address?: string | null
+          holder_name?: string
+          holder_occupation?: string | null
+          holder_pan?: string | null
+          id?: string
+          share_class_id?: string
+          shares_held?: number
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "share_holdings_company_id_fkey"
+            columns: ["company_id"]
+            isOneToOne: false
+            referencedRelation: "companies"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "share_holdings_share_class_id_company_id_fkey"
+            columns: ["share_class_id", "company_id"]
+            isOneToOne: false
+            referencedRelation: "share_classes"
+            referencedColumns: ["id", "company_id"]
+          },
+        ]
       }
       statutory_rules: {
         Row: {
@@ -3908,6 +4138,35 @@ export type Database = {
           voucher_number: string
         }[]
       }
+      get_advance_tax_status: {
+        Args: { p_as_of_date?: string; p_company_id: string; p_fy_end: string }
+        Returns: {
+          advance_tax_liability_estimate: number
+          applicable: boolean
+          as_of_date: string
+          cumulative_amount_paid: number
+          cumulative_amount_required: number
+          cumulative_percent_required: number
+          due_date: string
+          entity_type: string
+          instalment_label: string
+          instalment_no: number
+          is_due: boolean
+          liability_estimate_basis: string
+          notes: string
+          row_kind: string
+          safe_harbour_percent: number
+          sec208_applicable: boolean
+          sec234b_interest: number
+          sec234b_months: number
+          sec234b_shortfall: number
+          sec234c_interest: number
+          sec234c_note: string
+          shortfall_amount: number
+          total_advance_tax_paid_for_year: number
+          total_interest: number
+        }[]
+      }
       get_agm_status: {
         Args: { p_company_id: string }
         Returns: {
@@ -4029,6 +4288,20 @@ export type Database = {
           nature: string
           variance: number
           variance_percent: number
+        }[]
+      }
+      get_cash_flow_statement: {
+        Args: {
+          p_company_id: string
+          p_period_end: string
+          p_period_start: string
+        }
+        Returns: {
+          amount: number
+          label: string
+          line_item: string
+          section: string
+          step: number
         }[]
       }
       get_cma_ratios: {
@@ -4171,6 +4444,23 @@ export type Database = {
           total_drawing_power: number
         }[]
       }
+      get_filing_register: {
+        Args: { p_company_id: string }
+        Returns: {
+          acknowledgement_number: string
+          additional_fee: number
+          created_at: string
+          fee_paid: number
+          filed_date: string
+          form_code: string
+          gst_registration_id: string
+          gstin: string
+          id: string
+          notes: string
+          period_label: string
+          status: string
+        }[]
+      }
       get_fixed_asset_book_reconciliation: {
         Args: { p_as_at?: string; p_company_id: string }
         Returns: {
@@ -4294,9 +4584,11 @@ export type Database = {
           p_period_start: string
         }
         Returns: {
+          b2b_or_b2c: string
           cess: number
           cgst: number
-          effective_rate_percent: number
+          description: string
+          gst_rate_percent: number
           hsn_sac: string
           igst: number
           sgst: number
@@ -4419,6 +4711,26 @@ export type Database = {
           turnover_ratio: number
         }[]
       }
+      get_itc_180day_reversal: {
+        Args: { p_as_at?: string; p_company_id: string }
+        Returns: {
+          days_overdue: number
+          interest_amount: number
+          invoice_value: number
+          itc_cess: number
+          itc_cgst: number
+          itc_igst: number
+          itc_sgst: number
+          itc_total: number
+          outstanding_amount: number
+          party_name: string
+          reversal_itc: number
+          total_reversal_due: number
+          voucher_date: string
+          voucher_id: string
+          voucher_number: string
+        }[]
+      }
       get_itc_eligibility_summary: {
         Args: { p_company_id: string; p_from: string; p_to: string }
         Returns: {
@@ -4498,6 +4810,21 @@ export type Database = {
           voucher_id: string
           voucher_number: string
           voucher_type: string
+        }[]
+      }
+      get_llp_contribution_summary: {
+        Args: { p_company_id: string }
+        Returns: {
+          contribution_count: number
+          designation: string
+          director_id: string
+          is_current: boolean
+          is_designated_partner: boolean
+          last_contribution_date: string
+          name: string
+          total_cash: number
+          total_contribution: number
+          total_kind: number
         }[]
       }
       get_meetings: {
@@ -4715,6 +5042,20 @@ export type Database = {
           payee_name: string
           payment_count: number
           payment_date: string
+        }[]
+      }
+      get_share_capital_summary: {
+        Args: { p_company_id: string }
+        Returns: {
+          authorized_capital: number
+          authorized_shares: number
+          class_name: string
+          current_holder_count: number
+          issued_shares: number
+          nominal_value_per_share: number
+          paid_up_capital: number
+          share_class_id: string
+          unissued_shares: number
         }[]
       }
       get_stock_summary: {
