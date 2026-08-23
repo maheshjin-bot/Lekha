@@ -1217,6 +1217,62 @@ export type Database = {
           },
         ]
       }
+      company_directors: {
+        Row: {
+          company_id: string
+          created_at: string
+          created_by: string | null
+          date_of_appointment: string
+          date_of_cessation: string | null
+          designation: string
+          din: string | null
+          din_allotment_date: string | null
+          id: string
+          is_opc_nominee: boolean
+          name: string
+          pan: string | null
+          updated_at: string
+        }
+        Insert: {
+          company_id: string
+          created_at?: string
+          created_by?: string | null
+          date_of_appointment: string
+          date_of_cessation?: string | null
+          designation: string
+          din?: string | null
+          din_allotment_date?: string | null
+          id?: string
+          is_opc_nominee?: boolean
+          name: string
+          pan?: string | null
+          updated_at?: string
+        }
+        Update: {
+          company_id?: string
+          created_at?: string
+          created_by?: string | null
+          date_of_appointment?: string
+          date_of_cessation?: string | null
+          designation?: string
+          din?: string | null
+          din_allotment_date?: string | null
+          id?: string
+          is_opc_nominee?: boolean
+          name?: string
+          pan?: string | null
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "company_directors_company_id_fkey"
+            columns: ["company_id"]
+            isOneToOne: false
+            referencedRelation: "companies"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       company_invites: {
         Row: {
           accepted_at: string | null
@@ -1512,6 +1568,68 @@ export type Database = {
           },
         ]
       }
+      employee_tax_declarations: {
+        Row: {
+          company_id: string
+          created_at: string
+          declaration_date: string
+          deduction_80c: number
+          deduction_80d: number
+          employee_id: string
+          financial_year_label: string
+          home_loan_interest_24b: number
+          hra_exemption_claimed: number
+          id: string
+          notes: string | null
+          previous_employer_income: number
+          previous_employer_tds_deducted: number
+          regime: string
+          updated_at: string
+        }
+        Insert: {
+          company_id: string
+          created_at?: string
+          declaration_date: string
+          deduction_80c?: number
+          deduction_80d?: number
+          employee_id: string
+          financial_year_label: string
+          home_loan_interest_24b?: number
+          hra_exemption_claimed?: number
+          id?: string
+          notes?: string | null
+          previous_employer_income?: number
+          previous_employer_tds_deducted?: number
+          regime: string
+          updated_at?: string
+        }
+        Update: {
+          company_id?: string
+          created_at?: string
+          declaration_date?: string
+          deduction_80c?: number
+          deduction_80d?: number
+          employee_id?: string
+          financial_year_label?: string
+          home_loan_interest_24b?: number
+          hra_exemption_claimed?: number
+          id?: string
+          notes?: string | null
+          previous_employer_income?: number
+          previous_employer_tds_deducted?: number
+          regime?: string
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "employee_tax_declarations_employee_id_company_id_fkey"
+            columns: ["employee_id", "company_id"]
+            isOneToOne: false
+            referencedRelation: "employees"
+            referencedColumns: ["id", "company_id"]
+          },
+        ]
+      }
       employees: {
         Row: {
           branch_id: string | null
@@ -1557,11 +1675,11 @@ export type Database = {
         }
         Relationships: [
           {
-            foreignKeyName: "employees_branch_id_fkey"
-            columns: ["branch_id"]
+            foreignKeyName: "employees_branch_id_company_id_fkey"
+            columns: ["branch_id", "company_id"]
             isOneToOne: false
             referencedRelation: "branches"
-            referencedColumns: ["id"]
+            referencedColumns: ["id", "company_id"]
           },
           {
             foreignKeyName: "employees_company_id_fkey"
@@ -1717,6 +1835,10 @@ export type Database = {
           id: string
           is_active: boolean
           legal_name: string | null
+          lut_arn: string | null
+          lut_number: string | null
+          lut_valid_from: string | null
+          lut_valid_to: string | null
           registered_from: string
           registered_to: string | null
           registration_type: string
@@ -1732,6 +1854,10 @@ export type Database = {
           id?: string
           is_active?: boolean
           legal_name?: string | null
+          lut_arn?: string | null
+          lut_number?: string | null
+          lut_valid_from?: string | null
+          lut_valid_to?: string | null
           registered_from: string
           registered_to?: string | null
           registration_type?: string
@@ -1747,6 +1873,10 @@ export type Database = {
           id?: string
           is_active?: boolean
           legal_name?: string | null
+          lut_arn?: string | null
+          lut_number?: string | null
+          lut_valid_from?: string | null
+          lut_valid_to?: string | null
           registered_from?: string
           registered_to?: string | null
           registration_type?: string
@@ -2253,6 +2383,56 @@ export type Database = {
             isOneToOne: false
             referencedRelation: "ref_states"
             referencedColumns: ["code"]
+          },
+        ]
+      }
+      meetings: {
+        Row: {
+          agenda: string
+          company_id: string
+          created_at: string
+          created_by: string | null
+          financial_year_start_year: number | null
+          id: string
+          meeting_date: string
+          meeting_type: string
+          minutes_signed_date: string | null
+          notice_date: string | null
+          updated_at: string
+        }
+        Insert: {
+          agenda: string
+          company_id: string
+          created_at?: string
+          created_by?: string | null
+          financial_year_start_year?: number | null
+          id?: string
+          meeting_date: string
+          meeting_type: string
+          minutes_signed_date?: string | null
+          notice_date?: string | null
+          updated_at?: string
+        }
+        Update: {
+          agenda?: string
+          company_id?: string
+          created_at?: string
+          created_by?: string | null
+          financial_year_start_year?: number | null
+          id?: string
+          meeting_date?: string
+          meeting_type?: string
+          minutes_signed_date?: string | null
+          notice_date?: string | null
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "meetings_company_id_fkey"
+            columns: ["company_id"]
+            isOneToOne: false
+            referencedRelation: "companies"
+            referencedColumns: ["id"]
           },
         ]
       }
@@ -3728,6 +3908,19 @@ export type Database = {
           voucher_number: string
         }[]
       }
+      get_agm_status: {
+        Args: { p_company_id: string }
+        Returns: {
+          agm_recorded: boolean
+          applicable: boolean
+          days_remaining: number
+          deadline_date: string
+          financial_year_start_year: number
+          fy_end_date: string
+          fy_label: string
+          is_first_agm: boolean
+        }[]
+      }
       get_allocatable_entries: {
         Args: {
           p_company_id: string
@@ -3776,6 +3969,7 @@ export type Database = {
           amount: number
           group_name: string
           ledger_name: string
+          ledger_role: string
           nature: string
           side: string
         }[]
@@ -3940,6 +4134,23 @@ export type Database = {
           voucher_type: string
         }[]
       }
+      get_deferred_tax_reconciliation: {
+        Args: { p_company_id: string; p_fy_end: string }
+        Returns: {
+          applicable: boolean
+          cumulative_book_depreciation: number
+          cumulative_tax_depreciation: number
+          cumulative_timing_difference: number
+          effective_tax_rate: number
+          entity_type: string
+          fy_end: string
+          fy_start: string
+          ledger_carried: number
+          movement_to_post: number
+          note: string
+          target_deferred_tax_liability: number
+        }[]
+      }
       get_drawing_power: {
         Args: { p_as_at?: string; p_company_id: string; p_facility_id?: string }
         Returns: {
@@ -4060,6 +4271,21 @@ export type Database = {
           voucher_type: string
         }[]
       }
+      get_gst_setoff_computation: {
+        Args: {
+          p_as_at: string
+          p_company_id: string
+          p_gst_registration_id: string
+        }
+        Returns: {
+          amount: number
+          credit_head: string
+          narration: string
+          row_kind: string
+          step: number
+          tax_head: string
+        }[]
+      }
       get_gstr1_hsn_summary: {
         Args: {
           p_company_id: string
@@ -4080,6 +4306,29 @@ export type Database = {
           uom: string
         }[]
       }
+      get_gstr1_table13: {
+        Args: {
+          p_company_id: string
+          p_gst_registration_id?: string
+          p_period_end: string
+          p_period_start: string
+        }
+        Returns: {
+          branch_code: string
+          branch_id: string
+          cancelled: number
+          financial_year_label: string
+          nature_of_document: string
+          net_issued: number
+          range_has_gap: boolean
+          serial_from: number
+          serial_span: number
+          serial_to: number
+          series_prefix: string
+          total_issued: number
+          voucher_type: string
+        }[]
+      }
       get_gstr1_table8: {
         Args: { p_company_id: string; p_from: string; p_to: string }
         Returns: {
@@ -4089,6 +4338,31 @@ export type Database = {
           non_gst: number
           table_ref: string
           total: number
+        }[]
+      }
+      get_gstr1_table9b: {
+        Args: {
+          p_company_id: string
+          p_gst_registration_id?: string
+          p_period_end: string
+          p_period_start: string
+        }
+        Returns: {
+          against_invoice_date: string
+          against_invoice_number: string
+          cess: number
+          cgst: number
+          igst: number
+          note_date: string
+          note_number: string
+          note_type: string
+          note_value: number
+          party_gstin: string
+          party_name: string
+          place_of_supply: string
+          sgst: number
+          taxable_value: number
+          voucher_id: string
         }[]
       }
       get_income_tax_computation: {
@@ -4224,6 +4498,20 @@ export type Database = {
           voucher_id: string
           voucher_number: string
           voucher_type: string
+        }[]
+      }
+      get_meetings: {
+        Args: { p_company_id: string; p_type_filter?: string }
+        Returns: {
+          agenda: string
+          days_since_meeting: number
+          financial_year_start_year: number
+          id: string
+          meeting_date: string
+          meeting_type: string
+          minutes_overdue: boolean
+          minutes_signed_date: string
+          notice_date: string
         }[]
       }
       get_needs_attention: {
@@ -4556,11 +4844,30 @@ export type Database = {
         }
         Returns: string
       }
+      post_deferred_tax: {
+        Args: {
+          p_branch_id: string
+          p_company_id: string
+          p_fy_end: string
+          p_narration?: string
+        }
+        Returns: string
+      }
       post_depreciation: {
         Args: {
           p_as_at: string
           p_branch_id: string
           p_company_id: string
+          p_narration?: string
+        }
+        Returns: string
+      }
+      post_gst_setoff: {
+        Args: {
+          p_as_at: string
+          p_branch_id: string
+          p_company_id: string
+          p_gst_registration_id: string
           p_narration?: string
         }
         Returns: string

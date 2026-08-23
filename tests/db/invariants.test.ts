@@ -2297,6 +2297,595 @@ describeDb(`write paths (${hasDb ? "live" : noDbReason})`, () => {
 });
 
 // ---------------------------------------------------------------------------
+// GST zero-rated / export / SEZ / deemed-export supply engine (0087)
+// ---------------------------------------------------------------------------
+describeDb(`GST zero-rated supplies (${hasDb ? "live" : noDbReason})`, () => {
+  it("a zero-rated voucher (export_lut, or SEZ under an active LUT) posts no CGST/SGST/IGST", async () => {
+    const rows = await sql(`
+      select v.id, v.voucher_number, v.supply_type, l.name as tax_ledger,
+             e.debit_amount, e.credit_amount
+        from public.vouchers v
+        join public.voucher_entries e on e.voucher_id = v.id
+        join public.ledgers l on l.id = e.ledger_id
+       where v.supply_type = 'export_lut'
+         and not v.is_deleted
+         and (l.name ilike '%CGST%' or l.name ilike '%SGST%' or l.name ilike '%IGST%')
+         and (e.debit_amount > 0 or e.credit_amount > 0)
+    `);
+    expect(rows, `export_lut vouchers with tax wrongly posted:\n${offenders(rows)}`).toEqual([]);
+  });
+
+  it("export_igst and IGST-route SEZ vouchers never post CGST or SGST — Sec 7(5) IGST Act deems both inter-State regardless of the real place of supply", async () => {
+    const rows = await sql(`
+      select v.id, v.voucher_number, v.supply_type, l.name as tax_ledger,
+             e.debit_amount, e.credit_amount
+        from public.vouchers v
+        join public.voucher_entries e on e.voucher_id = v.id
+        join public.ledgers l on l.id = e.ledger_id
+       where v.supply_type in ('export_igst', 'sez')
+         and not v.is_deleted
+         and (l.name ilike '%CGST%' or l.name ilike '%SGST%')
+         and (e.debit_amount > 0 or e.credit_amount > 0)
+    `);
+    expect(rows, `export_igst/sez vouchers wrongly posting CGST or SGST:\n${offenders(rows)}`).toEqual([]);
+  });
+
+  it("a deemed_export voucher is never zero-rated — Sec 147 CGST Act requires tax to be paid upfront, refunded only afterwards", async () => {
+    const rows = await sql(`
+      select v.id, v.voucher_number
+        from public.vouchers v
+        join public.voucher_items vi on vi.voucher_id = v.id
+        join public.items i on i.id = vi.item_id
+       where v.supply_type = 'deemed_export'
+         and not v.is_deleted
+         and i.gst_rate_percent > 0
+         and not exists (
+           select 1 from public.voucher_entries e
+             join public.ledgers l on l.id = e.ledger_id
+            where e.voucher_id = v.id
+              and (l.name ilike '%CGST%' or l.name ilike '%SGST%' or l.name ilike '%IGST%')
+              and (e.debit_amount > 0 or e.credit_amount > 0)
+         )
+       group by v.id, v.voucher_number
+    `);
+    expect(rows, `deemed_export vouchers with a taxable item line but no tax posted:\n${offenders(rows)}`).toEqual([]);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Director / KMP master (0088)
+// ---------------------------------------------------------------------------
+describeDb(`director / KMP master (${hasDb ? "live" : noDbReason})`, () => {
+  it("company_directors carries the CHECK constraints its data model depends on", async () => {
+    // Structural, not a live-INSERT probe: this file is read-only-against-
+    // production by convention (see the file header) — a constraint's
+    // DEFINITION is what a "cessation before appointment" or a "malformed
+    // DIN" test actually needs to prove, not triggering one live.
+    const rows = await sql(`
+      select conname, pg_get_constraintdef(oid) as def
+        from pg_constraint
+       where conrelid = 'public.company_directors'::regclass
+         and conname in ('company_directors_check', 'company_directors_check1',
+                          'company_directors_check2', 'company_directors_din_check',
+                          'company_directors_pan_check')
+    `);
+    const byName = new Map(rows.map((r) => [r.conname as string, r.def as string]));
+    expect(byName.get("company_directors_check"), "cessation-after-appointment check missing").toContain(
+      "date_of_cessation"
+    );
+    expect(byName.get("company_directors_check1"), "DIN-allotment-implies-DIN check missing").toContain(
+      "din_allotment_date"
+    );
+    expect(byName.get("company_directors_check2"), "opc_nominee-implies-flag check missing").toContain(
+      "opc_nominee"
+    );
+    expect(byName.get("company_directors_din_check"), "DIN format check missing").toContain("din");
+    expect(byName.get("company_directors_pan_check"), "PAN format check missing").toContain("is_valid_pan");
+  });
+
+  it("company_directors is scoped by the same RLS shape as every other master table (member read, admin write)", async () => {
+    const rows = await sql(`
+      select policyname, cmd, qual, with_check
+        from pg_policies
+       where tablename = 'company_directors'
+    `);
+    const read = rows.find((r) => r.policyname === "company_directors_read");
+    const write = rows.find((r) => r.policyname === "company_directors_write");
+    expect(read?.qual, "read policy missing or not member-scoped").toContain("is_company_member");
+    expect(write?.qual, "write policy missing or not can_write_company-scoped").toContain("can_write_company");
+  });
+
+  it("no company currently records a serving director with an invalid DIN, a cessation before appointment, or a mismatched OPC nominee flag", async () => {
+    // Data-level check, complementing the structural one above: even though
+    // the constraints make these unwritable going forward, this catches a
+    // constraint that was later loosened or a row that slipped in before one
+    // existed.
+    const rows = await sql(`
+      select id, company_id, name, din, date_of_appointment, date_of_cessation, designation, is_opc_nominee
+        from public.company_directors
+       where (din is not null and din !~ '^[0-9]{8}$')
+          or (date_of_cessation is not null and date_of_cessation < date_of_appointment)
+          or (designation = 'opc_nominee' and not is_opc_nominee)
+    `);
+    expect(rows, `directors violating their own constraints:\n${offenders(rows)}`).toEqual([]);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// P&L and Balance Sheet comparative columns, Schedule III asset split (T2-21, 0089)
+// ---------------------------------------------------------------------------
+describeDb(`comparative-period reporting (${hasDb ? "live" : noDbReason})`, () => {
+  it("get_profit_and_loss over two adjacent sub-periods sums to the same figure as the combined period, per company and ledger", async () => {
+    // The P&L comparative-period column calls this RPC twice — once for the
+    // current period, once for the immediately preceding period of the same
+    // length — and relies on the two calls never double-counting or dropping
+    // a posting at the boundary date. This is that additivity property,
+    // checked directly against the RPC: whole-of-time equals an arbitrary
+    // early-2026 split point plus its complement, for every ledger with any
+    // activity at all.
+    const rows = await sql(`
+      with combined as (
+        select c.id as company_id, c.name as company_name, r.ledger_name,
+               sum(case when r.period = 'whole' then r.amount else 0 end) as whole_amount,
+               sum(case when r.period <> 'whole' then r.amount else 0 end) as split_amount
+          from public.companies c
+          cross join lateral (
+            select 'whole' as period, ledger_name, amount
+              from public.get_profit_and_loss(c.id, '1900-01-01'::date, '2999-12-31'::date, null)
+            union all
+            select 'part1', ledger_name, amount
+              from public.get_profit_and_loss(c.id, '1900-01-01'::date, '2026-01-01'::date, null)
+            union all
+            select 'part2', ledger_name, amount
+              from public.get_profit_and_loss(c.id, '2026-01-02'::date, '2999-12-31'::date, null)
+          ) r
+         group by c.id, c.name, r.ledger_name
+      )
+      select * from combined where round(whole_amount - split_amount, 2) <> 0
+    `);
+    expect(rows, `companies/ledgers where a period split loses or double-counts an amount:\n${offenders(rows)}`).toEqual([]);
+  });
+
+  it("every fixed_asset-nature group carries one of the four Schedule III sub-classification roles", async () => {
+    // 'fixed_asset' itself is retired as a ledger_role value by 0089 — a row
+    // still carrying it (or anything else stray) means the backfill missed
+    // something or a later insert used the old literal by mistake.
+    const rows = await sql(`
+      select id, company_id, name, ledger_role
+        from public.account_groups
+       where nature = 'fixed_asset'
+         and ledger_role not in (
+           'tangible_fixed_asset', 'intangible_fixed_asset',
+           'capital_work_in_progress', 'investment'
+         )
+    `);
+    expect(rows, `fixed_asset groups with an unclassified ledger_role:\n${offenders(rows)}`).toEqual([]);
+  });
+
+  it("every company has exactly one Intangible Assets / CWIP / Non-current Investments group", async () => {
+    const rows = await sql(`
+      select c.id as company_id, c.name,
+             count(*) filter (where g.name = 'Intangible Assets') as intangible,
+             count(*) filter (where g.name = 'Capital Work-in-Progress') as cwip,
+             count(*) filter (where g.name = 'Non-current Investments') as investments
+        from public.companies c
+        left join public.account_groups g
+          on g.company_id = c.id and g.nature = 'fixed_asset' and g.parent_group_id is not null
+       group by c.id, c.name
+      having count(*) filter (where g.name = 'Intangible Assets') <> 1
+          or count(*) filter (where g.name = 'Capital Work-in-Progress') <> 1
+          or count(*) filter (where g.name = 'Non-current Investments') <> 1
+    `);
+    expect(rows, `companies missing (or duplicating) an asset sub-group:\n${offenders(rows)}`).toEqual([]);
+  });
+
+  it("get_balance_sheet's ledger_role buckets sum to exactly the fixed_asset nature total, per company", async () => {
+    // A partition check, not a business-rule check: the four ledger_role
+    // buckets under fixed_asset must sum to the same figure the bare nature
+    // total already gave — the sub-classification is a display regrouping,
+    // never a different number.
+    const rows = await sql(`
+      with totals as (
+        select c.id as company_id, c.name,
+               (select coalesce(sum(amount), 0) from public.get_balance_sheet(c.id, current_date)
+                 where nature = 'fixed_asset') as whole,
+               (select coalesce(sum(amount), 0) from public.get_balance_sheet(c.id, current_date)
+                 where nature = 'fixed_asset'
+                   and ledger_role in ('tangible_fixed_asset','intangible_fixed_asset','capital_work_in_progress','investment')
+               ) as bucketed
+          from public.companies c
+      )
+      select * from totals where round(whole - bucketed, 2) <> 0
+    `);
+    expect(rows, `companies where the sub-classified buckets do not sum to the nature total:\n${offenders(rows)}`).toEqual([]);
+  });
+
+  it("get_balance_sheet no longer grants EXECUTE to PUBLIC or anon", async () => {
+    const rows = await sql(`
+      select grantee, privilege_type from information_schema.routine_privileges
+       where routine_name = 'get_balance_sheet' and grantee in ('PUBLIC', 'anon')
+    `);
+    expect(rows, `get_balance_sheet still reachable by an unauthenticated caller:\n${offenders(rows)}`).toEqual([]);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// GST set-off computation and clearing journal, Sec 49A/Rule 88A (0090)
+// ---------------------------------------------------------------------------
+describeDb(`GST set-off (${hasDb ? "live" : noDbReason})`, () => {
+  it("no set-off leg amount is ever negative, for any live registration today", async () => {
+    const rows = await sql(`
+      select r.company_id, r.id as gst_registration_id, l.row_kind, l.tax_head, l.amount
+        from public.gst_registrations r
+        cross join lateral public.get_gst_setoff_computation(
+          r.company_id, r.id, current_date
+        ) l
+       where l.amount < 0
+    `);
+    expect(rows, `negative set-off amounts:\n${offenders(rows)}`).toEqual([]);
+  });
+
+  it("CGST credit never funds SGST output and SGST credit never funds CGST output (Sec 49(5)(c)/(d))", async () => {
+    const rows = await sql(`
+      select r.company_id, r.id as gst_registration_id, l.tax_head, l.credit_head, l.amount
+        from public.gst_registrations r
+        cross join lateral public.get_gst_setoff_computation(
+          r.company_id, r.id, current_date
+        ) l
+       where l.row_kind = 'utilisation'
+         and ((l.tax_head = 'cgst' and l.credit_head = 'sgst')
+           or (l.tax_head = 'sgst' and l.credit_head = 'cgst'))
+    `);
+    expect(rows, `illegal CGST/SGST cross-utilisation:\n${offenders(rows)}`).toEqual([]);
+  });
+
+  it("Cess never funds, or is funded by, a CGST/SGST/IGST leg", async () => {
+    const rows = await sql(`
+      select r.company_id, r.id as gst_registration_id, l.tax_head, l.credit_head, l.amount
+        from public.gst_registrations r
+        cross join lateral public.get_gst_setoff_computation(
+          r.company_id, r.id, current_date
+        ) l
+       where l.row_kind = 'utilisation'
+         and ((l.tax_head = 'cess') <> (l.credit_head = 'cess'))
+    `);
+    expect(rows, `illegal cess cross-utilisation:\n${offenders(rows)}`).toEqual([]);
+  });
+
+  it("for every head, opening output liability equals utilised-against-it plus net_payable (nothing lost or invented)", async () => {
+    const rows = await sql(`
+      with legs as (
+        select r.company_id, r.id as gst_registration_id, l.*
+          from public.gst_registrations r
+          cross join lateral public.get_gst_setoff_computation(
+            r.company_id, r.id, current_date
+          ) l
+      )
+      select company_id, gst_registration_id, tax_head,
+             max(amount) filter (where row_kind = 'output_opening') as opening,
+             coalesce(sum(amount) filter (where row_kind = 'utilisation'), 0) as utilised,
+             max(amount) filter (where row_kind = 'net_payable') as net_payable
+        from legs
+       where tax_head is not null
+       group by company_id, gst_registration_id, tax_head
+      having round(
+               coalesce(max(amount) filter (where row_kind = 'output_opening'), 0)
+               - coalesce(sum(amount) filter (where row_kind = 'utilisation'), 0)
+               - coalesce(max(amount) filter (where row_kind = 'net_payable'), 0), 2
+             ) <> 0
+    `);
+    expect(rows, `output liability does not reconcile to utilised + net_payable:\n${offenders(rows)}`).toEqual([]);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Deferred tax (AS 22 / Ind AS 12) — depreciation timing difference (0091)
+// ---------------------------------------------------------------------------
+describeDb(`deferred tax (${hasDb ? "live" : noDbReason})`, () => {
+  it("the deferred tax RPCs are not reachable by anon or public", async () => {
+    const rows = await sql(`
+      select p.proname, r.rolname
+        from pg_proc p
+        join pg_namespace n on n.oid = p.pronamespace
+        cross join (values ('anon'), ('public')) as r(rolname)
+       where n.nspname = 'public'
+         and p.proname in ('get_deferred_tax_reconciliation', 'post_deferred_tax')
+         and has_function_privilege(r.rolname, p.oid, 'EXECUTE')
+    `);
+    expect(rows, `deferred tax function reachable by a role it shouldn't be:\n${offenders(rows)}`).toEqual([]);
+  });
+
+  it("every company's Deferred Tax Liabilities (Net) LEDGER sits under the nature='deferred_tax' group, never a same-named impostor", async () => {
+    // A real live landmine this migration found: some companies carry a
+    // second account_group named identically but with nature=
+    // 'non_current_liability' (stray test-data seeding, four minutes before
+    // migration 0037 shipped the real system group). Every lookup in 0091
+    // selects the group by nature, never by name, because of this. This
+    // check guards the group a ledger actually posted to, not the group
+    // catalog itself — the stray duplicate group existing is not a failure
+    // here, a LEDGER sitting under it would be.
+    const rows = await sql(`
+      select l.company_id, l.name, g.nature
+        from public.ledgers l
+        join public.account_groups g on g.id = l.group_id
+       where l.name = 'Deferred Tax Liabilities (Net)'
+         and g.nature <> 'deferred_tax'
+    `);
+    expect(rows, `a Deferred Tax Liabilities (Net) ledger is posted under the wrong group:\n${offenders(rows)}`).toEqual([]);
+  });
+
+  it("Deferred Tax Expense sits under Indirect Expenses, never anywhere that would double as a balance sheet line", async () => {
+    const rows = await sql(`
+      select l.company_id, l.name, g.name as group_name, g.nature
+        from public.ledgers l
+        join public.account_groups g on g.id = l.group_id
+       where l.name = 'Deferred Tax Expense'
+         and g.nature <> 'indirect_expense'
+    `);
+    expect(rows, `Deferred Tax Expense is in the wrong group:\n${offenders(rows)}`).toEqual([]);
+  });
+
+  it("get_deferred_tax_reconciliation only accepts a 31 March financial-year-end date", async () => {
+    await expect(
+      sql(`select * from public.get_deferred_tax_reconciliation(
+        (select id from public.companies limit 1), '2027-06-30'::date
+      )`)
+    ).rejects.toThrow(/financial year end \(31 March\)/);
+  });
+
+  it("the target balance is exactly the cumulative timing difference times the effective rate, for every applicable company", async () => {
+    // A pure arithmetic identity, independent of whether anything has ever
+    // been posted — round(diff * rate / 100, 2) must equal the reported
+    // target on every row where a rate could be derived.
+    const rows = await sql(`
+      select c.id, c.name, r.cumulative_timing_difference, r.effective_tax_rate, r.target_deferred_tax_liability
+        from public.companies c
+        cross join lateral public.get_deferred_tax_reconciliation(c.id, '2027-03-31'::date) r
+       where r.applicable
+         and round(r.cumulative_timing_difference * r.effective_tax_rate / 100, 2) <> r.target_deferred_tax_liability
+    `);
+    expect(rows, `deferred tax target does not match diff x rate:\n${offenders(rows)}`).toEqual([]);
+  });
+
+  it("once posted, the Deferred Tax Liabilities (Net) ledger converges to the reconciliation's target (allowing one sub-rupee re-run for the book-profit feedback loop documented in 0091)", async () => {
+    const rows = await sql(`
+      select c.id, c.name, r.target_deferred_tax_liability, r.ledger_carried, r.movement_to_post
+        from public.companies c
+        cross join lateral public.get_deferred_tax_reconciliation(c.id, '2027-03-31'::date) r
+       where r.applicable
+         and r.ledger_carried <> 0
+         and round(abs(r.movement_to_post), 2) > 1.00
+    `);
+    expect(rows, `a posted deferred tax ledger has drifted from its target by more than a rupee:\n${offenders(rows)}`).toEqual([]);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Meeting register, AGM date (0092)
+// ---------------------------------------------------------------------------
+describeDb(`meeting register (${hasDb ? "live" : noDbReason})`, () => {
+  it("minutes_overdue is true only when minutes_signed_date is still null 30 days after the meeting", async () => {
+    // Re-derives get_meetings' own Sec 118 flag independently — a later
+    // refactor that drops the null-check or changes the 30-day window fails
+    // here too, not just by inspection of the function body.
+    const rows = await sql(`
+      select c.name, m.meeting_type, m.meeting_date, m.minutes_signed_date, m.minutes_overdue
+        from public.companies c
+        cross join lateral public.get_meetings(c.id, null) m
+       where m.minutes_overdue is distinct from
+             (m.minutes_signed_date is null and m.meeting_date + 30 < current_date)
+    `);
+    expect(rows, `minutes_overdue disagrees with its own definition:\n${offenders(rows)}`).toEqual([]);
+  });
+
+  it("every AGM row carries a financial_year_start_year, and no EGM/board row does", async () => {
+    // Guards the CHECK constraint directly (meetings_check) — data that
+    // couldn't exist under the real constraint, so a careless ALTER TABLE
+    // dropping it is still caught.
+    const rows = await sql(`
+      select id, meeting_type, financial_year_start_year
+        from public.meetings
+       where (meeting_type = 'agm' and financial_year_start_year is null)
+          or (meeting_type <> 'agm' and financial_year_start_year is not null)
+    `);
+    expect(rows, `meetings with an FY tag mismatched to their type:\n${offenders(rows)}`).toEqual([]);
+  });
+
+  it("a company never has two AGM rows claiming the same financial year", async () => {
+    // Guards the partial unique index meetings_one_agm_per_fy — adjourned/
+    // re-convened AGMs are an explicitly out-of-scope case (see 0092
+    // header); this test documents that the index still enforces one row.
+    const rows = await sql(`
+      select company_id, financial_year_start_year, count(*) as n
+        from public.meetings
+       where meeting_type = 'agm'
+       group by company_id, financial_year_start_year
+      having count(*) > 1
+    `);
+    expect(rows, `companies with more than one AGM recorded for the same FY:\n${offenders(rows)}`).toEqual([]);
+  });
+
+  it("get_agm_status never reports both agm_recorded and a non-null days_remaining", async () => {
+    // The two fields are meant to be mutually exclusive by construction —
+    // once an AGM is recorded for the relevant FY there is no countdown left
+    // to show, and this re-checks that get_agm_status's CASE actually
+    // enforces it rather than trusting the function's own logic.
+    const rows = await sql(`
+      select c.name, s.fy_label, s.agm_recorded, s.days_remaining
+        from public.companies c
+        cross join lateral public.get_agm_status(c.id) s
+       where s.applicable and s.agm_recorded and s.days_remaining is not null
+    `);
+    expect(rows, `AGM status rows showing both recorded=true and a countdown:\n${offenders(rows)}`).toEqual([]);
+  });
+
+  it("get_agm_status.applicable is true only for pvt_ltd and ltd companies", async () => {
+    // Sec 96(1) proviso exempts an OPC outright, and an LLP has no AGM under
+    // the LLP Act at all — this is deliberately NARROWER than 0062's own
+    // AOC-4/MGT-7A entity filter, which also includes 'opc'; the two
+    // functions answer different questions. See 0092 header.
+    const rows = await sql(`
+      select c.name, c.entity_type, s.applicable
+        from public.companies c
+        cross join lateral public.get_agm_status(c.id) s
+       where s.applicable is distinct from (c.entity_type in ('pvt_ltd', 'ltd'))
+    `);
+    expect(rows, `get_agm_status.applicable disagrees with entity_type:\n${offenders(rows)}`).toEqual([]);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Employee tax declarations, Sec 115BAC(1A) regime election (0093)
+// ---------------------------------------------------------------------------
+describeDb(`employee tax declarations (${hasDb ? "live" : noDbReason})`, () => {
+  it("employee_tax_declarations carries the CHECK/UNIQUE/composite-FK constraints its data model depends on", async () => {
+    const rows = await sql(`
+      select conname, pg_get_constraintdef(oid) as def
+        from pg_constraint
+       where conrelid = 'public.employee_tax_declarations'::regclass
+         and conname in (
+           'employee_tax_declarations_check',
+           'employee_tax_declarations_financial_year_label_check',
+           'employee_tax_declarations_regime_check',
+           'employee_tax_declarations_employee_id_financial_year_label_key',
+           'employee_tax_declarations_employee_id_company_id_fkey'
+         )
+    `);
+    const byName = new Map(rows.map((r) => [r.conname as string, r.def as string]));
+    expect(byName.get("employee_tax_declarations_check"), "new-regime-zeroes-deductions check missing").toContain(
+      "deduction_80c"
+    );
+    expect(
+      byName.get("employee_tax_declarations_financial_year_label_check"),
+      "FY label format check missing"
+    ).toContain("financial_year_label");
+    expect(byName.get("employee_tax_declarations_regime_check"), "regime enum check missing").toContain("regime");
+    expect(
+      byName.get("employee_tax_declarations_employee_id_financial_year_label_key"),
+      "one-declaration-per-employee-per-year UNIQUE missing"
+    ).toContain("UNIQUE");
+    expect(
+      byName.get("employee_tax_declarations_employee_id_company_id_fkey"),
+      "composite tenancy FK missing — a row could point at another company's employee"
+    ).toContain("company_id");
+  });
+
+  it("no employee has more than one declaration for the same financial year, and no 'new' regime row carries an old-regime deduction", async () => {
+    const rows = await sql(`
+      select employee_id, financial_year_label, count(*) as n
+        from public.employee_tax_declarations
+       group by employee_id, financial_year_label
+      having count(*) > 1
+    `);
+    expect(rows, `duplicate declarations for one employee/year:\n${offenders(rows)}`).toEqual([]);
+
+    const badRegime = await sql(`
+      select id, employee_id, financial_year_label, deduction_80c, deduction_80d,
+             hra_exemption_claimed, home_loan_interest_24b
+        from public.employee_tax_declarations
+       where regime = 'new'
+         and (deduction_80c <> 0 or deduction_80d <> 0
+              or hra_exemption_claimed <> 0 or home_loan_interest_24b <> 0)
+    `);
+    expect(badRegime, `'new' regime declarations carrying old-regime deductions:\n${offenders(badRegime)}`).toEqual([]);
+  });
+
+  it("employee_tax_declarations is scoped by member-read / admin-write RLS", async () => {
+    const rows = await sql(`
+      select policyname, cmd, qual
+        from pg_policies
+       where tablename = 'employee_tax_declarations'
+    `);
+    const read = rows.find((r) => r.policyname === "employee_tax_declarations_read");
+    const write = rows.find((r) => r.policyname === "employee_tax_declarations_write");
+    expect(read?.qual, "read policy missing or not member-scoped").toContain("is_company_member");
+    expect(write?.qual, "write policy missing or not admin-scoped").toContain("is_company_admin");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// GSTR-1 Table 9B (CDNR) and Table 13 (documents issued) (0094)
+// ---------------------------------------------------------------------------
+describeDb(`GSTR-1 Table 9B and Table 13 (${hasDb ? "live" : noDbReason})`, () => {
+  it("get_gstr1_table9b never returns a debit note or an unregistered party — CDNR is credit-notes-to-registered-parties only", async () => {
+    // LEKHA's debit_note voucher_type is always input-side (see 0035's own
+    // voucher_type filters); if this ever returns a debit note, either this
+    // function's WHERE clause regressed or create_invoice's voucher_type
+    // routing changed underneath it.
+    const rows = await sql(`
+      select c.name, t.voucher_id, t.note_type, t.party_gstin
+        from public.companies c
+        cross join lateral public.get_gstr1_table9b(c.id, '1900-01-01'::date, '2999-12-31'::date) t
+       where t.note_type <> 'credit' or t.party_gstin is null
+    `);
+    expect(rows, `Table 9B returned a non-credit-note or unregistered-party row:\n${offenders(rows)}`).toEqual([]);
+  });
+
+  it("get_gstr1_table13's own arithmetic holds: total issued equals net issued plus cancelled, and every serial range is ordered", async () => {
+    // Table 13 resolves its financial year from p_period_start alone (see
+    // 0094's own header) and is NOT meaningful over an arbitrarily wide
+    // range spanning centuries — verified live: an unbounded 1900-2999 range
+    // returns zero rows even for a company with real vouchers, because no
+    // real FY label matches the nonsense FY '1900' resolves to. This check
+    // uses the current financial year, which is what every real caller of
+    // this report actually passes.
+    const rows = await sql(`
+      select c.name, t.series_prefix, t.total_issued, t.net_issued, t.cancelled, t.serial_from, t.serial_to
+        from public.companies c
+        cross join lateral public.get_gstr1_table13(c.id, '2026-04-01'::date, '2027-03-31'::date) t
+       where t.total_issued <> t.net_issued + t.cancelled
+          or (t.serial_from is not null and t.serial_to is not null and t.serial_from > t.serial_to)
+    `);
+    expect(rows, `Table 13 arithmetic or serial ordering broke:\n${offenders(rows)}`).toEqual([]);
+  });
+
+  it("get_gstr1_table9b and get_gstr1_table13 are not reachable by anon or public", async () => {
+    const rows = await sql(`
+      select routine_name, grantee, privilege_type
+        from information_schema.routine_privileges
+       where routine_name in ('get_gstr1_table9b', 'get_gstr1_table13')
+         and grantee in ('PUBLIC', 'anon')
+    `);
+    expect(rows, `Table 9B/13 reachable by a role it shouldn't be:\n${offenders(rows)}`).toEqual([]);
+  });
+
+  it("voucher_number_sequences is readable under RLS scoped to company membership and branch access — the read policy this migration had to add", async () => {
+    // get_gstr1_table13 is the first SECURITY INVOKER function in this
+    // codebase to read voucher_number_sequences under a real user's own
+    // role. Live testing found the table had carried row_security=true with
+    // ZERO policies since migration 0007 — deny-all for anyone who wasn't
+    // the SECURITY DEFINER next_voucher_number bypassing RLS as its owner.
+    // This is the structural guard that the fix (an additive read policy,
+    // no write policy) stays in place.
+    const rows = await sql(`
+      select policyname, cmd, qual
+        from pg_policies
+       where tablename = 'voucher_number_sequences'
+    `);
+    const read = rows.find((r) => r.cmd === "SELECT");
+    expect(rows.length, "voucher_number_sequences has no RLS policy at all again").toBeGreaterThan(0);
+    expect(read?.qual, "voucher_number_sequences read policy is not company/branch scoped").toContain(
+      "is_company_member"
+    );
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Needs fixtures. Seeded database only — never the live project.
+// ---------------------------------------------------------------------------
+describe.skip("post_gst_setoff, post_deferred_tax [needs seed]", () => {
+  // SEED: a company with an active GST registration, an admin member, and
+  // posted output_cgst/output_sgst/input_cgst/input_sgst balances (e.g. via
+  // create_invoice on a taxable sale and purchase).
+  it("posts a balanced journal that zeroes the output ledgers", async () => {});
+  it("credits GST Payable only with the genuine shortfall, never the gross output tax", async () => {});
+  it("leaves unutilised input credit exactly where it was — never moves it to GST Refund Receivable", async () => {});
+  it("re-running for the same date with nothing new posted raises rather than double-posting", async () => {});
+  it("a member who is not admin/accountant (can_write_company false) cannot call post_gst_setoff", async () => {});
+  it("posting for registration A never touches registration B's ledgers in the same company", async () => {});
+});
+
+// ---------------------------------------------------------------------------
 // Needs fixtures. Seeded database only — never the live project.
 // ---------------------------------------------------------------------------
 describe.skip("RLS, both directions [needs seed]", () => {

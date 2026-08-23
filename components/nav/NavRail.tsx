@@ -64,6 +64,8 @@ export function NavRail({
         { href: `${base}/tax-payments`, label: "Tax payments" },
         { href: `${base}/godowns`, label: "Godowns" },
         { href: `${base}/employees`, label: "Employees" },
+        { href: `${base}/directors`, label: "Directors & KMP" },
+        { href: `${base}/meetings`, label: "Meetings" },
       ],
     },
     {
@@ -71,6 +73,7 @@ export function NavRail({
       items: [
         { href: `${base}/registrations`, label: "Registrations" },
         { href: `${base}/reports/gst-registers`, label: "Registers" },
+        { href: `${base}/reports/gst-setoff`, label: "GST set-off" },
       ],
     },
     {
@@ -100,6 +103,7 @@ export function NavRail({
         { href: `${base}/reports/tds-summary`, label: "TDS summary" },
         { href: `${base}/lower-deduction`, label: "Sec 197 certificates" },
         { href: `${base}/reports/tax-depreciation`, label: "Tax depreciation" },
+        { href: `${base}/deferred-tax`, label: "Deferred tax" },
         { href: `${base}/reports/income-tax`, label: "Income tax" },
         { href: `${base}/reports/tax-audit`, label: "Tax audit" },
         { href: `${base}/reports/payroll-register`, label: "Payroll register" },
