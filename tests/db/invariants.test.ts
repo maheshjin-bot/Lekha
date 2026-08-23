@@ -1956,6 +1956,54 @@ describeDb(`ITC blocked credits (${hasDb ? "live" : noDbReason})`, () => {
 });
 
 // ---------------------------------------------------------------------------
+// Conditional module resolution (0083)
+// ---------------------------------------------------------------------------
+describeDb(`conditional module resolution (${hasDb ? "live" : noDbReason})`, () => {
+  it("every conditional module that has earned activation is active", async () => {
+    // The resolver was only ever triggered by changes to `companies` and
+    // `gst_registrations`, never by a module toggle — so a conditional module
+    // whose depends_on names an OPTIONAL module could never switch itself on,
+    // because enabling the dependency was exactly the event nothing listened
+    // for. Two modules sit in that position (payroll_statutory on payroll,
+    // gst_multistate on gst + multi_branch) and two real companies were living
+    // it: payroll enabled, compliance_mode 'compliance', and PF/ESI/PT quietly
+    // switched off.
+    //
+    // This restates the resolver's own rule as a fact about the data: if the
+    // activation condition is met and every dependency is active, the module
+    // must be on.
+    const rows = await sql(`
+      select c.name, r.code as should_be_active
+        from public.companies c
+        cross join public.ref_modules r
+       where r.tier = 'conditional'
+         and app_private.module_condition_met(c.id, r.activates_when)
+         and not exists (
+           select 1 from unnest(r.depends_on) d(code)
+            where not app_private.module_active(c.id, d.code)
+         )
+         and not app_private.module_active(c.id, r.code)
+       order by 1, 2
+    `);
+    expect(rows, `conditional modules that should be active and are not:\n${offenders(rows)}`).toEqual([]);
+  });
+
+  it("set_module re-resolves the conditional tier", async () => {
+    // Structural rather than behavioural, because exercising it needs a write.
+    // Without this call the invariant above is only true until the next toggle.
+    const rows = await sql(`
+      select p.proname
+        from pg_proc p
+        join pg_namespace n on n.oid = p.pronamespace
+       where n.nspname = 'public'
+         and p.proname = 'set_module'
+         and p.prosrc not like '%resolve_conditional_modules%'
+    `);
+    expect(rows, `set_module no longer re-resolves conditional modules:\n${offenders(rows)}`).toEqual([]);
+  });
+});
+
+// ---------------------------------------------------------------------------
 // Tenancy: what the catalog can prove without fixtures
 // ---------------------------------------------------------------------------
 describeDb(`tenancy and RLS, catalog-level (${hasDb ? "live" : noDbReason})`, () => {
