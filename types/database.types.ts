@@ -2972,6 +2972,88 @@ export type Database = {
           },
         ]
       }
+      tax_payments: {
+        Row: {
+          amount: number
+          branch_id: string | null
+          bsr_code: string | null
+          challan_reference: string | null
+          challan_serial: string | null
+          company_id: string
+          created_at: string
+          created_by: string | null
+          financial_year_label: string
+          id: string
+          minor_head: string | null
+          notes: string | null
+          payment_date: string
+          tax_type: string
+          tds_section: string | null
+          updated_at: string
+          voucher_id: string | null
+        }
+        Insert: {
+          amount: number
+          branch_id?: string | null
+          bsr_code?: string | null
+          challan_reference?: string | null
+          challan_serial?: string | null
+          company_id: string
+          created_at?: string
+          created_by?: string | null
+          financial_year_label: string
+          id?: string
+          minor_head?: string | null
+          notes?: string | null
+          payment_date: string
+          tax_type: string
+          tds_section?: string | null
+          updated_at?: string
+          voucher_id?: string | null
+        }
+        Update: {
+          amount?: number
+          branch_id?: string | null
+          bsr_code?: string | null
+          challan_reference?: string | null
+          challan_serial?: string | null
+          company_id?: string
+          created_at?: string
+          created_by?: string | null
+          financial_year_label?: string
+          id?: string
+          minor_head?: string | null
+          notes?: string | null
+          payment_date?: string
+          tax_type?: string
+          tds_section?: string | null
+          updated_at?: string
+          voucher_id?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "tax_payments_branch_id_fkey"
+            columns: ["branch_id"]
+            isOneToOne: false
+            referencedRelation: "branches"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "tax_payments_company_id_fkey"
+            columns: ["company_id"]
+            isOneToOne: false
+            referencedRelation: "companies"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "tax_payments_voucher_id_fkey"
+            columns: ["voucher_id"]
+            isOneToOne: false
+            referencedRelation: "vouchers"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       voucher_entries: {
         Row: {
           branch_id: string
@@ -3961,6 +4043,7 @@ export type Database = {
       get_income_tax_computation: {
         Args: { p_company_id: string; p_fy_end: string; p_fy_start: string }
         Returns: {
+          advance_tax_paid: number
           applicable: boolean
           book_depreciation_addback: number
           book_depreciation_per_register: number
@@ -3972,11 +4055,13 @@ export type Database = {
           entity_type: string
           gross_total_income: number
           msme_disallowance_addback: number
+          net_tax_payable: number
           note: string
           partner_remuneration_booked: number
           partner_remuneration_disallowed: number
           rebate_87a: number
           regime_used: string
+          self_assessment_tax_paid: number
           short_term_capital_gain: number
           short_term_capital_loss: number
           surcharge: number
@@ -3984,6 +4069,7 @@ export type Database = {
           tax_before_rebate: number
           tax_depreciation_deduction: number
           taxable_income: number
+          tds_tcs_credit: number
           total_tax: number
         }[]
       }

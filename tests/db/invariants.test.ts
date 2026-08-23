@@ -1653,6 +1653,77 @@ describeDb(`income tax losses and Sec 50 (${hasDb ? "live" : noDbReason})`, () =
 });
 
 // ---------------------------------------------------------------------------
+// Tax payments and net tax (0079)
+// ---------------------------------------------------------------------------
+describeDb(`tax payments and net tax (${hasDb ? "live" : noDbReason})`, () => {
+  it("get_income_tax_computation is still not reachable by anon or public", async () => {
+    // Dropped and recreated a second time in 0079 for another widened return
+    // type. Each drop takes its grants with it.
+    const rows = await sql(`
+      select p.proname, r.rolname
+        from pg_proc p
+        join pg_namespace n on n.oid = p.pronamespace
+        cross join (values ('anon'), ('public')) as r(rolname)
+       where n.nspname = 'public'
+         and p.proname = 'get_income_tax_computation'
+         and has_function_privilege(r.rolname, p.oid, 'EXECUTE')
+    `);
+    expect(rows, `income tax computation reachable by a role it shouldn't be:\n${offenders(rows)}`).toEqual([]);
+  });
+
+  it("tax_payments has row-level security and policies on both read and write", async () => {
+    const rows = await sql(`
+      select c.relname, c.relrowsecurity,
+             (select count(*) from pg_policies p
+               where p.schemaname = 'public' and p.tablename = 'tax_payments') as policies
+        from pg_class c
+        join pg_namespace n on n.oid = c.relnamespace
+       where n.nspname = 'public' and c.relname = 'tax_payments'
+         and (not c.relrowsecurity
+              or (select count(*) from pg_policies p
+                   where p.schemaname = 'public' and p.tablename = 'tax_payments') < 2)
+    `);
+    expect(rows, `tax_payments is not properly protected:\n${offenders(rows)}`).toEqual([]);
+  });
+
+  it("net tax is total tax less everything already paid", async () => {
+    const rows = await sql(`
+      with r as (
+        select c.name, t.*
+          from public.companies c
+          cross join lateral public.get_income_tax_computation(c.id, '2026-04-01', '2027-03-31') t
+         where t.applicable
+      )
+      select name, total_tax, advance_tax_paid, self_assessment_tax_paid,
+             tds_tcs_credit, net_tax_payable
+        from r
+       where round(net_tax_payable
+                   - (total_tax - advance_tax_paid - self_assessment_tax_paid - tds_tcs_credit), 2) <> 0
+       order by 1
+    `);
+    expect(rows, `net tax does not reconcile to what was paid:\n${offenders(rows)}`).toEqual([]);
+  });
+
+  it("every company can record TDS suffered — the deductee side is mapped", async () => {
+    // Before 0079 tax_ledger_map held thirteen purposes and every one was a
+    // liability or an input credit; there was nowhere to debit TDS that a
+    // customer had deducted, so the credit could not be claimed at all.
+    const rows = await sql(`
+      select c.id, c.name
+        from public.companies c
+       where not exists (
+         select 1 from public.tax_ledger_map m
+          where m.company_id = c.id
+            and m.gst_registration_id is null
+            and m.purpose = 'tds_receivable'
+       )
+       order by 2
+    `);
+    expect(rows, `companies with no TDS Receivable ledger:\n${offenders(rows)}`).toEqual([]);
+  });
+});
+
+// ---------------------------------------------------------------------------
 // Tenancy: what the catalog can prove without fixtures
 // ---------------------------------------------------------------------------
 describeDb(`tenancy and RLS, catalog-level (${hasDb ? "live" : noDbReason})`, () => {

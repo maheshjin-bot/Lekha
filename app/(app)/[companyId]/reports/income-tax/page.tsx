@@ -86,6 +86,10 @@ export default async function IncomeTaxPage({
   const surcharge = Number(result.surcharge);
   const cess = Number(result.cess);
   const totalTax = Number(result.total_tax);
+  const advanceTax = Number(result.advance_tax_paid ?? 0);
+  const selfAssessmentTax = Number(result.self_assessment_tax_paid ?? 0);
+  const tdsCredit = Number(result.tds_tcs_credit ?? 0);
+  const netTaxPayable = Number(result.net_tax_payable ?? 0);
 
   return (
     <ReportShell
@@ -192,14 +196,50 @@ export default async function IncomeTaxPage({
             <td className={td}>+ Cess (4%)</td>
             <td className={num}>{formatINR(cess, { showZero: true })}</td>
           </tr>
-          <tr className="bg-success-soft">
-            <td className={td + " text-base font-bold"}>Total tax</td>
-            <td className={num + " text-base font-bold"}>
+          <tr className="border-b border-border bg-bg">
+            <td className={td + " font-semibold"}>Total tax</td>
+            <td className={num + " font-semibold"}>
               {formatINR(totalTax, { showZero: true })}
+            </td>
+          </tr>
+          <tr className="border-b border-border last:border-0">
+            <td className={td}>− Advance tax paid (minor head 100)</td>
+            <td className={num}>{formatINR(advanceTax, { showZero: true })}</td>
+          </tr>
+          <tr className="border-b border-border last:border-0">
+            <td className={td}>− Self-assessment / regular assessment tax (300, 400)</td>
+            <td className={num}>{formatINR(selfAssessmentTax, { showZero: true })}</td>
+          </tr>
+          <tr className="border-b border-border last:border-0">
+            <td className={td}>
+              − TDS/TCS deducted by others (Sec 199)
+              <div className="text-xs text-ink-faint">
+                Movement on TDS Receivable during this year — not its carried-forward balance
+              </div>
+            </td>
+            <td className={num}>{formatINR(tdsCredit, { showZero: true })}</td>
+          </tr>
+          <tr className={netTaxPayable >= 0 ? "bg-success-soft" : "bg-accent-soft"}>
+            <td className={td + " text-base font-bold"}>
+              {netTaxPayable >= 0 ? "Net tax payable" : "Refund due"}
+            </td>
+            <td className={num + " text-base font-bold"}>
+              {formatINR(Math.abs(netTaxPayable), { showZero: true })}
             </td>
           </tr>
         </tbody>
       </table>
+
+      <p className="border-t border-border px-4 py-3 text-xs text-ink-faint">
+        Advance tax and self-assessment come from challans recorded on{" "}
+        <Link href={`/${companyId}/tax-payments`} className="underline">
+          Tax payments
+        </Link>
+        . If the net figure looks too high, the challans are probably not entered yet — this report
+        can only net what it has been told about. Interest under Sec 234A/234B/234C for late filing
+        or short or deferred advance tax is <strong className="font-medium text-ink">not</strong>{" "}
+        computed, so a genuine shortfall will cost more than the figure above.
+      </p>
 
       {(businessLossCf > 0 || capitalLossCf > 0) && (
         <div className="border-t border-border bg-warning-soft px-4 py-3 text-xs text-ink">
