@@ -55,6 +55,15 @@ const ASSET_ORDER = {
 // the original "always show, nil or not" behaviour.
 const SCHEDULE_III_PRESENT_ONLY = new Set(["capital"]);
 
+/** The day before a YYYY-MM-DD date. Anchored at noon UTC so it cannot slip
+ * across a day boundary — the same reasoning lib/utils/period.ts spells out
+ * for its own date arithmetic. */
+function dayBefore(date: string): string {
+  const d = new Date(`${date}T12:00:00Z`);
+  d.setUTCDate(d.getUTCDate() - 1);
+  return d.toISOString().slice(0, 10);
+}
+
 export default async function BalanceSheetPage({
   params,
   searchParams,
@@ -80,15 +89,49 @@ export default async function BalanceSheetPage({
     to: typeof sp.as_at === "string" ? sp.as_at : undefined,
   });
 
-  const { data: branches } = await supabase
-    .from("branches")
-    .select("id, code, name")
-    .eq("company_id", companyId)
-    .eq("is_active", true)
-    .order("is_head_office", { ascending: false });
+  const [{ data: branches }, { data: companyRow }] = await Promise.all([
+    supabase
+      .from("branches")
+      .select("id, code, name")
+      .eq("company_id", companyId)
+      .eq("is_active", true)
+      .order("is_head_office", { ascending: false }),
+    supabase.from("companies").select("book_beginning_date").eq("id", companyId).single(),
+  ]);
   const branchId = typeof sp.branch === "string" ? sp.branch : undefined;
 
-  const [{ data: rows }, { data: pl }] = await Promise.all([
+  // The balance sheet reads every ledger CUMULATIVELY from the day the books
+  // began (get_balance_sheet -> ledger_opening_signed, which sums all entries
+  // before the as-at date). The profit added to the liabilities side, however,
+  // used to cover only the CURRENT financial year — so from a company's second
+  // year onward the statement was out by every rupee of profit earned before
+  // that year.
+  //
+  // Migration 0020's header reasoned that year-end closing entries were
+  // unnecessary "because the reports already compute the P&L and balance sheet
+  // from a from/to range, so a financial year's numbers are already correct
+  // without a year-end journal". That is true of the P&L, which genuinely is a
+  // range. It is not true of the balance sheet, which is not a range at all.
+  //
+  // Proven against live data before this fix was written: for a real company
+  // the statement balanced to 0.00 with the profit window opened at the book
+  // beginning, and was out by exactly the prior period's profit with the
+  // window opened later. The same check across 12 companies x 7 as-at dates
+  // gave a worst imbalance of 0.00 — assets minus liabilities equals profit
+  // accumulated since the books began, at every date, by double entry.
+  //
+  // So profit is carried forward the way a real balance sheet carries it: a
+  // "balance brought forward" line covering every year before this one, plus
+  // this year's own profit. Their sum is what makes the two sides agree, and
+  // showing them as two lines is also how Schedule III expects the Surplus
+  // line to read. Note this deliberately fixes the REPORT rather than posting
+  // a closing journal — a posted year-end entry would have to touch the P&L
+  // ledgers to balance, which would then distort every other consumer of them
+  // (budget variance, CMA ratios, cost-centre P&L, income tax, tax audit).
+  // A real closing voucher remains a separate, open feature.
+  const bookBeginning = companyRow?.book_beginning_date ?? period.from;
+
+  const [{ data: rows }, { data: plCurrent }, { data: plBroughtForward }] = await Promise.all([
     supabase.rpc("get_balance_sheet", {
       p_company_id: companyId,
       p_as_at: period.to,
@@ -100,19 +143,34 @@ export default async function BalanceSheetPage({
       p_to: period.to,
       p_branch_id: branchId,
     }),
+    // Everything earned before this financial year started. If the books
+    // themselves began inside the current year this range runs backwards,
+    // which returns no rows and therefore zero — the correct answer.
+    supabase.rpc("get_profit_and_loss", {
+      p_company_id: companyId,
+      p_from: bookBeginning,
+      p_to: dayBefore(period.from),
+      p_branch_id: branchId,
+    }),
   ]);
 
   const all = rows ?? [];
-  const plRows = pl ?? [];
-  const sumNature = (n: string[]) =>
-    plRows.filter((r) => n.includes(r.nature)).reduce((t, r) => t + Number(r.amount), 0);
+  const sumPL = (plRows: { nature: string; amount: number }[] | null) => {
+    const r = plRows ?? [];
+    const sumNature = (n: string[]) =>
+      r.filter((x) => n.includes(x.nature)).reduce((t, x) => t + Number(x.amount), 0);
+    return (
+      sumNature(["direct_income", "indirect_income"]) -
+      sumNature(["direct_expense", "indirect_expense"])
+    );
+  };
 
-  // The period's profit belongs on the liabilities side — it is owed to the
-  // proprietor. Without it the two sides cannot agree, because income and
-  // expense ledgers are not carried on the balance sheet itself.
-  const profit =
-    sumNature(["direct_income", "indirect_income"]) -
-    sumNature(["direct_expense", "indirect_expense"]);
+  // Both belong on the liabilities side — they are owed to the proprietor.
+  // Without them the two sides cannot agree, because income and expense
+  // ledgers are not carried on the balance sheet itself.
+  const profitThisYear = sumPL(plCurrent);
+  const profitBroughtForward = sumPL(plBroughtForward);
+  const profit = profitBroughtForward + profitThisYear;
 
   const side = (s: string) => all.filter((r) => r.side === s);
   const total = (s: string) =>
@@ -203,10 +261,35 @@ export default async function BalanceSheetPage({
                 </tr>
               );
             })}
-            {sideKey === "liabilities" && profit !== 0 && (
+            {sideKey === "liabilities" && profitBroughtForward !== 0 && (
+              <tr>
+                <td className={td}>
+                  {profitBroughtForward >= 0
+                    ? "Balance brought forward"
+                    : "Accumulated loss brought forward"}
+                  <div className="text-xs text-ink-faint">
+                    Retained from every year before this one
+                  </div>
+                </td>
+                <td className={num}>
+                  {formatINR(Math.abs(profitBroughtForward), { showZero: true })}
+                </td>
+              </tr>
+            )}
+            {sideKey === "liabilities" && profitThisYear !== 0 && (
+              <tr>
+                <td className={td}>
+                  {profitThisYear >= 0 ? "Profit for the period" : "Loss for the period"}
+                </td>
+                <td className={num}>
+                  {formatINR(Math.abs(profitThisYear), { showZero: true })}
+                </td>
+              </tr>
+            )}
+            {sideKey === "liabilities" && profitBroughtForward !== 0 && profitThisYear !== 0 && (
               <tr>
                 <td className={td + " font-semibold"}>
-                  {profit >= 0 ? "Profit for the period" : "Loss for the period"}
+                  {profit >= 0 ? "Profit and Loss Account" : "Profit and Loss Account (debit)"}
                 </td>
                 <td className={num + " font-semibold"}>
                   {formatINR(Math.abs(profit), { showZero: true })}

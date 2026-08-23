@@ -1252,6 +1252,80 @@ describeDb(`ITC-04 prep (${hasDb ? "live" : noDbReason})`, () => {
 });
 
 // ---------------------------------------------------------------------------
+// Retained earnings carry forward (0073)
+// ---------------------------------------------------------------------------
+// The balance sheet reads ledgers cumulatively from the book beginning, so the
+// profit added back to the equity side has to be cumulative too. Reading it for
+// the current financial year only — which is what both the balance-sheet page
+// and get_cma_ratios used to do — drops every rupee earned in earlier years.
+// Neither test can fail today (no company spans two financial years yet), which
+// is exactly why they are here: this breaks silently on a real user's second
+// year, and nothing else in the suite would notice.
+describeDb(`retained earnings carry forward (${hasDb ? "live" : noDbReason})`, () => {
+  it("assets minus liabilities equals profit accumulated since the books began, at every date", async () => {
+    const rows = await sql(`
+      with d as (
+        select c.id, c.name, c.book_beginning_date, dt::date as as_at
+          from public.companies c
+          cross join lateral (
+            select generate_series(
+              c.book_beginning_date + 30, c.book_beginning_date + 400, interval '45 day'
+            ) as dt
+          ) g
+         where exists (select 1 from public.vouchers v where v.company_id = c.id)
+      ),
+      calc as (
+        select d.name, d.as_at,
+          (select coalesce(sum(case when side = 'assets' then amount else -amount end), 0)
+             from public.get_balance_sheet(d.id, d.as_at)) as bs_net,
+          (select coalesce(sum(case when nature in ('direct_income','indirect_income')
+                                    then amount else -amount end), 0)
+             from public.get_profit_and_loss(d.id, d.book_beginning_date, d.as_at)) as cumulative_profit
+        from d
+      )
+      select name, as_at, bs_net, cumulative_profit,
+             round(bs_net - cumulative_profit, 2) as out_by
+        from calc
+       where abs(bs_net - cumulative_profit) > 0.005
+       order by 1, 2
+    `);
+    expect(rows, `balance sheet does not equal cumulative profit:\n${offenders(rows)}`).toEqual([]);
+  });
+
+  it("CMA tangible net worth as at a date is the same whichever window start you ask for", async () => {
+    // Net worth is a position, not a flow — it cannot depend on where the
+    // reporting window happens to open. Before 0073 it did: a window opening
+    // after the book beginning silently omitted the profit earned before it,
+    // understating the borrower's own stake in both gearing ratios a lender
+    // reads first. Verified on live data at the time of the fix: the narrow
+    // window read 5,72,000 against a true 19,01,000, and TOL/TNW 0.17 against
+    // a true 0.05.
+    const rows = await sql(`
+      with co as (
+        select c.id, c.name, c.book_beginning_date,
+               (select max(v.voucher_date) from public.vouchers v where v.company_id = c.id) as last_vch
+          from public.companies c
+         where exists (select 1 from public.vouchers v where v.company_id = c.id)
+      ),
+      nw as (
+        select co.name, co.last_vch,
+          (select value from public.get_cma_ratios(co.id, co.book_beginning_date, co.last_vch)
+            where metric_code = 'networth') as nw_full_window,
+          (select value from public.get_cma_ratios(co.id, co.last_vch, co.last_vch)
+            where metric_code = 'networth') as nw_narrow_window
+        from co
+      )
+      select name, last_vch, nw_full_window, nw_narrow_window,
+             round(abs(coalesce(nw_full_window, 0) - coalesce(nw_narrow_window, 0)), 2) as drift
+        from nw
+       where round(abs(coalesce(nw_full_window, 0) - coalesce(nw_narrow_window, 0)), 2) > 0.01
+       order by 1
+    `);
+    expect(rows, `CMA net worth depends on the window start:\n${offenders(rows)}`).toEqual([]);
+  });
+});
+
+// ---------------------------------------------------------------------------
 // Tenancy: what the catalog can prove without fixtures
 // ---------------------------------------------------------------------------
 describeDb(`tenancy and RLS, catalog-level (${hasDb ? "live" : noDbReason})`, () => {
