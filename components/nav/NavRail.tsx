@@ -98,6 +98,7 @@ export function NavRail({
         { href: `${base}/reports/gstr1-summary`, label: "GSTR-1 summary" },
         { href: `${base}/reports/isd-distribution`, label: "ISD distribution" },
         { href: `${base}/reports/tds-summary`, label: "TDS summary" },
+        { href: `${base}/lower-deduction`, label: "Sec 197 certificates" },
         { href: `${base}/reports/tax-depreciation`, label: "Tax depreciation" },
         { href: `${base}/reports/income-tax`, label: "Income tax" },
         { href: `${base}/reports/tax-audit`, label: "Tax audit" },

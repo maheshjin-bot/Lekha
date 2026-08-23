@@ -2102,6 +2102,41 @@ describeDb(`employer registrations (${hasDb ? "live" : noDbReason})`, () => {
 });
 
 // ---------------------------------------------------------------------------
+// Sec 197 lower-deduction certificates (0086)
+// ---------------------------------------------------------------------------
+describeDb(`lower deduction certificates (${hasDb ? "live" : noDbReason})`, () => {
+  it("a certificate rate always carries a validity window", async () => {
+    // VoucherForm applies the certificate only when BOTH dates are present:
+    //   if (ldc_rate != null && ldc_valid_from && ldc_valid_to)
+    // so a rate saved without dates would show a certificate on file while TDS
+    // was still deducted at the full section rate — silently, with nothing
+    // reporting the discrepancy. The constraint makes that state unreachable;
+    // this is the check that it stays that way, since the consuming condition
+    // lives in application code and could drift from the schema.
+    const rows = await sql(`
+      select id, name, ldc_number, ldc_rate, ldc_valid_from, ldc_valid_to
+        from public.ledgers
+       where ldc_rate is not null
+         and (ldc_valid_from is null or ldc_valid_to is null)
+       order by name
+    `);
+    expect(rows, `certificates that could never be applied:\n${offenders(rows)}`).toEqual([]);
+  });
+
+  it("a certificate is never half-entered", async () => {
+    // Number and rate travel together — one without the other is not a
+    // partially filled record, it is one that cannot be acted on or evidenced.
+    const rows = await sql(`
+      select id, name, ldc_number, ldc_rate
+        from public.ledgers
+       where (ldc_number is null) <> (ldc_rate is null)
+       order by name
+    `);
+    expect(rows, `half-entered certificates:\n${offenders(rows)}`).toEqual([]);
+  });
+});
+
+// ---------------------------------------------------------------------------
 // Tenancy: what the catalog can prove without fixtures
 // ---------------------------------------------------------------------------
 describeDb(`tenancy and RLS, catalog-level (${hasDb ? "live" : noDbReason})`, () => {
