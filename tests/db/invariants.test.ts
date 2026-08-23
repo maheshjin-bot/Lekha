@@ -1724,6 +1724,72 @@ describeDb(`tax payments and net tax (${hasDb ? "live" : noDbReason})`, () => {
 });
 
 // ---------------------------------------------------------------------------
+// Privileges row-level security cannot protect (0080)
+// ---------------------------------------------------------------------------
+describeDb(`RLS-bypassing grants (${hasDb ? "live" : noDbReason})`, () => {
+  it("neither anon nor authenticated holds TRUNCATE, TRIGGER or REFERENCES on any table", async () => {
+    // SELECT/INSERT/UPDATE/DELETE are the API surface and are filtered by
+    // policies, which is how Supabase is meant to work. TRUNCATE is different:
+    // PostgreSQL does NOT apply row-level security to it, so the privilege
+    // empties a table whatever its policies say. TRIGGER and REFERENCES are
+    // unused by PostgREST and by any app code and only widen what a
+    // compromised role could do to the schema.
+    //
+    // Supabase's stock bootstrap grants all of these by default, and
+    // pg_default_acl re-grants them to every new table — so this test is
+    // really guarding against a future table quietly reacquiring them.
+    const rows = await sql(`
+      select table_name, grantee, privilege_type
+        from information_schema.role_table_grants
+       where table_schema = 'public'
+         and grantee in ('anon', 'authenticated')
+         and privilege_type in ('TRUNCATE', 'TRIGGER', 'REFERENCES')
+       order by 1, 2, 3
+    `);
+    expect(
+      rows,
+      `roles hold privileges RLS cannot filter — re-run 0080's revoke:\n${offenders(rows)}`
+    ).toEqual([]);
+  });
+
+  it("a table created by a future migration does not re-acquire them", async () => {
+    // Without this, 0080's revoke fixes today and the next migration undoes it.
+    // 'D' is TRUNCATE, 't' is TRIGGER, 'x' is REFERENCES in an aclitem.
+    //
+    // Scoped to the `postgres` grantor deliberately. There is a second
+    // pg_default_acl entry owned by `supabase_admin` that still grants the
+    // full set, and it CANNOT be changed from here — `postgres` is not a
+    // superuser on Supabase and altering another role's default privileges is
+    // refused (verified: "permission denied to change default privileges").
+    // That entry only governs tables created BY supabase_admin, i.e. platform
+    // internals; every table in this application is created by a migration
+    // running as postgres, which this entry does govern. Asserting on the
+    // supabase_admin row would be asserting something nobody here can fix.
+    // NOTE the double split_part. An aclitem renders as
+    // "anon=arwdm/postgres", so taking everything after '=' leaves the
+    // grantor attached — and "pos*t*gres" contains a 't', which matches the
+    // TRIGGER flag and makes this test fail against a perfectly hardened
+    // database. Strip at '/' first. (Found exactly that way.)
+    const rows = await sql(`
+      select defaclrole::regrole::text as grantor,
+             a::text as aclitem,
+             split_part(split_part(a::text, '=', 2), '/', 1) as privileges
+        from pg_default_acl, unnest(defaclacl) a
+       where defaclnamespace = 'public'::regnamespace
+         and defaclobjtype = 'r'
+         and defaclrole = 'postgres'::regrole
+         and (a::text like 'anon=%' or a::text like 'authenticated=%')
+         and split_part(split_part(a::text, '=', 2), '/', 1) ~ '[Dtx]'
+       order by 1, 2
+    `);
+    expect(
+      rows,
+      `tables created by future migrations would re-acquire RLS-bypassing privileges:\n${offenders(rows)}`
+    ).toEqual([]);
+  });
+});
+
+// ---------------------------------------------------------------------------
 // Tenancy: what the catalog can prove without fixtures
 // ---------------------------------------------------------------------------
 describeDb(`tenancy and RLS, catalog-level (${hasDb ? "live" : noDbReason})`, () => {
