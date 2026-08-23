@@ -113,6 +113,9 @@ export function NavRail({
     { href: `${base}/year-end`, label: "Year-end" },
     { href: `${base}/settings`, label: "Settings" },
     { href: `${base}/settings/api-keys`, label: "API keys" },
+    // Not under /[companyId]: a second factor belongs to the person, not to a
+    // company, so someone working across six companies enrols once.
+    { href: `/security`, label: "Account security" },
   ];
 
   const [openGroup, setOpenGroup] = useState<string | null>(() => {
