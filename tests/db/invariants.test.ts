@@ -1834,6 +1834,68 @@ describeDb(`audit trail (${hasDb ? "live" : noDbReason})`, () => {
 });
 
 // ---------------------------------------------------------------------------
+// Item supply nature and GSTR-1 Table 8 (0081)
+// ---------------------------------------------------------------------------
+describeDb(`item supply nature (${hasDb ? "live" : noDbReason})`, () => {
+  it("get_gstr1_table8 is not reachable by anon or public", async () => {
+    const rows = await sql(`
+      select p.proname, r.rolname
+        from pg_proc p
+        join pg_namespace n on n.oid = p.pronamespace
+        cross join (values ('anon'), ('public')) as r(rolname)
+       where n.nspname = 'public'
+         and p.proname = 'get_gstr1_table8'
+         and has_function_privilege(r.rolname, p.oid, 'EXECUTE')
+    `);
+    expect(rows, `get_gstr1_table8 reachable by a role it shouldn't be:\n${offenders(rows)}`).toEqual([]);
+  });
+
+  it("nothing is both non-taxable and carrying a GST rate", async () => {
+    // A nil-rated, exempt or non-GST item cannot attract a rate. The schema
+    // could not express that before 0081, so the combination was writable and
+    // would have produced tax on a supply that bears none.
+    const rows = await sql(`
+      select id, name, supply_nature, gst_rate_percent, cess_rate_percent
+        from public.items
+       where supply_nature <> 'taxable'
+         and (coalesce(gst_rate_percent, 0) <> 0 or coalesce(cess_rate_percent, 0) <> 0)
+       order by name
+    `);
+    expect(rows, `non-taxable items carrying a rate:\n${offenders(rows)}`).toEqual([]);
+  });
+
+  it("Table 8 totals equal the raw outward lines — the party join never duplicates", async () => {
+    // The obvious way to find the customer is to join voucher_entries on
+    // debit_amount > 0. That multiplies every ITEM line by however many debit
+    // lines the voucher has, so a single invoice with a split settlement or a
+    // discount line silently reports twice. 0081 resolves the party through a
+    // LATERAL ... LIMIT 1 instead; this is the check that it stays that way.
+    // Verified at the time by injecting a second debit line into a real sales
+    // voucher and confirming the total did not move.
+    const rows = await sql(`
+      with per_company as (
+        select c.id, c.name,
+          (select coalesce(sum(t.total), 0)
+             from public.get_gstr1_table8(c.id, '1900-01-01', '2999-12-31') t) as via_rpc,
+          (select coalesce(sum(vi.amount), 0)
+             from public.voucher_items vi
+             join public.vouchers v on v.id = vi.voucher_id
+             join public.items i on i.id = vi.item_id
+            where vi.company_id = c.id and not v.is_deleted
+              and v.voucher_type in ('sales', 'credit_note')
+              and i.supply_nature in ('nil_rated', 'exempt', 'non_gst')) as via_raw
+        from public.companies c
+      )
+      select name, via_rpc, via_raw, round(via_rpc - via_raw, 2) as drift
+        from per_company
+       where round(abs(via_rpc - via_raw), 2) > 0.01
+       order by 1
+    `);
+    expect(rows, `Table 8 does not match the raw outward lines:\n${offenders(rows)}`).toEqual([]);
+  });
+});
+
+// ---------------------------------------------------------------------------
 // Tenancy: what the catalog can prove without fixtures
 // ---------------------------------------------------------------------------
 describeDb(`tenancy and RLS, catalog-level (${hasDb ? "live" : noDbReason})`, () => {

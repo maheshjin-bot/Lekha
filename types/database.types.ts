@@ -1816,6 +1816,7 @@ export type Database = {
           purchase_rate: number | null
           reorder_level: number | null
           sale_rate: number | null
+          supply_nature: string
           uom: string
           updated_at: string
         }
@@ -1840,6 +1841,7 @@ export type Database = {
           purchase_rate?: number | null
           reorder_level?: number | null
           sale_rate?: number | null
+          supply_nature?: string
           uom?: string
           updated_at?: string
         }
@@ -1864,6 +1866,7 @@ export type Database = {
           purchase_rate?: number | null
           reorder_level?: number | null
           sale_rate?: number | null
+          supply_nature?: string
           uom?: string
           updated_at?: string
         }
@@ -4038,6 +4041,17 @@ export type Database = {
           total_quantity: number
           total_value: number
           uom: string
+        }[]
+      }
+      get_gstr1_table8: {
+        Args: { p_company_id: string; p_from: string; p_to: string }
+        Returns: {
+          description: string
+          exempted: number
+          nil_rated: number
+          non_gst: number
+          table_ref: string
+          total: number
         }[]
       }
       get_income_tax_computation: {

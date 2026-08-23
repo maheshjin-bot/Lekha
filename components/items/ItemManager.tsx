@@ -17,6 +17,7 @@ type Item = {
   opening_value: number;
   sale_rate: number | null;
   gst_rate_percent: number;
+  supply_nature: string;
   default_tcs_section: string | null;
   is_active: boolean;
 };
@@ -26,6 +27,16 @@ type TcsSection = { section_code: string; description: string; rate_percent: num
 // The rates actually notified for goods and services — not every percentage
 // in between, so a typo like 12.5 does not sit unnoticed on an invoice.
 const GST_RATES = [0, 0.25, 3, 5, 12, 18, 28];
+
+// Four legally distinct categories that a zero rate used to collapse into one.
+// Zero-rated (export/SEZ) is deliberately absent: it is a property of the
+// transaction, not of the item — the same goods are taxable domestically.
+const SUPPLY_NATURES = [
+  { value: "taxable", label: "Taxable", hint: "Attracts GST at the rate below" },
+  { value: "nil_rated", label: "Nil-rated", hint: "Taxable under GST, tariff rate 0% — no ITC" },
+  { value: "exempt", label: "Exempt", hint: "Exempted by notification (Sec 11) — no ITC" },
+  { value: "non_gst", label: "Non-GST", hint: "Outside GST — petrol, diesel, alcohol" },
+];
 
 export function ItemManager({
   companyId,
@@ -47,6 +58,7 @@ export function ItemManager({
   const [openingValue, setOpeningValue] = useState("0");
   const [saleRate, setSaleRate] = useState("");
   const [gstRate, setGstRate] = useState("18");
+  const [supplyNature, setSupplyNature] = useState("taxable");
   const [tcsSection, setTcsSection] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -74,7 +86,11 @@ export function ItemManager({
         opening_quantity: isService ? 0 : Number(openingQty) || 0,
         opening_value: isService ? 0 : Number(openingValue) || 0,
         sale_rate: saleRate.trim() ? Number(saleRate) : null,
-        gst_rate_percent: Number(gstRate) || 0,
+        supply_nature: supplyNature,
+        // The database refuses a positive rate on a non-taxable supply
+        // (items_non_taxable_has_no_rate). Send what that rule allows rather
+        // than letting the form build a row it will reject.
+        gst_rate_percent: supplyNature === "taxable" ? Number(gstRate) || 0 : 0,
         default_tcs_section: tcsSection || null,
       });
 
@@ -148,7 +164,17 @@ export function ItemManager({
                     )}
                   </td>
                   <td className="px-4 py-2.5 text-right tabular-nums font-mono">
-                    {it.gst_rate_percent > 0 ? `${it.gst_rate_percent}%` : <span className="text-ink-faint">—</span>}
+                    {it.supply_nature === "taxable" ? (
+                      `${it.gst_rate_percent}%`
+                    ) : (
+                      // Naming which of the three it is, rather than the bare
+                      // dash a zero rate used to show — they report to
+                      // different columns of GSTR-1 Table 8.
+                      <span className="font-sans text-xs text-ink-soft">
+                        {SUPPLY_NATURES.find((n) => n.value === it.supply_nature)?.label ??
+                          it.supply_nature}
+                      </span>
+                    )}
                   </td>
                   <td className="px-4 py-2.5">
                     {it.default_tcs_section ? (
@@ -261,15 +287,39 @@ export function ItemManager({
           )}
 
           <label className="flex flex-col gap-1.5">
-            <span className="text-sm font-medium">GST rate</span>
-            <select value={gstRate} onChange={(e) => setGstRate(e.target.value)} className={field}>
-              {GST_RATES.map((r) => (
-                <option key={r} value={r}>
-                  {r}%{r === 0 ? " — Nil / exempt" : ""}
+            <span className="text-sm font-medium">Supply nature</span>
+            <select
+              value={supplyNature}
+              onChange={(e) => setSupplyNature(e.target.value)}
+              className={field}
+            >
+              {SUPPLY_NATURES.map((n) => (
+                <option key={n.value} value={n.value}>
+                  {n.label}
                 </option>
               ))}
             </select>
+            <span className="text-xs text-ink-faint">
+              {SUPPLY_NATURES.find((n) => n.value === supplyNature)?.hint}
+            </span>
           </label>
+
+          {supplyNature === "taxable" && (
+            <label className="flex flex-col gap-1.5">
+              <span className="text-sm font-medium">GST rate</span>
+              <select value={gstRate} onChange={(e) => setGstRate(e.target.value)} className={field}>
+                {GST_RATES.map((r) => (
+                  <option key={r} value={r}>
+                    {r}%
+                  </option>
+                ))}
+              </select>
+              <span className="text-xs text-ink-faint">
+                A taxable supply at 0% is not the same as nil-rated — set the nature above if the
+                goods are nil-rated, exempt or outside GST altogether.
+              </span>
+            </label>
+          )}
 
           <label className="flex flex-col gap-1.5">
             <span className="text-sm font-medium">
