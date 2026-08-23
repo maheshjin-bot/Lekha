@@ -1808,6 +1808,8 @@ export type Database = {
           hsn_sac: string | null
           id: string
           is_active: boolean
+          itc_blocked_clause: string | null
+          itc_eligibility: string
           item_type: string
           maintain_stock: boolean
           name: string
@@ -1833,6 +1835,8 @@ export type Database = {
           hsn_sac?: string | null
           id?: string
           is_active?: boolean
+          itc_blocked_clause?: string | null
+          itc_eligibility?: string
           item_type?: string
           maintain_stock?: boolean
           name: string
@@ -1858,6 +1862,8 @@ export type Database = {
           hsn_sac?: string | null
           id?: string
           is_active?: boolean
+          itc_blocked_clause?: string | null
+          itc_eligibility?: string
           item_type?: string
           maintain_stock?: boolean
           name?: string
@@ -4106,6 +4112,16 @@ export type Database = {
           recipient_turnover: number
           same_state: boolean
           turnover_ratio: number
+        }[]
+      }
+      get_itc_eligibility_summary: {
+        Args: { p_company_id: string; p_from: string; p_to: string }
+        Returns: {
+          blocked_tax: number
+          blocked_taxable_value: number
+          eligible_tax: number
+          eligible_taxable_value: number
+          total_tax: number
         }[]
       }
       get_itc04_table4: {

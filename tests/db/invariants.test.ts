@@ -1896,6 +1896,66 @@ describeDb(`item supply nature (${hasDb ? "live" : noDbReason})`, () => {
 });
 
 // ---------------------------------------------------------------------------
+// Sec 17(5) blocked credits (0082)
+// ---------------------------------------------------------------------------
+describeDb(`ITC blocked credits (${hasDb ? "live" : noDbReason})`, () => {
+  it("get_itc_eligibility_summary is not reachable by anon or public", async () => {
+    const rows = await sql(`
+      select p.proname, r.rolname
+        from pg_proc p
+        join pg_namespace n on n.oid = p.pronamespace
+        cross join (values ('anon'), ('public')) as r(rolname)
+       where n.nspname = 'public'
+         and p.proname = 'get_itc_eligibility_summary'
+         and has_function_privilege(r.rolname, p.oid, 'EXECUTE')
+    `);
+    expect(rows, `get_itc_eligibility_summary reachable by a role it shouldn't be:\n${offenders(rows)}`).toEqual([]);
+  });
+
+  it("the blocked flag and the Sec 17(5) clause always agree", async () => {
+    // A block without a clause is unauditable — nobody can be told which limb
+    // applies. A clause without a block is meaningless. The constraint forbids
+    // both; this is the check that it is still there.
+    const rows = await sql(`
+      select id, name, itc_eligibility, itc_blocked_clause
+        from public.items
+       where (itc_eligibility = 'blocked') <> (itc_blocked_clause is not null)
+       order by name
+    `);
+    expect(rows, `items whose ITC flag and clause disagree:\n${offenders(rows)}`).toEqual([]);
+  });
+
+  it("the eligible/blocked split accounts for every rupee of posted input tax", async () => {
+    // Input tax is posted per VOUCHER while blocking is decided per ITEM, so
+    // the summary apportions each voucher across its lines by taxable value.
+    // Apportionment must be conservative: whatever the split, the two halves
+    // have to add back to exactly what was posted.
+    //
+    // This also catches a real edge the function cannot handle silently — a
+    // voucher carrying input tax but NO item lines would be dropped from the
+    // split entirely, and the totals would then diverge here rather than the
+    // tax quietly disappearing from the report.
+    const rows = await sql(`
+      select name, rpc_total, posted, round(coalesce(rpc_total, 0) - posted, 2) as drift
+        from (
+          select c.name,
+            (select total_tax from public.get_itc_eligibility_summary(c.id, '1900-01-01', '2999-12-31')) as rpc_total,
+            (select coalesce(sum(e.debit_amount - e.credit_amount), 0)
+               from public.tax_ledger_map m
+               join public.voucher_entries e on e.ledger_id = m.ledger_id
+               join public.vouchers v on v.id = e.voucher_id and not v.is_deleted
+              where m.company_id = c.id
+                and m.purpose in ('input_cgst', 'input_sgst', 'input_igst', 'input_cess')) as posted
+          from public.companies c
+        ) x
+       where round(abs(coalesce(rpc_total, 0) - posted), 2) > 0.01
+       order by 1
+    `);
+    expect(rows, `input tax lost or invented by the eligibility split:\n${offenders(rows)}`).toEqual([]);
+  });
+});
+
+// ---------------------------------------------------------------------------
 // Tenancy: what the catalog can prove without fixtures
 // ---------------------------------------------------------------------------
 describeDb(`tenancy and RLS, catalog-level (${hasDb ? "live" : noDbReason})`, () => {

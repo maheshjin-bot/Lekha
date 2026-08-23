@@ -190,7 +190,7 @@ export default async function GstRegistersPage({
 
   const regId = regParam || undefined;
 
-  const [{ data: outputRows }, { data: inputRows }] = await Promise.all([
+  const [{ data: outputRows }, { data: inputRows }, { data: itcRows }] = await Promise.all([
     supabase.rpc("get_gst_output_register", {
       p_company_id: companyId,
       p_period_start: from,
@@ -203,10 +203,18 @@ export default async function GstRegistersPage({
       p_period_end: to,
       p_gst_registration_id: regId,
     }),
+    supabase.rpc("get_itc_eligibility_summary", {
+      p_company_id: companyId,
+      p_from: from,
+      p_to: to,
+    }),
   ]);
 
   const output = (outputRows ?? []) as RegisterRow[];
   const input = (inputRows ?? []) as RegisterRow[];
+  const itc = itcRows?.[0];
+  const blockedTax = Number(itc?.blocked_tax ?? 0);
+  const eligibleTax = Number(itc?.eligible_tax ?? 0);
 
   const outputTax = output.reduce((n, r) => n + Number(r.cgst) + Number(r.sgst) + Number(r.igst) + Number(r.cess), 0);
   const inputTax = input.reduce((n, r) => n + Number(r.cgst) + Number(r.sgst) + Number(r.igst) + Number(r.cess), 0);
@@ -280,11 +288,50 @@ export default async function GstRegistersPage({
       <div className="border-b border-t border-border p-4">
         <h2 className="font-semibold">Input register — inward supplies (GSTR-3B ITC)</h2>
         <p className="mt-0.5 text-xs text-ink-faint">
-          Purchases and debit notes. Does not distinguish eligible from
-          blocked ITC (Sec 17(5)) — this schema does not track that per line.
+          Purchases and debit notes. Input tax is split below into what may be
+          claimed and what Sec 17(5) blocks, per the eligibility set on each item.
         </p>
       </div>
       <RegisterTable rows={input} />
+
+      {itc && (
+        <div className="border-t border-border px-4 py-3">
+          <div className="grid gap-px bg-border sm:grid-cols-3">
+            <div className="bg-surface px-3 py-2">
+              <div className="text-xs text-ink-faint">Claimable ITC</div>
+              <div className="mt-0.5 font-mono tabular-nums text-ink">
+                {formatINR(eligibleTax, { showZero: true })}
+              </div>
+            </div>
+            <div className="bg-surface px-3 py-2">
+              <div className="text-xs text-ink-faint">Blocked — Sec 17(5)</div>
+              <div
+                className={
+                  "mt-0.5 font-mono tabular-nums " +
+                  (blockedTax > 0 ? "text-warning" : "text-ink-faint")
+                }
+              >
+                {formatINR(blockedTax, { showZero: true })}
+              </div>
+            </div>
+            <div className="bg-surface px-3 py-2">
+              <div className="text-xs text-ink-faint">Total input tax</div>
+              <div className="mt-0.5 font-mono tabular-nums text-ink">
+                {formatINR(Number(itc.total_tax ?? 0), { showZero: true })}
+              </div>
+            </div>
+          </div>
+          <p className="mt-2 text-xs text-ink-faint">
+            Blocked input tax is a{" "}
+            <strong className="font-medium text-ink">non-reclaimable reversal in GSTR-3B
+            Table 4(B)(1)</strong>, alongside Rules 38, 42 and 43. It sat in Table 4(D) until the
+            August 2022 revamp, and a good deal of published guidance still describes it that way —
+            if your reference says 4(D), it predates the change. Input tax is posted per voucher
+            while blocking is decided per item, so an invoice mixing the two is apportioned by
+            taxable value; that is exact unless a single invoice is genuinely mixed.
+          </p>
+        </div>
+      )}
 
       <div className="border-t border-border p-4">
         <table className="w-full max-w-sm text-sm">
@@ -310,9 +357,13 @@ export default async function GstRegistersPage({
         CA — not a filing-ready B2B/B2C/HSN-summary bifurcation, and not
         submitted anywhere. LEKHA has no GSTN API access to file directly.
         Tax figures are read back from actual ledger postings, not
-        recomputed from item rates. RCM liability, nil-rated/exempt
-        bifurcation, and the ITC eligibility split under Sec 17(5) are not
-        shown separately.
+        recomputed from item rates. The Sec 17(5) eligibility split is shown
+        above; RCM liability and the B2B/B2C/HSN bifurcation are still not.
+        Nil-rated and exempt supplies are classified per item and reported by{" "}
+        <Link href={`/${companyId}/reports/gstr1-summary`} className="underline">
+          GSTR-1 prep
+        </Link>
+        , not broken out here.
       </p>
     </ReportShell>
   );

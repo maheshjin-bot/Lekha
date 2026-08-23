@@ -31,6 +31,24 @@ const GST_RATES = [0, 0.25, 3, 5, 12, 18, 28];
 // Four legally distinct categories that a zero rate used to collapse into one.
 // Zero-rated (export/SEZ) is deliberately absent: it is a property of the
 // transaction, not of the item — the same goods are taxable domestically.
+// Sec 17(5) blocks ITC on these however genuine the business purpose. The
+// clause is stored alongside the flag so an auditor can be told which limb
+// applies, not merely that something does.
+const ITC_BLOCK_CLAUSES = [
+  { value: "17(5)(a)", label: "17(5)(a) — Motor vehicles (13 seats or fewer)" },
+  { value: "17(5)(aa)", label: "17(5)(aa) — Vessels and aircraft" },
+  { value: "17(5)(ab)", label: "17(5)(ab) — Insurance, servicing, repair of the above" },
+  { value: "17(5)(b)", label: "17(5)(b) — Food, catering, club, insurance, travel benefits" },
+  { value: "17(5)(c)", label: "17(5)(c) — Works contract for immovable property" },
+  { value: "17(5)(d)", label: "17(5)(d) — Construction on own account" },
+  { value: "17(5)(e)", label: "17(5)(e) — Supplies taxed under composition" },
+  { value: "17(5)(f)", label: "17(5)(f) — Supplies to a non-resident taxable person" },
+  { value: "17(5)(fa)", label: "17(5)(fa) — CSR expenditure" },
+  { value: "17(5)(g)", label: "17(5)(g) — Personal consumption" },
+  { value: "17(5)(h)", label: "17(5)(h) — Gifts, free samples, goods lost or written off" },
+  { value: "17(5)(i)", label: "17(5)(i) — Tax paid under Sec 74, 129 or 130" },
+];
+
 const SUPPLY_NATURES = [
   { value: "taxable", label: "Taxable", hint: "Attracts GST at the rate below" },
   { value: "nil_rated", label: "Nil-rated", hint: "Taxable under GST, tariff rate 0% — no ITC" },
@@ -59,6 +77,7 @@ export function ItemManager({
   const [saleRate, setSaleRate] = useState("");
   const [gstRate, setGstRate] = useState("18");
   const [supplyNature, setSupplyNature] = useState("taxable");
+  const [itcBlockedClause, setItcBlockedClause] = useState("");
   const [tcsSection, setTcsSection] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -87,6 +106,10 @@ export function ItemManager({
         opening_value: isService ? 0 : Number(openingValue) || 0,
         sale_rate: saleRate.trim() ? Number(saleRate) : null,
         supply_nature: supplyNature,
+        // The two must agree — a block needs a clause and a clause needs a
+        // block (items_itc_clause_matches_eligibility).
+        itc_eligibility: itcBlockedClause ? "blocked" : "eligible",
+        itc_blocked_clause: itcBlockedClause || null,
         // The database refuses a positive rate on a non-taxable supply
         // (items_non_taxable_has_no_rate). Send what that rule allows rather
         // than letting the form build a row it will reject.
@@ -302,6 +325,33 @@ export function ItemManager({
             <span className="text-xs text-ink-faint">
               {SUPPLY_NATURES.find((n) => n.value === supplyNature)?.hint}
             </span>
+          </label>
+
+          <label className="flex flex-col gap-1.5">
+            <span className="text-sm font-medium">
+              Input tax credit{" "}
+              <span className="font-normal text-ink-faint">
+                leave blank unless Sec 17(5) blocks it
+              </span>
+            </span>
+            <select
+              value={itcBlockedClause}
+              onChange={(e) => setItcBlockedClause(e.target.value)}
+              className={field}
+            >
+              <option value="">Claimable</option>
+              {ITC_BLOCK_CLAUSES.map((c) => (
+                <option key={c.value} value={c.value}>
+                  {c.label}
+                </option>
+              ))}
+            </select>
+            {itcBlockedClause && (
+              <span className="text-xs text-warning">
+                Input tax on this item will be reported as blocked and must not be claimed —
+                a non-reclaimable reversal in GSTR-3B Table 4(B)(1).
+              </span>
+            )}
           </label>
 
           {supplyNature === "taxable" && (
