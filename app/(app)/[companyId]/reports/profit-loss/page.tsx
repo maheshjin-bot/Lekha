@@ -1,38 +1,93 @@
 import Link from "next/link";
 import { createClient } from "@/lib/supabase/server";
 import { formatINR } from "@/lib/utils/currency";
-import { defaultPeriod } from "@/lib/utils/period";
+import { defaultPeriod, comparativePeriod, periodRangeLabel } from "@/lib/utils/period";
 import { ReportShell, num, td, th } from "@/components/reports/ReportShell";
+
+type PLRow = { nature: string; group_name: string; ledger_name: string; amount: number };
+
+/** curr - comp as a signed percentage of |comp|, or null when there is
+ * nothing to divide by — a brand-new line (comp undefined) or a comp that
+ * nets to exactly zero. Rendered as an em dash rather than "Infinity%" or
+ * a fake 0%, neither of which would describe what actually happened. */
+function variancePct(curr: number, comp: number | undefined): number | null {
+  if (comp === undefined || comp === 0) return null;
+  return ((curr - comp) / Math.abs(comp)) * 100;
+}
+
+function formatVariance(pct: number | null): string {
+  if (pct === null) return "—";
+  const sign = pct > 0 ? "+" : "";
+  return `${sign}${pct.toFixed(1)}%`;
+}
 
 // Declared at module scope, not inside the page component: both the simple
 // and schedule_iii layouts below reuse this for a different nature each, and
 // a component re-created on every render (react-hooks/static-components)
 // would multiply with each additional call site instead of staying fixed.
+//
+// `items` carries the CURRENT period's rows (as get_profit_and_loss already
+// returns them: zero-balance ledgers excluded, so a ledger with nothing
+// posted this period never appears here). `compByLedger` is the comparative
+// period's amounts keyed by ledger_name for the same nature. The two are not
+// the same ledger set in general — a ledger can have posted last period and
+// not this one (comp-only) or vice versa (curr-only, the common case) — so
+// the row list actually rendered is the UNION of both, with the missing side
+// showing as nil (formatINR(0) prints "—" already, matching how this report
+// treats any nil figure elsewhere). Without the union, a ledger that zeroed
+// out this period would silently disappear from the comparative TOTAL too,
+// understating the prior period's real total.
 function Block({
   label,
   items,
+  compByLedger,
+  hasComparative,
 }: {
   label: string;
-  items: { ledger_name: string; group_name: string; amount: number }[];
+  items: PLRow[];
+  compByLedger: Map<string, { group_name: string; amount: number }>;
+  hasComparative: boolean;
 }) {
-  if (items.length === 0) return null;
+  const currLedgers = new Set(items.map((r) => r.ledger_name));
+  const compOnly = hasComparative
+    ? [...compByLedger.entries()]
+        .filter(([ledgerName]) => !currLedgers.has(ledgerName))
+        .map(([ledger_name, v]) => ({ ledger_name, group_name: v.group_name, amount: 0, compOnly: true }))
+    : [];
+  const rows = [...items.map((r) => ({ ...r, compOnly: false })), ...compOnly];
+  if (rows.length === 0) return null;
+
+  const currTotal = items.reduce((n, r) => n + Number(r.amount), 0);
+  const compTotal = hasComparative
+    ? rows.reduce((n, r) => n + (compByLedger.get(r.ledger_name)?.amount ?? 0), 0)
+    : undefined;
+
   return (
     <>
       <tr className="bg-bg">
         <td className={td + " font-semibold"} colSpan={2}>
           {label}
         </td>
+        <td className={num + " font-semibold"}>{formatINR(currTotal, { showZero: true })}</td>
         <td className={num + " font-semibold"}>
-          {formatINR(items.reduce((n, r) => n + Number(r.amount), 0), { showZero: true })}
+          {hasComparative ? formatINR(compTotal ?? 0, { showZero: true }) : "—"}
+        </td>
+        <td className={num + " font-semibold text-ink-soft"}>
+          {hasComparative ? formatVariance(variancePct(currTotal, compTotal)) : "—"}
         </td>
       </tr>
-      {items.map((r, i) => (
-        <tr key={i} className="border-b border-border">
-          <td className={td + " pl-8"}>{r.ledger_name}</td>
-          <td className={td + " text-ink-soft "}>{r.group_name}</td>
-          <td className={num}>{formatINR(Number(r.amount))}</td>
-        </tr>
-      ))}
+      {rows.map((r, i) => {
+        const comp = compByLedger.get(r.ledger_name)?.amount;
+        return (
+          <tr key={i} className="border-b border-border">
+            <td className={td + " pl-8"}>{r.ledger_name}</td>
+            <td className={td + " text-ink-soft "}>{r.group_name}</td>
+            <td className={num}>{formatINR(Number(r.amount))}</td>
+            <td className={num + " text-ink-soft"}>{hasComparative ? formatINR(comp ?? 0) : "—"}</td>
+            <td className={num + " text-ink-faint"}>{hasComparative ? formatVariance(variancePct(Number(r.amount), comp)) : "—"}</td>
+          </tr>
+        );
+      })}
     </>
   );
 }
@@ -56,30 +111,69 @@ export default async function ProfitLossPage({
   // Fail safe to 'simple' on any lookup miss — a report page must render,
   // never crash, over a profile it couldn't resolve.
   const scheduleIII = company?.statement_format === "schedule_iii";
+  const startMonth = company?.financial_year_start_month ?? 4;
 
-  const period = defaultPeriod(company?.financial_year_start_month ?? 4, {
+  const period = defaultPeriod(startMonth, {
     from: typeof sp.from === "string" ? sp.from : undefined,
     to: typeof sp.to === "string" ? sp.to : undefined,
   });
 
-  const { data: branches } = await supabase
-    .from("branches")
-    .select("id, code, name")
-    .eq("company_id", companyId)
-    .eq("is_active", true)
-    .order("is_head_office", { ascending: false });
+  // Schedule III General Instruction 1 requires a previous-year column on
+  // any filed set of accounts — not optional decoration, though it is also
+  // useful for simple-mode companies, so it is rendered for both. See
+  // lib/utils/period.ts:comparativePeriod for the two date rules (full FY
+  // vs a same-length preceding window for a custom range).
+  const comparative = comparativePeriod(period.from, period.to, startMonth);
+
+  const [{ data: branches }, { data: companyRow }] = await Promise.all([
+    supabase
+      .from("branches")
+      .select("id, code, name")
+      .eq("company_id", companyId)
+      .eq("is_active", true)
+      .order("is_head_office", { ascending: false }),
+    supabase.from("companies").select("book_beginning_date").eq("id", companyId).single(),
+  ]);
   const branchId = typeof sp.branch === "string" ? sp.branch : undefined;
+  const bookBeginning = companyRow?.book_beginning_date as string | undefined;
 
-  const { data: rows } = await supabase.rpc("get_profit_and_loss", {
-    p_company_id: companyId,
-    p_from: period.from,
-    p_to: period.to,
-    p_branch_id: branchId,
-  });
+  // A first-year company has no prior period at all — the comparative range
+  // ends entirely before the books began, so get_profit_and_loss would
+  // legitimately return zero rows there. Zero rows and "no data available"
+  // both sum to 0, and showing that 0 next to a real current-period figure
+  // reads as a genuine flat prior year, not as "this company didn't exist
+  // yet". So the comparative RPC call is only made — and the whole column
+  // only rendered as figures rather than em dashes — when the comparative
+  // period's own end date reaches at least as far as book_beginning_date.
+  // (String comparison is safe here: both sides are YYYY-MM-DD.)
+  const hasComparative = !!bookBeginning && comparative.to >= bookBeginning;
+  // True only when the comparative window starts before the books did but
+  // still ends inside them — a genuine partial first year, not "no data".
+  // Surfaced to the reader as a caption below rather than silently comparing
+  // a full period against a partial one.
+  const partialComparative = hasComparative && !!bookBeginning && comparative.from < bookBeginning;
 
-  const all = rows ?? [];
-  const sum = (natures: string[]) =>
-    all.filter((r) => natures.includes(r.nature)).reduce((n, r) => n + Number(r.amount), 0);
+  const [{ data: rows }, { data: compRows }] = await Promise.all([
+    supabase.rpc("get_profit_and_loss", {
+      p_company_id: companyId,
+      p_from: period.from,
+      p_to: period.to,
+      p_branch_id: branchId,
+    }),
+    hasComparative
+      ? supabase.rpc("get_profit_and_loss", {
+          p_company_id: companyId,
+          p_from: comparative.from,
+          p_to: comparative.to,
+          p_branch_id: branchId,
+        })
+      : Promise.resolve({ data: [] as PLRow[] }),
+  ]);
+
+  const all: PLRow[] = rows ?? [];
+  const compAll: PLRow[] = compRows ?? [];
+  const sum = (source: PLRow[], natures: string[]) =>
+    source.filter((r) => natures.includes(r.nature)).reduce((n, r) => n + Number(r.amount), 0);
 
   // Gross profit is the trading account: direct income less direct expense.
   // Net profit then carries that through the indirect items. Schedule III
@@ -88,12 +182,29 @@ export default async function ProfitLossPage({
   // on exactly the same figure as netProfit — direct_income + indirect_income
   // - direct_expense - indirect_expense either way — so it is reused as
   // Profit Before Tax below rather than recomputed.
-  const grossProfit = sum(["direct_income"]) - sum(["direct_expense"]);
-  const netProfit = grossProfit + sum(["indirect_income"]) - sum(["indirect_expense"]);
-  const totalIncome = sum(["direct_income", "indirect_income"]);
-  const totalExpenses = sum(["direct_expense", "indirect_expense"]);
+  const grossProfit = sum(all, ["direct_income"]) - sum(all, ["direct_expense"]);
+  const netProfit = grossProfit + sum(all, ["indirect_income"]) - sum(all, ["indirect_expense"]);
+  const totalIncome = sum(all, ["direct_income", "indirect_income"]);
+  const totalExpenses = sum(all, ["direct_expense", "indirect_expense"]);
+
+  // Same three figures, independently re-derived from the comparative RPC
+  // call's own rows — not from the rendered table rows, so a ledger that
+  // dropped to zero this period (and so is folded into a Block's "comp
+  // only" union rather than iterated as a `curr` row) still counts here.
+  const compGrossProfit = sum(compAll, ["direct_income"]) - sum(compAll, ["direct_expense"]);
+  const compNetProfit =
+    compGrossProfit + sum(compAll, ["indirect_income"]) - sum(compAll, ["indirect_expense"]);
+  const compTotalIncome = sum(compAll, ["direct_income", "indirect_income"]);
+  const compTotalExpenses = sum(compAll, ["direct_expense", "indirect_expense"]);
 
   const section = (nature: string) => all.filter((r) => r.nature === nature);
+  const compSection = (nature: string) => {
+    const m = new Map<string, { group_name: string; amount: number }>();
+    for (const r of compAll.filter((x) => x.nature === nature)) {
+      m.set(r.ledger_name, { group_name: r.group_name, amount: Number(r.amount) });
+    }
+    return m;
+  };
 
   const selectedBranch = (branches ?? []).find((b) => b.id === branchId);
 
@@ -135,18 +246,22 @@ export default async function ProfitLossPage({
           ))}
         </div>
       )}
-      <table className="w-full min-w-[560px] text-sm">
+      <table className="w-full min-w-[720px] text-sm">
         <thead>
           <tr className="border-b border-border text-left">
             <th className={th}>Particulars</th>
             <th className={th}>Group</th>
-            <th className={th + " text-right"}>Amount</th>
+            <th className={th + " text-right"}>{periodRangeLabel(period.from, period.to)}</th>
+            <th className={th + " text-right"}>
+              {hasComparative ? periodRangeLabel(comparative.from, comparative.to) : "Previous period"}
+            </th>
+            <th className={th + " text-right"}>Change</th>
           </tr>
         </thead>
         <tbody>
-          {all.length === 0 && (
+          {all.length === 0 && compAll.length === 0 && (
             <tr>
-              <td colSpan={3} className="px-4 py-12 text-center text-ink-faint">
+              <td colSpan={5} className="px-4 py-12 text-center text-ink-faint">
                 No income or expense posted in this period.
               </td>
             </tr>
@@ -158,9 +273,19 @@ export default async function ProfitLossPage({
                   Total Expenses — direct_income/direct_expense are the same
                   underlying nature values as the simple format, only
                   relabelled and reordered for display. */}
-              <Block label="Revenue from Operations" items={section("direct_income")} />
-              <Block label="Other Income" items={section("indirect_income")} />
-              {all.length > 0 && (
+              <Block
+                label="Revenue from Operations"
+                items={section("direct_income")}
+                compByLedger={compSection("direct_income")}
+                hasComparative={hasComparative}
+              />
+              <Block
+                label="Other Income"
+                items={section("indirect_income")}
+                compByLedger={compSection("indirect_income")}
+                hasComparative={hasComparative}
+              />
+              {(all.length > 0 || compAll.length > 0) && (
                 <tr className="border-y-2 border-border-strong bg-surface-2">
                   <td className={td + " font-semibold"} colSpan={2}>
                     Total Income
@@ -168,11 +293,27 @@ export default async function ProfitLossPage({
                   <td className={num + " font-semibold"}>
                     {formatINR(totalIncome, { showZero: true })}
                   </td>
+                  <td className={num + " font-semibold"}>
+                    {hasComparative ? formatINR(compTotalIncome, { showZero: true }) : "—"}
+                  </td>
+                  <td className={num + " font-semibold text-ink-soft"}>
+                    {hasComparative ? formatVariance(variancePct(totalIncome, compTotalIncome)) : "—"}
+                  </td>
                 </tr>
               )}
-              <Block label="Direct Expenses" items={section("direct_expense")} />
-              <Block label="Indirect Expenses" items={section("indirect_expense")} />
-              {all.length > 0 && (
+              <Block
+                label="Direct Expenses"
+                items={section("direct_expense")}
+                compByLedger={compSection("direct_expense")}
+                hasComparative={hasComparative}
+              />
+              <Block
+                label="Indirect Expenses"
+                items={section("indirect_expense")}
+                compByLedger={compSection("indirect_expense")}
+                hasComparative={hasComparative}
+              />
+              {(all.length > 0 || compAll.length > 0) && (
                 <tr className="border-y-2 border-border-strong bg-surface-2">
                   <td className={td + " font-semibold"} colSpan={2}>
                     Total Expenses
@@ -180,14 +321,30 @@ export default async function ProfitLossPage({
                   <td className={num + " font-semibold"}>
                     {formatINR(totalExpenses, { showZero: true })}
                   </td>
+                  <td className={num + " font-semibold"}>
+                    {hasComparative ? formatINR(compTotalExpenses, { showZero: true }) : "—"}
+                  </td>
+                  <td className={num + " font-semibold text-ink-soft"}>
+                    {hasComparative ? formatVariance(variancePct(totalExpenses, compTotalExpenses)) : "—"}
+                  </td>
                 </tr>
               )}
             </>
           ) : (
             <>
-              <Block label="Direct Income" items={section("direct_income")} />
-              <Block label="Direct Expenses" items={section("direct_expense")} />
-              {all.length > 0 && (
+              <Block
+                label="Direct Income"
+                items={section("direct_income")}
+                compByLedger={compSection("direct_income")}
+                hasComparative={hasComparative}
+              />
+              <Block
+                label="Direct Expenses"
+                items={section("direct_expense")}
+                compByLedger={compSection("direct_expense")}
+                hasComparative={hasComparative}
+              />
+              {(all.length > 0 || compAll.length > 0) && (
                 <tr className="border-y-2 border-border-strong bg-surface-2">
                   <td className={td + " font-semibold"} colSpan={2}>
                     Gross Profit
@@ -195,14 +352,30 @@ export default async function ProfitLossPage({
                   <td className={num + " font-semibold"}>
                     {formatINR(grossProfit, { showZero: true })}
                   </td>
+                  <td className={num + " font-semibold"}>
+                    {hasComparative ? formatINR(compGrossProfit, { showZero: true }) : "—"}
+                  </td>
+                  <td className={num + " font-semibold text-ink-soft"}>
+                    {hasComparative ? formatVariance(variancePct(grossProfit, compGrossProfit)) : "—"}
+                  </td>
                 </tr>
               )}
-              <Block label="Indirect Income" items={section("indirect_income")} />
-              <Block label="Indirect Expenses" items={section("indirect_expense")} />
+              <Block
+                label="Indirect Income"
+                items={section("indirect_income")}
+                compByLedger={compSection("indirect_income")}
+                hasComparative={hasComparative}
+              />
+              <Block
+                label="Indirect Expenses"
+                items={section("indirect_expense")}
+                compByLedger={compSection("indirect_expense")}
+                hasComparative={hasComparative}
+              />
             </>
           )}
         </tbody>
-        {all.length > 0 && (
+        {(all.length > 0 || compAll.length > 0) && (
           <tfoot>
             <tr className="border-t-2 border-border-strong bg-bg">
               <td className="px-4 py-3 font-semibold" colSpan={2}>
@@ -212,6 +385,16 @@ export default async function ProfitLossPage({
                 {scheduleIII
                   ? formatINR(netProfit, { showZero: true })
                   : formatINR(Math.abs(netProfit), { showZero: true })}
+              </td>
+              <td className="px-4 py-3 text-right font-semibold tabular-nums font-mono">
+                {hasComparative
+                  ? scheduleIII
+                    ? formatINR(compNetProfit, { showZero: true })
+                    : formatINR(Math.abs(compNetProfit), { showZero: true })
+                  : "—"}
+              </td>
+              <td className="px-4 py-3 text-right font-semibold tabular-nums font-mono text-ink-soft">
+                {hasComparative ? formatVariance(variancePct(netProfit, compNetProfit)) : "—"}
               </td>
             </tr>
           </tfoot>
@@ -223,6 +406,23 @@ export default async function ProfitLossPage({
           to this branch. If any voucher ever splits its own lines across more than one
           branch (uncommon; every voucher in this company today stays within one), this
           branch&rsquo;s own total can differ from its share of the whole-company figure.
+        </p>
+      )}
+      {!hasComparative && (
+        <p className="border-t border-border px-4 py-3 text-xs text-ink-faint">
+          No previous-period column: the comparative period
+          ({periodRangeLabel(comparative.from, comparative.to)}) ends before this
+          company&rsquo;s books began ({bookBeginning ?? "unknown"}), so there is no prior
+          data to compare against. This is expected for a company&rsquo;s first reporting
+          period.
+        </p>
+      )}
+      {partialComparative && (
+        <p className="border-t border-border px-4 py-3 text-xs text-ink-faint">
+          The previous-period column only partially overlaps this company&rsquo;s
+          book-keeping — books began {bookBeginning} but the comparative period
+          starts {comparative.from}. Figures shown are real, just for a shorter
+          span than the current period.
         </p>
       )}
       {scheduleIII && (

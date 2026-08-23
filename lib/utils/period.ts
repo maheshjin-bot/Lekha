@@ -155,6 +155,78 @@ export function periodPreset(
 }
 
 /**
+ * The comparative (previous-period) range for a report's current {from, to}
+ * — used by the Profit & Loss comparative column (and, potentially, the
+ * Balance Sheet's own comparative column, which is a separate page not
+ * touched here). Schedule III General Instruction 1 requires a previous-
+ * year figure on any filed set of accounts; this is the date arithmetic
+ * half of that, independent of which report calls it.
+ *
+ * Two rules, chosen by what shape the CURRENT period has:
+ *
+ *   - Full financial year (from == that year's FY start, per the company's
+ *     financial_year_start_month): the comparative is the PRIOR financial
+ *     year, same relative length — the same month/day shifted back exactly
+ *     one year, whether the current period runs to the FY's own close (a
+ *     finished year) or only to today (FY-to-date). That is what "previous
+ *     year" means on a Schedule III statement: the prior REPORTING year,
+ *     not a same-day-count window, which for a July-year company would
+ *     land mid-quarter instead of on the year boundary.
+ *
+ *   - Any other from/to (a custom range the user picked): the comparative
+ *     is the immediately preceding period of the SAME LENGTH in days,
+ *     ending the day before `from`. There is no "prior custom period"
+ *     concept to be more clever about than that — same length, immediately
+ *     before, is the simplest rule that is always well-defined.
+ *
+ * A year-shift is done on UTC calendar fields (getUTCFullYear/Month/Date),
+ * never a millisecond subtraction — subtracting 365*86400000ms would drift
+ * by a day across every leap year in between, the same class of bug this
+ * file's header already warns about for toISOString(). The one genuine
+ * edge case left is 29 February landing on a non-leap year: Date.UTC's own
+ * overflow rule turns Date.UTC(year, 1, 29) into 1 March when that year has
+ * no 29 February, so a Schedule III "to" of 29 Feb 2028 gets a comparative
+ * "to" of 1 March 2027, not 28 Feb 2027 — confirmed by running this
+ * function directly (node, ad hoc script) rather than assumed. Left as-is:
+ * it is JS's own well-defined rollover, and neither 28 Feb nor 1 Mar is
+ * more "correct" for a date that did not exist the year before.
+ */
+export function comparativePeriod(
+  from: string,
+  to: string,
+  startMonth: number
+): { from: string; to: string } {
+  const fromInstant = atNoonUTC(from);
+  const fyStartOfFrom = isoUTC(financialYearStart(startMonth, fromInstant));
+
+  if (fyStartOfFrom === from) {
+    const shiftBackOneYear = (date: string): string => {
+      const d = atNoonUTC(date);
+      return isoUTC(new Date(Date.UTC(d.getUTCFullYear() - 1, d.getUTCMonth(), d.getUTCDate())));
+    };
+    return { from: shiftBackOneYear(from), to: shiftBackOneYear(to) };
+  }
+
+  const DAY_MS = 24 * 60 * 60 * 1000;
+  const fromMs = atNoonUTC(from).getTime();
+  const toMs = atNoonUTC(to).getTime();
+  const lengthDays = Math.round((toMs - fromMs) / DAY_MS) + 1; // inclusive of both ends
+  return {
+    from: isoUTC(new Date(fromMs - lengthDays * DAY_MS)),
+    to: isoUTC(new Date(fromMs - DAY_MS)),
+  };
+}
+
+/** `${formatDate(from)} to ${formatDate(to)}`, exposed for callers (report
+ * pages) that need to print an arbitrary from/to pair — such as the
+ * comparative period's own label — without going through defaultPeriod's
+ * override/"today" resolution, which does not apply to an already-computed
+ * range. */
+export function periodRangeLabel(from: string, to: string): string {
+  return `${formatDate(from)} to ${formatDate(to)}`;
+}
+
+/**
  * The last day of the financial year before the one containing today — the
  * natural default to suggest when closing books, since it is the most
  * recent period that has fully finished. Same local-date-then-noon-UTC

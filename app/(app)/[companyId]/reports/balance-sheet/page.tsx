@@ -1,7 +1,7 @@
 import Link from "next/link";
 import { createClient } from "@/lib/supabase/server";
 import { formatINR } from "@/lib/utils/currency";
-import { defaultPeriod } from "@/lib/utils/period";
+import { defaultPeriod, financialYearStart } from "@/lib/utils/period";
 import { ReportShell, num, td, th } from "@/components/reports/ReportShell";
 
 const NATURE_LABEL: Record<string, string> = {
@@ -55,6 +55,35 @@ const ASSET_ORDER = {
 // the original "always show, nil or not" behaviour.
 const SCHEDULE_III_PRESENT_ONLY = new Set(["capital"]);
 
+// The Schedule III asset sub-heads within the fixed_asset nature (0089).
+// Reads account_groups.ledger_role, not a new nature value — see the
+// migration header for why a finer split within one nature has to ride
+// ledger_role (a child group's nature is forced to match its parent's;
+// ledger_role is not). Always shown nil-or-not in schedule_iii mode, same
+// reasoning as every other Schedule III heading above: a Schedule III
+// company genuinely has these four line items whether or not anything is
+// posted to one of them yet.
+const FIXED_ASSET_BUCKET_LABEL: Record<string, string> = {
+  tangible_fixed_asset: "Tangible Assets",
+  intangible_fixed_asset: "Intangible Assets",
+  capital_work_in_progress: "Capital Work-in-Progress",
+  investment: "Non-current Investments",
+};
+const FIXED_ASSET_BUCKET_ORDER = [
+  "tangible_fixed_asset", "intangible_fixed_asset", "capital_work_in_progress", "investment",
+] as const;
+// Any row whose ledger_role is not one of the four sub-heads (there should
+// be none after 0089's backfill, but a defensive default matters more than
+// an assumption) falls back to Tangible — the same "assume tangible unless
+// told otherwise" call the migration's own backfill made, for the same
+// reason: every fixed-asset ledger this app has ever seeded is genuinely
+// tangible plant/equipment/furniture.
+function fixedAssetBucketOf(role: string | null | undefined): string {
+  return role && (FIXED_ASSET_BUCKET_ORDER as readonly string[]).includes(role)
+    ? role
+    : "tangible_fixed_asset";
+}
+
 /** The day before a YYYY-MM-DD date. Anchored at noon UTC so it cannot slip
  * across a day boundary — the same reasoning lib/utils/period.ts spells out
  * for its own date arithmetic. */
@@ -63,6 +92,34 @@ function dayBefore(date: string): string {
   d.setUTCDate(d.getUTCDate() - 1);
   return d.toISOString().slice(0, 10);
 }
+
+/** For display only — "23 Aug 2026". Local to this page rather than
+ * imported from lib/utils/period.ts because that file's own formatDate is
+ * not exported; duplicating one Intl call is cheaper than widening that
+ * module's surface for a single caller. */
+function formatAsAt(date: string): string {
+  return new Date(`${date}T12:00:00Z`).toLocaleDateString("en-IN", {
+    day: "numeric",
+    month: "short",
+    year: "numeric",
+    timeZone: "UTC",
+  });
+}
+
+// The shape get_balance_sheet (0089) actually returns. Cast to this rather
+// than trusted through the generated Database type, which will not carry
+// the new ledger_role column until types/database.types.ts is regenerated
+// after this migration — see this feature's own build notes.
+type BsRow = {
+  side: string;
+  nature: string;
+  group_name: string;
+  ledger_name: string;
+  ledger_role: string | null;
+  amount: number;
+};
+
+const sumAmount = (rows: BsRow[]) => rows.reduce((n, r) => n + Number(r.amount), 0);
 
 export default async function BalanceSheetPage({
   params,
@@ -84,8 +141,9 @@ export default async function BalanceSheetPage({
   // Fail safe to 'simple' on any lookup miss — a report page must render,
   // never crash, over a profile it couldn't resolve.
   const scheduleIII = company?.statement_format === "schedule_iii";
+  const startMonth = company?.financial_year_start_month ?? 4;
 
-  const period = defaultPeriod(company?.financial_year_start_month ?? 4, {
+  const period = defaultPeriod(startMonth, {
     to: typeof sp.as_at === "string" ? sp.as_at : undefined,
   });
 
@@ -131,7 +189,36 @@ export default async function BalanceSheetPage({
   // A real closing voucher remains a separate, open feature.
   const bookBeginning = companyRow?.book_beginning_date ?? period.from;
 
-  const [{ data: rows }, { data: plCurrent }, { data: plBroughtForward }] = await Promise.all([
+  // Comparative column (0089): "as at the end of the immediately preceding
+  // financial year" — a balance sheet has no length to match the way a P&L
+  // period does, only a single instant, so this is simpler than the P&L's
+  // "same-length immediately preceding period". financialYearStart is the
+  // same helper get_company_profile-driven pages already use for FY math
+  // (lib/utils/period.ts); called on the report's own as-at date (not on
+  // "today", the way previousFinancialYearEnd works) so a user who picks an
+  // earlier ?as_at= still gets THAT date's own preceding year-end, not
+  // today's.
+  const currentFyStartForAsAt = financialYearStart(startMonth, new Date(`${period.to}T12:00:00Z`));
+  const comparativeAsAt = dayBefore(currentFyStartForAsAt.toISOString().slice(0, 10));
+  const comparativeFyStart = financialYearStart(startMonth, new Date(`${comparativeAsAt}T12:00:00Z`))
+    .toISOString()
+    .slice(0, 10);
+  // A comparative year-end only means something if the books had already
+  // begun by then — every company seeded in this database began its books
+  // on the first day of the CURRENT financial year, so comparativeAsAt
+  // (last day of the prior year) predates book_beginning_date for all of
+  // them today, and this correctly resolves to false for every one:
+  // verified live, see this feature's build notes.
+  const hasComparative = comparativeAsAt >= bookBeginning;
+
+  const [
+    { data: rows },
+    { data: plCurrent },
+    { data: plBroughtForward },
+    { data: rows2 },
+    { data: plCurrent2 },
+    { data: plBroughtForward2 },
+  ] = await Promise.all([
     supabase.rpc("get_balance_sheet", {
       p_company_id: companyId,
       p_as_at: period.to,
@@ -152,9 +239,36 @@ export default async function BalanceSheetPage({
       p_to: dayBefore(period.from),
       p_branch_id: branchId,
     }),
+    hasComparative
+      ? supabase.rpc("get_balance_sheet", {
+          p_company_id: companyId,
+          p_as_at: comparativeAsAt,
+          p_branch_id: branchId,
+        })
+      : Promise.resolve({ data: null }),
+    hasComparative
+      ? supabase.rpc("get_profit_and_loss", {
+          p_company_id: companyId,
+          p_from: comparativeFyStart,
+          p_to: comparativeAsAt,
+          p_branch_id: branchId,
+        })
+      : Promise.resolve({ data: null }),
+    // Same "everything before this year, or nothing if it runs backwards"
+    // shape as the current-year query above, re-based on the comparative
+    // year's own start instead of the current year's.
+    hasComparative
+      ? supabase.rpc("get_profit_and_loss", {
+          p_company_id: companyId,
+          p_from: bookBeginning,
+          p_to: dayBefore(comparativeFyStart),
+          p_branch_id: branchId,
+        })
+      : Promise.resolve({ data: null }),
   ]);
 
-  const all = rows ?? [];
+  const all = (rows ?? []) as unknown as BsRow[];
+  const all2 = (rows2 ?? []) as unknown as BsRow[];
   const sumPL = (plRows: { nature: string; amount: number }[] | null) => {
     const r = plRows ?? [];
     const sumNature = (n: string[]) =>
@@ -172,9 +286,21 @@ export default async function BalanceSheetPage({
   const profitBroughtForward = sumPL(plBroughtForward);
   const profit = profitBroughtForward + profitThisYear;
 
+  // Same shape, recomputed for the comparative year-end — reusing sumPL
+  // rather than inventing a second way to read a P&L result, per this
+  // feature's own scope note about not duplicating 0073's carry-forward
+  // logic.
+  const profitThisYear2 = sumPL(plCurrent2);
+  const profitBroughtForward2 = sumPL(plBroughtForward2);
+  const profit2 = profitBroughtForward2 + profitThisYear2;
+
   const side = (s: string) => all.filter((r) => r.side === s);
   const total = (s: string) =>
     side(s).reduce((n, r) => n + Number(r.amount), 0) + (s === "liabilities" ? profit : 0);
+
+  const side2 = (s: string) => all2.filter((r) => r.side === s);
+  const total2 = (s: string) =>
+    side2(s).reduce((n, r) => n + Number(r.amount), 0) + (s === "liabilities" ? profit2 : 0);
 
   const difference = total("assets") - total("liabilities");
   const balanced = Math.abs(difference) < 0.005;
@@ -203,6 +329,7 @@ export default async function BalanceSheetPage({
   // that gets torn down and rebuilt on every render.
   const renderSide = ({ label, sideKey }: { label: string; sideKey: "assets" | "liabilities" }) => {
     const items = side(sideKey);
+    const items2 = side2(sideKey);
     const format = scheduleIII ? "schedule_iii" : "simple";
     const order = sideKey === "liabilities" ? LIABILITY_ORDER[format] : ASSET_ORDER[format];
     // Schedule III always prints its real structural headings, nil or not —
@@ -217,88 +344,159 @@ export default async function BalanceSheetPage({
     const byNature: readonly string[] = scheduleIII
       ? order.filter((n) => !SCHEDULE_III_PRESENT_ONLY.has(n) || present.has(n))
       : order.filter((n) => present.has(n));
+
+    // Per-ledger comparative lookup, built once for this side rather than
+    // per nature: keyed on (nature, group_name, ledger_name) so a name that
+    // happens to repeat under a different group cannot collide. A ledger
+    // absent from this map genuinely did not carry a balance as at the
+    // comparative date (opened after that year-end, most commonly) —
+    // reading that as zero is correct, not a missing-data guess.
+    const comparativeIndex = new Map<string, number>();
+    for (const r of items2) {
+      comparativeIndex.set(`${r.nature}|${r.group_name}|${r.ledger_name}`, Number(r.amount));
+    }
+    const comparativeOf = (r: BsRow) =>
+      comparativeIndex.get(`${r.nature}|${r.group_name}|${r.ledger_name}`) ?? 0;
+
+    // One row of a nested per-ledger table: name, this year, comparative.
+    const ledgerRow = (r: BsRow, i: number) => (
+      <tr key={i}>
+        <td className="py-0.5 pl-4 text-ink-soft">{r.ledger_name}</td>
+        <td className="py-0.5 text-right tabular-nums font-mono">{formatINR(Number(r.amount))}</td>
+        <td className="py-0.5 text-right tabular-nums font-mono text-ink-faint">
+          {hasComparative ? formatINR(comparativeOf(r)) : "—"}
+        </td>
+      </tr>
+    );
+
     return (
       <div className="min-w-0">
-        <table className="w-full min-w-[280px] text-sm">
+        <table className="w-full min-w-[360px] text-sm">
           <thead>
             <tr className="border-b border-border text-left">
               <th className={th}>{label}</th>
-              <th className={th + " text-right"}>Amount</th>
+              <th className={th + " text-right"}>As at {formatAsAt(period.to)}</th>
+              <th className={th + " text-right"}>
+                {hasComparative ? `As at ${formatAsAt(comparativeAsAt)}` : "Previous year"}
+              </th>
             </tr>
           </thead>
           <tbody>
             {byNature.map((nature) => {
               const natureItems = items.filter((r) => r.nature === nature);
-              const natureTotal = natureItems.reduce((n, r) => n + Number(r.amount), 0);
+              const natureTotal = sumAmount(natureItems);
+              const natureTotal2 = sumAmount(natureItems.map((r) => ({ ...r, amount: comparativeOf(r) })));
+              // Schedule III's asset sub-classification (0089) — only the
+              // fixed_asset nature, only in schedule_iii mode. Every other
+              // nature, and the whole of simple mode, keeps the original
+              // flat per-ledger presentation.
+              const isFixedAssetSplit = scheduleIII && nature === "fixed_asset";
               return (
                 <tr key={nature} className="align-top">
-                  <td className={td} colSpan={2}>
+                  <td className={td} colSpan={3}>
                     {scheduleIII ? (
                       <div className="flex items-baseline justify-between gap-2">
                         <span className="font-semibold">{displayLabel(nature)}</span>
-                        <span className="shrink-0 font-mono text-xs tabular-nums text-ink-faint">
-                          {formatINR(natureTotal, { showZero: true })}
+                        <span className="flex shrink-0 gap-4 font-mono text-xs tabular-nums text-ink-faint">
+                          <span>{formatINR(natureTotal, { showZero: true })}</span>
+                          <span>{hasComparative ? formatINR(natureTotal2, { showZero: true }) : "—"}</span>
                         </span>
                       </div>
                     ) : (
                       <div className="font-semibold">{displayLabel(nature)}</div>
                     )}
-                    <table className="mt-1 w-full">
-                      <tbody>
-                        {natureItems.map((r, i) => (
-                          <tr key={i}>
-                            <td className="py-0.5 pl-4 text-ink-soft">
-                              {r.ledger_name}
-                            </td>
-                            <td className="py-0.5 text-right tabular-nums font-mono">
-                              {formatINR(Number(r.amount))}
-                            </td>
-                          </tr>
-                        ))}
-                      </tbody>
-                    </table>
+                    {isFixedAssetSplit ? (
+                      <table className="mt-1 w-full">
+                        <tbody>
+                          {FIXED_ASSET_BUCKET_ORDER.map((bucket) => {
+                            const bucketItems = natureItems.filter(
+                              (r) => fixedAssetBucketOf(r.ledger_role) === bucket
+                            );
+                            const bucketTotal = sumAmount(bucketItems);
+                            const bucketTotal2 = sumAmount(
+                              bucketItems.map((r) => ({ ...r, amount: comparativeOf(r) }))
+                            );
+                            return (
+                              <tr key={bucket}>
+                                <td className="pt-1.5" colSpan={3}>
+                                  <div className="flex items-baseline justify-between gap-2 pl-2">
+                                    <span className="text-xs font-semibold text-ink-soft">
+                                      {FIXED_ASSET_BUCKET_LABEL[bucket]}
+                                    </span>
+                                    <span className="flex shrink-0 gap-4 font-mono text-xs tabular-nums text-ink-faint">
+                                      <span>{formatINR(bucketTotal, { showZero: true })}</span>
+                                      <span>
+                                        {hasComparative ? formatINR(bucketTotal2, { showZero: true }) : "—"}
+                                      </span>
+                                    </span>
+                                  </div>
+                                  <table className="w-full">
+                                    <tbody>{bucketItems.map(ledgerRow)}</tbody>
+                                  </table>
+                                </td>
+                              </tr>
+                            );
+                          })}
+                        </tbody>
+                      </table>
+                    ) : (
+                      <table className="mt-1 w-full">
+                        <tbody>{natureItems.map(ledgerRow)}</tbody>
+                      </table>
+                    )}
                   </td>
                 </tr>
               );
             })}
-            {sideKey === "liabilities" && profitBroughtForward !== 0 && (
-              <tr>
-                <td className={td}>
-                  {profitBroughtForward >= 0
-                    ? "Balance brought forward"
-                    : "Accumulated loss brought forward"}
-                  <div className="text-xs text-ink-faint">
-                    Retained from every year before this one
-                  </div>
-                </td>
-                <td className={num}>
-                  {formatINR(Math.abs(profitBroughtForward), { showZero: true })}
-                </td>
-              </tr>
-            )}
-            {sideKey === "liabilities" && profitThisYear !== 0 && (
-              <tr>
-                <td className={td}>
-                  {profitThisYear >= 0 ? "Profit for the period" : "Loss for the period"}
-                </td>
-                <td className={num}>
-                  {formatINR(Math.abs(profitThisYear), { showZero: true })}
-                </td>
-              </tr>
-            )}
-            {sideKey === "liabilities" && profitBroughtForward !== 0 && profitThisYear !== 0 && (
-              <tr>
-                <td className={td + " font-semibold"}>
-                  {profit >= 0 ? "Profit and Loss Account" : "Profit and Loss Account (debit)"}
-                </td>
-                <td className={num + " font-semibold"}>
-                  {formatINR(Math.abs(profit), { showZero: true })}
-                </td>
-              </tr>
-            )}
+            {sideKey === "liabilities" &&
+              (profitBroughtForward !== 0 || (hasComparative && profitBroughtForward2 !== 0)) && (
+                <tr>
+                  <td className={td}>
+                    {profitBroughtForward >= 0
+                      ? "Balance brought forward"
+                      : "Accumulated loss brought forward"}
+                    <div className="text-xs text-ink-faint">
+                      Retained from every year before this one
+                    </div>
+                  </td>
+                  <td className={num}>
+                    {formatINR(Math.abs(profitBroughtForward), { showZero: true })}
+                  </td>
+                  <td className={num + " text-ink-faint"}>
+                    {hasComparative ? formatINR(Math.abs(profitBroughtForward2), { showZero: true }) : "—"}
+                  </td>
+                </tr>
+              )}
+            {sideKey === "liabilities" &&
+              (profitThisYear !== 0 || (hasComparative && profitThisYear2 !== 0)) && (
+                <tr>
+                  <td className={td}>{profitThisYear >= 0 ? "Profit for the period" : "Loss for the period"}</td>
+                  <td className={num}>{formatINR(Math.abs(profitThisYear), { showZero: true })}</td>
+                  <td className={num + " text-ink-faint"}>
+                    {hasComparative ? formatINR(Math.abs(profitThisYear2), { showZero: true }) : "—"}
+                  </td>
+                </tr>
+              )}
+            {sideKey === "liabilities" &&
+              profitBroughtForward !== 0 &&
+              profitThisYear !== 0 && (
+                <tr>
+                  <td className={td + " font-semibold"}>
+                    {profit >= 0 ? "Profit and Loss Account" : "Profit and Loss Account (debit)"}
+                  </td>
+                  <td className={num + " font-semibold"}>
+                    {formatINR(Math.abs(profit), { showZero: true })}
+                  </td>
+                  <td className={num + " font-semibold text-ink-faint"}>
+                    {hasComparative && profitBroughtForward2 !== 0 && profitThisYear2 !== 0
+                      ? formatINR(Math.abs(profit2), { showZero: true })
+                      : "—"}
+                  </td>
+                </tr>
+              )}
             {!scheduleIII && items.length === 0 && profit === 0 && (
               <tr>
-                <td colSpan={2} className="px-4 py-8 text-center text-ink-faint">
+                <td colSpan={3} className="px-4 py-8 text-center text-ink-faint">
                   Nothing to show.
                 </td>
               </tr>
@@ -309,6 +507,9 @@ export default async function BalanceSheetPage({
               <td className="px-4 py-2.5 font-semibold">Total</td>
               <td className="px-4 py-2.5 text-right font-semibold tabular-nums font-mono">
                 {formatINR(total(sideKey), { showZero: true })}
+              </td>
+              <td className="px-4 py-2.5 text-right font-semibold tabular-nums font-mono text-ink-faint">
+                {hasComparative ? formatINR(total2(sideKey), { showZero: true }) : "—"}
               </td>
             </tr>
           </tfoot>
@@ -366,6 +567,13 @@ export default async function BalanceSheetPage({
         })}
         {renderSide({ label: "Assets", sideKey: "assets" })}
       </div>
+      {!hasComparative && (
+        <p className="border-t border-border px-4 py-3 text-xs text-ink-faint">
+          No comparative column: the books began {formatAsAt(bookBeginning)}, after{" "}
+          {formatAsAt(comparativeAsAt)} — this financial year is this company&rsquo;s first, so
+          there is no prior year-end to show alongside the current figures.
+        </p>
+      )}
       {selectedBranch && (
         <p className="border-t border-border px-4 py-3 text-xs text-ink-faint">
           Showing {selectedBranch.name} only — the &ldquo;Balanced&rdquo; status above is
@@ -387,10 +595,12 @@ export default async function BalanceSheetPage({
           something is still posted directly to the old &ldquo;Capital
           Account&rdquo; group from before this split existed — move those
           ledgers into Share Capital or Reserves and Surplus and that row
-          disappears on its own. Still open: assets are not split into
-          Tangible / Intangible / Capital Work-in-Progress / Investments, and
-          the Profit &amp; Loss statement on this report page is still the
-          simple format, not yet Schedule III&rsquo;s.
+          disappears on its own. Non-current Assets is now split into
+          Tangible / Intangible / Capital Work-in-Progress / Non-current
+          Investments; Accumulated Depreciation, where posted, nets against
+          Tangible Assets specifically rather than being spread across all
+          four. Still open: the Profit &amp; Loss statement on this report
+          page is still the simple format, not yet Schedule III&rsquo;s.
         </p>
       )}
     </ReportShell>
