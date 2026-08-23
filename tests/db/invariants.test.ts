@@ -2053,6 +2053,55 @@ describeDb(`payroll compliance calendar (${hasDb ? "live" : noDbReason})`, () =>
 });
 
 // ---------------------------------------------------------------------------
+// Employer statutory registrations (0085)
+// ---------------------------------------------------------------------------
+describeDb(`employer registrations (${hasDb ? "live" : noDbReason})`, () => {
+  it("an ESI employer code is 17 digits once separators are stripped", async () => {
+    // Checked on the digit count rather than a pattern: the code is written
+    // both as XX-XX-XXXXXX-XXX-XXXX and as a bare run, and a regex demanding
+    // one punctuation style would reject a correctly transcribed number. The
+    // PF code is deliberately unvalidated for the opposite reason — office
+    // code lengths differ by region, so no useful pattern exists.
+    const rows = await sql(`
+      select id, name, esi_employer_code
+        from public.companies
+       where esi_employer_code is not null
+         and length(regexp_replace(esi_employer_code, '[^0-9]', '', 'g')) <> 17
+       order by name
+    `);
+    expect(rows, `ESI employer codes that are not 17 digits:\n${offenders(rows)}`).toEqual([]);
+  });
+
+  it("an employee cannot be attached to another company's branch", async () => {
+    // employees.branch_id carries company_id into the foreign key, matching
+    // what voucher_items already does in four places. RLS filters what a user
+    // can SELECT; it does not stop them WRITING an id belonging to another
+    // tenant, so the constraint is what actually prevents it. A plain
+    // "REFERENCES branches(id)" would pass every test that only reads data —
+    // hence this checks the constraint shape, not the rows.
+    const structural = await sql(`
+      select conname, pg_get_constraintdef(oid) as def
+        from pg_constraint
+       where conrelid = 'public.employees'::regclass
+         and contype = 'f'
+         and pg_get_constraintdef(oid) like '%(branch_id) REFERENCES%'
+    `);
+    expect(
+      structural,
+      `employees.branch_id has a plain FK — a cross-tenant branch could be written:\n${offenders(structural)}`
+    ).toEqual([]);
+
+    const rows = await sql(`
+      select e.id, e.name
+        from public.employees e
+        join public.branches b on b.id = e.branch_id
+       where b.company_id <> e.company_id
+    `);
+    expect(rows, `employees pointing at another company's branch:\n${offenders(rows)}`).toEqual([]);
+  });
+});
+
+// ---------------------------------------------------------------------------
 // Tenancy: what the catalog can prove without fixtures
 // ---------------------------------------------------------------------------
 describeDb(`tenancy and RLS, catalog-level (${hasDb ? "live" : noDbReason})`, () => {

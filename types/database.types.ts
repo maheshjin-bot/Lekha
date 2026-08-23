@@ -938,8 +938,11 @@ export type Database = {
           id: string
           is_active: boolean
           is_head_office: boolean
+          lwf_establishment_code: string | null
           name: string
           pincode: string | null
+          pt_enrolment_number: string | null
+          pt_registration_number: string | null
           state_code: string
           updated_at: string
         }
@@ -954,8 +957,11 @@ export type Database = {
           id?: string
           is_active?: boolean
           is_head_office?: boolean
+          lwf_establishment_code?: string | null
           name: string
           pincode?: string | null
+          pt_enrolment_number?: string | null
+          pt_registration_number?: string | null
           state_code: string
           updated_at?: string
         }
@@ -970,8 +976,11 @@ export type Database = {
           id?: string
           is_active?: boolean
           is_head_office?: boolean
+          lwf_establishment_code?: string | null
           name?: string
           pincode?: string | null
+          pt_enrolment_number?: string | null
+          pt_registration_number?: string | null
           state_code?: string
           updated_at?: string
         }
@@ -1107,6 +1116,7 @@ export type Database = {
           debtor_eligibility_days: number
           debtor_margin_percent: number
           entity_type: string
+          esi_employer_code: string | null
           financial_year_start_month: number
           id: string
           iec: string | null
@@ -1115,11 +1125,14 @@ export type Database = {
           is_active: boolean
           is_professional: boolean
           legal_name: string | null
+          lin: string | null
           lock_date: string | null
           name: string
           pan: string | null
           password_hash: string | null
           password_protected: boolean | null
+          pf_establishment_code: string | null
+          shops_establishment_reg: string | null
           stock_margin_percent: number
           tan: string | null
           udyam_category: string | null
@@ -1137,6 +1150,7 @@ export type Database = {
           debtor_eligibility_days?: number
           debtor_margin_percent?: number
           entity_type: string
+          esi_employer_code?: string | null
           financial_year_start_month?: number
           id?: string
           iec?: string | null
@@ -1145,11 +1159,14 @@ export type Database = {
           is_active?: boolean
           is_professional?: boolean
           legal_name?: string | null
+          lin?: string | null
           lock_date?: string | null
           name: string
           pan?: string | null
           password_hash?: string | null
           password_protected?: boolean | null
+          pf_establishment_code?: string | null
+          shops_establishment_reg?: string | null
           stock_margin_percent?: number
           tan?: string | null
           udyam_category?: string | null
@@ -1167,6 +1184,7 @@ export type Database = {
           debtor_eligibility_days?: number
           debtor_margin_percent?: number
           entity_type?: string
+          esi_employer_code?: string | null
           financial_year_start_month?: number
           id?: string
           iec?: string | null
@@ -1175,11 +1193,14 @@ export type Database = {
           is_active?: boolean
           is_professional?: boolean
           legal_name?: string | null
+          lin?: string | null
           lock_date?: string | null
           name?: string
           pan?: string | null
           password_hash?: string | null
           password_protected?: boolean | null
+          pf_establishment_code?: string | null
+          shops_establishment_reg?: string | null
           stock_margin_percent?: number
           tan?: string | null
           udyam_category?: string | null
@@ -1493,6 +1514,7 @@ export type Database = {
       }
       employees: {
         Row: {
+          branch_id: string | null
           company_id: string
           created_at: string
           date_of_joining: string
@@ -1506,6 +1528,7 @@ export type Database = {
           updated_at: string
         }
         Insert: {
+          branch_id?: string | null
           company_id: string
           created_at?: string
           date_of_joining: string
@@ -1519,6 +1542,7 @@ export type Database = {
           updated_at?: string
         }
         Update: {
+          branch_id?: string | null
           company_id?: string
           created_at?: string
           date_of_joining?: string
@@ -1532,6 +1556,13 @@ export type Database = {
           updated_at?: string
         }
         Relationships: [
+          {
+            foreignKeyName: "employees_branch_id_fkey"
+            columns: ["branch_id"]
+            isOneToOne: false
+            referencedRelation: "branches"
+            referencedColumns: ["id"]
+          },
           {
             foreignKeyName: "employees_company_id_fkey"
             columns: ["company_id"]

@@ -8,10 +8,11 @@ export default async function EmployeesPage({
   const { companyId } = await params;
   const supabase = await createClient();
 
-  const [{ data: employees }, { data: structures }, { data: modules }] = await Promise.all([
+  const [{ data: employees }, { data: structures }, { data: modules }, { data: branches }] =
+    await Promise.all([
     supabase
       .from("employees")
-      .select("id, name, pan, uan, esi_number, date_of_joining, date_of_leaving, is_active")
+      .select("id, name, pan, uan, esi_number, date_of_joining, date_of_leaving, is_active, branch_id")
       .eq("company_id", companyId)
       .order("name"),
     supabase
@@ -20,6 +21,14 @@ export default async function EmployeesPage({
       .eq("company_id", companyId)
       .order("effective_from", { ascending: false }),
     supabase.rpc("get_company_modules", { p_company_id: companyId }),
+    // Professional tax is a State levy, so an employee has to be attributable
+    // to an establishment before a PT liability can be split by State.
+    supabase
+      .from("branches")
+      .select("id, code, name, state_code")
+      .eq("company_id", companyId)
+      .eq("is_active", true)
+      .order("is_head_office", { ascending: false }),
   ]);
 
   const payrollOn = (modules ?? []).some((m) => m.code === "payroll" && m.active);
@@ -69,7 +78,7 @@ export default async function EmployeesPage({
           </p>
         </div>
       )}
-      <EmployeeManager companyId={companyId} employees={rows} />
+      <EmployeeManager companyId={companyId} employees={rows} branches={branches ?? []} />
     </main>
   );
 }

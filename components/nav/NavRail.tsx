@@ -112,6 +112,7 @@ export function NavRail({
     { href: `${base}/audit-trail`, label: "Audit trail" },
     { href: `${base}/year-end`, label: "Year-end" },
     { href: `${base}/settings`, label: "Settings" },
+    { href: `${base}/settings/employer-registrations`, label: "Employer registrations" },
     { href: `${base}/settings/api-keys`, label: "API keys" },
     // Not under /[companyId]: a second factor belongs to the person, not to a
     // company, so someone working across six companies enrols once.

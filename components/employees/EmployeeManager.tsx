@@ -24,9 +24,11 @@ const PAN_PATTERN = /^[A-Z]{5}[0-9]{4}[A-Z]$/;
 export function EmployeeManager({
   companyId,
   employees,
+  branches,
 }: {
   companyId: string;
   employees: Employee[];
+  branches: { id: string; code: string; name: string; state_code: string | null }[];
 }) {
   const router = useRouter();
   const [name, setName] = useState("");
@@ -34,6 +36,7 @@ export function EmployeeManager({
   const [uan, setUan] = useState("");
   const [esiNumber, setEsiNumber] = useState("");
   const [dateOfJoining, setDateOfJoining] = useState("");
+  const [branchId, setBranchId] = useState("");
   const [basic, setBasic] = useState("0");
   const [dearnessAllowance, setDearnessAllowance] = useState("0");
   const [hra, setHra] = useState("0");
@@ -64,6 +67,9 @@ export function EmployeeManager({
         uan: uan.trim() || null,
         esi_number: esiNumber.trim() || null,
         date_of_joining: dateOfJoining,
+        // Null is a legitimate answer for a single-location business; payroll
+        // reads it as the head office.
+        branch_id: branchId || null,
       })
       .select("id")
       .single();
@@ -226,6 +232,30 @@ export function EmployeeManager({
               className={field}
             />
           </label>
+
+          {branches.length > 1 && (
+            <label className="flex flex-col gap-1.5">
+              <span className="text-sm font-medium">
+                Establishment{" "}
+                <span className="font-normal text-ink-faint">
+                  professional tax is a State levy, so this decides which State
+                </span>
+              </span>
+              <select
+                value={branchId}
+                onChange={(e) => setBranchId(e.target.value)}
+                className={field}
+              >
+                <option value="">Head office</option>
+                {branches.map((b) => (
+                  <option key={b.id} value={b.id}>
+                    {b.name}
+                    {b.state_code ? ` — State ${b.state_code}` : ""}
+                  </option>
+                ))}
+              </select>
+            </label>
+          )}
 
           <div className="rounded-md border border-border p-3">
             <span className="text-sm font-medium">Salary structure</span>
