@@ -5,7 +5,8 @@ import { useRouter } from "next/navigation";
 import { toast } from "sonner";
 import { createClient } from "@/lib/supabase/client";
 import { Badge } from "@/components/ui/Badge";
-import { TableContainer, th, td } from "@/components/ui/Table";
+import { TableContainer, th, td, num } from "@/components/ui/Table";
+import { formatINR } from "@/lib/utils/currency";
 
 type Director = {
   id: string;
@@ -17,6 +18,43 @@ type Director = {
   date_of_appointment: string;
   date_of_cessation: string | null;
   is_opc_nominee: boolean;
+};
+
+// LLP-only additions (see 0097). Every type/state/handler below this comment
+// block and gated on entityType === "llp" is additive — a non-LLP company
+// never renders it, never calls addContribution, and the two extra props
+// default to empty arrays when the caller (app/(app)/[companyId]/directors/
+// page.tsx) doesn't fetch them.
+
+type Contribution = {
+  id: string;
+  director_id: string;
+  contribution_type: "cash" | "kind";
+  amount: number;
+  contribution_date: string;
+  valuation_certificate_reference: string | null;
+  notes: string | null;
+};
+
+const CONTRIBUTION_TYPE_LABEL: Record<Contribution["contribution_type"], string> = {
+  cash: "Cash",
+  kind: "In kind",
+};
+
+type ContribFormState = {
+  contributionType: "cash" | "kind";
+  amount: string;
+  contributionDate: string;
+  valuationCertificateReference: string;
+  notes: string;
+};
+
+const EMPTY_CONTRIB_FORM: ContribFormState = {
+  contributionType: "cash",
+  amount: "",
+  contributionDate: "",
+  valuationCertificateReference: "",
+  notes: "",
 };
 
 // Mirrors app_private.is_valid_pan exactly (see components/employees/EmployeeManager.tsx).
@@ -223,10 +261,16 @@ export function DirectorManager({
   companyId,
   directors,
   entityType,
+  contributions = [],
 }: {
   companyId: string;
   directors: Director[];
   entityType: string | null;
+  // LLP-only (see 0097) — the caller (directors/page.tsx) only fetches and
+  // passes this when entityType === "llp"; every other entity type gets the
+  // default empty array, so isLLP below is the only thing that actually
+  // gates any of this on screen.
+  contributions?: Contribution[];
 }) {
   const router = useRouter();
   const [showForm, setShowForm] = useState(false);
@@ -234,9 +278,51 @@ export function DirectorManager({
   const [form, setForm] = useState<FormState>(EMPTY_FORM);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editForm, setEditForm] = useState<FormState>(EMPTY_FORM);
+  const [openContribId, setOpenContribId] = useState<string | null>(null);
+  const [contribBusy, setContribBusy] = useState(false);
+  const [contribForm, setContribForm] = useState<ContribFormState>(EMPTY_CONTRIB_FORM);
+
+  const isLLP = entityType === "llp";
 
   const current = directors.filter((d) => !d.date_of_cessation);
   const past = directors.filter((d) => d.date_of_cessation);
+
+  function toggleContrib(id: string) {
+    if (openContribId === id) {
+      setOpenContribId(null);
+    } else {
+      setOpenContribId(id);
+      setContribForm(EMPTY_CONTRIB_FORM);
+    }
+  }
+
+  async function addContribution(directorId: string) {
+    if (!contribForm.amount || !contribForm.contributionDate) {
+      toast.error("Amount and date are required.");
+      return;
+    }
+    setContribBusy(true);
+    const { error } = await createClient().from("llp_partner_contributions").insert({
+      company_id: companyId,
+      director_id: directorId,
+      contribution_type: contribForm.contributionType,
+      amount: Number(contribForm.amount),
+      contribution_date: contribForm.contributionDate,
+      valuation_certificate_reference:
+        contribForm.contributionType === "kind"
+          ? contribForm.valuationCertificateReference.trim() || null
+          : null,
+      notes: contribForm.notes.trim() || null,
+    });
+    setContribBusy(false);
+    if (error) {
+      toast.error(error.message);
+      return;
+    }
+    toast.success("Contribution recorded");
+    setContribForm(EMPTY_CONTRIB_FORM);
+    router.refresh();
+  }
 
   async function addDirector(e: React.FormEvent) {
     e.preventDefault();
@@ -313,6 +399,15 @@ export function DirectorManager({
             >
               {isEditing ? "Cancel" : "Edit"}
             </button>
+            {isLLP && (
+              <button
+                type="button"
+                onClick={() => toggleContrib(d.id)}
+                className="ml-3 text-xs text-accent underline underline-offset-2"
+              >
+                {openContribId === d.id ? "Hide contributions" : "Contributions"}
+              </button>
+            )}
           </td>
         </tr>
         {isEditing && (
@@ -340,7 +435,162 @@ export function DirectorManager({
             </td>
           </tr>
         )}
+        {isLLP && openContribId === d.id && renderContribPanel(d)}
       </Fragment>
+    );
+  }
+
+  // LLP-only sub-panel (see 0097): this partner's contribution register —
+  // running cash/kind/total, the existing rows, and (for a still-serving
+  // partner) a form to add another. Renders only from renderRow above, and
+  // only when isLLP — never touched for any other entity type.
+  function renderContribPanel(d: Director) {
+    const rows = contributions
+      .filter((c) => c.director_id === d.id)
+      .slice()
+      .sort((a, b) => a.contribution_date.localeCompare(b.contribution_date));
+    const totalCash = rows
+      .filter((c) => c.contribution_type === "cash")
+      .reduce((sum, c) => sum + Number(c.amount), 0);
+    const totalKind = rows
+      .filter((c) => c.contribution_type === "kind")
+      .reduce((sum, c) => sum + Number(c.amount), 0);
+    const total = totalCash + totalKind;
+
+    return (
+      <tr className="border-b border-border bg-bg">
+        <td colSpan={7} className="px-4 py-4">
+          <div className="flex flex-col gap-3">
+            <div className="flex flex-wrap items-baseline gap-x-6 gap-y-1 text-sm">
+              <span className="font-semibold text-ink">
+                Total contribution to date: {formatINR(total, { showZero: true })}
+              </span>
+              <span className="text-ink-soft">
+                Cash {formatINR(totalCash, { showZero: true })} · In kind{" "}
+                {formatINR(totalKind, { showZero: true })}
+              </span>
+            </div>
+
+            {rows.length > 0 ? (
+              <TableContainer>
+                <table className="w-full min-w-[560px] text-sm">
+                  <thead>
+                    <tr className="border-b border-border text-left">
+                      <th className={th}>Date</th>
+                      <th className={th}>Type</th>
+                      <th className={num}>Amount</th>
+                      <th className={th}>Valuation ref. / notes</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {rows.map((c) => (
+                      <tr key={c.id} className="border-b border-border last:border-0">
+                        <td className={td + " whitespace-nowrap"}>{c.contribution_date}</td>
+                        <td className={td}>{CONTRIBUTION_TYPE_LABEL[c.contribution_type]}</td>
+                        <td className={num}>{formatINR(Number(c.amount), { showZero: true })}</td>
+                        <td className={td + " text-xs text-ink-soft"}>
+                          {c.valuation_certificate_reference ?? c.notes ?? (
+                            <span className="text-ink-faint">—</span>
+                          )}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </TableContainer>
+            ) : (
+              <p className="text-xs text-ink-faint">No contribution recorded yet.</p>
+            )}
+
+            {!d.date_of_cessation && (
+              <div className="rounded-[14px] border border-border bg-surface p-3">
+                <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-5">
+                  <label className="flex flex-col gap-1 text-xs">
+                    <span className="font-medium text-ink-soft">Type</span>
+                    <select
+                      value={contribForm.contributionType}
+                      onChange={(e) =>
+                        setContribForm({
+                          ...contribForm,
+                          contributionType: e.target.value as ContribFormState["contributionType"],
+                          valuationCertificateReference:
+                            e.target.value === "cash" ? "" : contribForm.valuationCertificateReference,
+                        })
+                      }
+                      className={field}
+                    >
+                      <option value="cash">Cash</option>
+                      <option value="kind">In kind</option>
+                    </select>
+                  </label>
+                  <label className="flex flex-col gap-1 text-xs">
+                    <span className="font-medium text-ink-soft">Amount</span>
+                    <input
+                      type="number"
+                      min="0"
+                      step="0.01"
+                      value={contribForm.amount}
+                      onChange={(e) => setContribForm({ ...contribForm, amount: e.target.value })}
+                      className={field}
+                    />
+                  </label>
+                  <label className="flex flex-col gap-1 text-xs">
+                    <span className="font-medium text-ink-soft">Date</span>
+                    <input
+                      type="date"
+                      value={contribForm.contributionDate}
+                      onChange={(e) =>
+                        setContribForm({ ...contribForm, contributionDate: e.target.value })
+                      }
+                      className={field}
+                    />
+                  </label>
+                  <label className="flex flex-col gap-1 text-xs sm:col-span-2">
+                    <span className="font-medium text-ink-soft">
+                      {contribForm.contributionType === "kind" ? (
+                        <>
+                          Valuation certificate ref.{" "}
+                          <span className="font-normal text-ink-faint">
+                            optional — practising CA / practising Cost Accountant / Central
+                            Govt. approved valuer (Rule 23(2))
+                          </span>
+                        </>
+                      ) : (
+                        <>
+                          Notes <span className="font-normal text-ink-faint">optional</span>
+                        </>
+                      )}
+                    </span>
+                    <input
+                      value={
+                        contribForm.contributionType === "kind"
+                          ? contribForm.valuationCertificateReference
+                          : contribForm.notes
+                      }
+                      onChange={(e) =>
+                        setContribForm(
+                          contribForm.contributionType === "kind"
+                            ? { ...contribForm, valuationCertificateReference: e.target.value }
+                            : { ...contribForm, notes: e.target.value }
+                        )
+                      }
+                      className={field}
+                    />
+                  </label>
+                </div>
+                <button
+                  type="button"
+                  disabled={contribBusy}
+                  onClick={() => addContribution(d.id)}
+                  className="mt-3 rounded-lg bg-accent px-4 py-2 text-sm font-semibold text-accent-ink hover:opacity-90 disabled:opacity-50"
+                >
+                  {contribBusy ? "Saving…" : "Add contribution"}
+                </button>
+              </div>
+            )}
+          </div>
+        </td>
+      </tr>
     );
   }
 
