@@ -1582,6 +1582,77 @@ describeDb(`depreciation posting (${hasDb ? "live" : noDbReason})`, () => {
 });
 
 // ---------------------------------------------------------------------------
+// Income tax: losses and Sec 50 (0078)
+// ---------------------------------------------------------------------------
+describeDb(`income tax losses and Sec 50 (${hasDb ? "live" : noDbReason})`, () => {
+  it("get_income_tax_computation is not reachable by anon or public", async () => {
+    // It was dropped and recreated for a widened return type, and a drop takes
+    // its grants with it.
+    const rows = await sql(`
+      select p.proname, r.rolname
+        from pg_proc p
+        join pg_namespace n on n.oid = p.pronamespace
+        cross join (values ('anon'), ('public')) as r(rolname)
+       where n.nspname = 'public'
+         and p.proname = 'get_income_tax_computation'
+         and has_function_privilege(r.rolname, p.oid, 'EXECUTE')
+    `);
+    expect(rows, `income tax computation reachable by a role it shouldn't be:\n${offenders(rows)}`).toEqual([]);
+  });
+
+  it("a capital loss never reduces business income, and a capital gain always adds to it", async () => {
+    // The asymmetry is the whole point. Sec 50 short-term capital GAIN is
+    // taxable and enters total income; a Sec 50 capital LOSS falls under Sec
+    // 74 and may be set off only against capital gains, never against business
+    // income. Netting them into one signed number — the obvious shortcut —
+    // would quietly let a capital loss shelter business profit.
+    //
+    // Also pins the two clamps: taxable income is gross total income floored
+    // at zero (you do not pay tax on a loss), and the capital loss carried
+    // forward is the unabsorbed part of the capital-gains head.
+    const rows = await sql(`
+      with r as (
+        select c.name, t.*
+          from public.companies c
+          cross join lateral public.get_income_tax_computation(c.id, '2026-04-01', '2027-03-31') t
+         where t.applicable
+      )
+      select name, business_income, short_term_capital_gain, short_term_capital_loss,
+             gross_total_income, taxable_income, capital_loss_carried_forward
+        from r
+       where round(gross_total_income
+                   - (business_income + greatest(short_term_capital_gain - short_term_capital_loss, 0)), 2) <> 0
+          or round(taxable_income - greatest(gross_total_income, 0), 2) <> 0
+          or round(capital_loss_carried_forward
+                   - greatest(short_term_capital_loss - short_term_capital_gain, 0), 2) <> 0
+       order by 1
+    `);
+    expect(rows, `Sec 50 / Sec 74 treatment is wrong:\n${offenders(rows)}`).toEqual([]);
+  });
+
+  it("a business loss is reported for carry-forward rather than clamped away", async () => {
+    // Before 0078 the only expression of taxable income was
+    // greatest(..., 0), so a loss ceased to exist the moment it was computed
+    // and the report showed a bare zero. Verified live at the time by forcing
+    // a loss: business income -11,23,000 with the same figure reported as
+    // carry-forward, where previously nothing at all would have been shown.
+    const rows = await sql(`
+      with r as (
+        select c.name, t.*
+          from public.companies c
+          cross join lateral public.get_income_tax_computation(c.id, '2026-04-01', '2027-03-31') t
+         where t.applicable
+      )
+      select name, gross_total_income, business_loss_carried_forward
+        from r
+       where round(business_loss_carried_forward - greatest(-gross_total_income, 0), 2) <> 0
+       order by 1
+    `);
+    expect(rows, `business loss carry-forward does not match the computed loss:\n${offenders(rows)}`).toEqual([]);
+  });
+});
+
+// ---------------------------------------------------------------------------
 // Tenancy: what the catalog can prove without fixtures
 // ---------------------------------------------------------------------------
 describeDb(`tenancy and RLS, catalog-level (${hasDb ? "live" : noDbReason})`, () => {

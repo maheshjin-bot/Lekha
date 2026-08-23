@@ -3963,15 +3963,22 @@ export type Database = {
         Returns: {
           applicable: boolean
           book_depreciation_addback: number
+          book_depreciation_per_register: number
           book_profit: number
+          business_income: number
+          business_loss_carried_forward: number
+          capital_loss_carried_forward: number
           cess: number
           entity_type: string
+          gross_total_income: number
           msme_disallowance_addback: number
           note: string
           partner_remuneration_booked: number
           partner_remuneration_disallowed: number
           rebate_87a: number
           regime_used: string
+          short_term_capital_gain: number
+          short_term_capital_loss: number
           surcharge: number
           tax_after_rebate: number
           tax_before_rebate: number

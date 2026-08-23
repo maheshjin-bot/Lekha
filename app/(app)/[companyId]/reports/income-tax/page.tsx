@@ -1,3 +1,4 @@
+import Link from "next/link";
 import { createClient } from "@/lib/supabase/server";
 import { formatINR } from "@/lib/utils/currency";
 import { ReportShell, num, td, th } from "@/components/reports/ReportShell";
@@ -71,6 +72,13 @@ export default async function IncomeTaxPage({
   const msmeAddback = Number(result.msme_disallowance_addback);
   const taxDep = Number(result.tax_depreciation_deduction);
   const remunerationDisallowed = Number(result.partner_remuneration_disallowed ?? 0);
+  const bookDepRegister = Number(result.book_depreciation_per_register ?? 0);
+  const businessIncome = Number(result.business_income ?? 0);
+  const stcg = Number(result.short_term_capital_gain ?? 0);
+  const stcl = Number(result.short_term_capital_loss ?? 0);
+  const grossTotalIncome = Number(result.gross_total_income ?? 0);
+  const businessLossCf = Number(result.business_loss_carried_forward ?? 0);
+  const capitalLossCf = Number(result.capital_loss_carried_forward ?? 0);
   const taxableIncome = Number(result.taxable_income);
   const taxBeforeRebate = Number(result.tax_before_rebate);
   const rebate87a = Number(result.rebate_87a);
@@ -123,6 +131,42 @@ export default async function IncomeTaxPage({
             <td className={num}>{formatINR(remunerationDisallowed, { showZero: true })}</td>
           </tr>
           <tr className="border-b border-border bg-bg">
+            <td className={td + " font-semibold"}>
+              {businessIncome < 0 ? "Business loss" : "Business income"}
+            </td>
+            <td className={num + " font-semibold"}>
+              {formatINR(businessIncome, { showZero: true })}
+            </td>
+          </tr>
+          {(stcg !== 0 || stcl !== 0) && (
+            <>
+              <tr className="border-b border-border last:border-0">
+                <td className={td}>+ Short-term capital gain (Sec 50)</td>
+                <td className={num}>{formatINR(stcg, { showZero: true })}</td>
+              </tr>
+              {stcl !== 0 && (
+                <tr className="border-b border-border last:border-0">
+                  <td className={td}>
+                    Short-term capital loss (Sec 50)
+                    <div className="text-xs text-ink-faint">
+                      Set off only against capital gains (Sec 74) — deliberately does not reduce
+                      the business income above
+                    </div>
+                  </td>
+                  <td className={num + " text-ink-faint"}>{formatINR(stcl, { showZero: true })}</td>
+                </tr>
+              )}
+            </>
+          )}
+          <tr className="border-b border-border bg-bg">
+            <td className={td + " font-semibold"}>
+              {grossTotalIncome < 0 ? "Gross total loss" : "Gross total income"}
+            </td>
+            <td className={num + " font-semibold"}>
+              {formatINR(grossTotalIncome, { showZero: true })}
+            </td>
+          </tr>
+          <tr className="border-b border-border bg-bg">
             <td className={td + " font-semibold"}>Taxable income</td>
             <td className={num + " font-semibold"}>
               {formatINR(taxableIncome, { showZero: true })}
@@ -156,6 +200,54 @@ export default async function IncomeTaxPage({
           </tr>
         </tbody>
       </table>
+
+      {(businessLossCf > 0 || capitalLossCf > 0) && (
+        <div className="border-t border-border bg-warning-soft px-4 py-3 text-xs text-ink">
+          <p className="font-medium">Losses available to carry forward</p>
+          <ul className="mt-1 space-y-1">
+            {businessLossCf > 0 && (
+              <li>
+                <strong className="font-medium">
+                  Business loss {formatINR(businessLossCf)}
+                </strong>{" "}
+                — Sec 72, eight assessment years; unabsorbed depreciation carries forward
+                indefinitely under Sec 32(2).
+              </li>
+            )}
+            {capitalLossCf > 0 && (
+              <li>
+                <strong className="font-medium">
+                  Short-term capital loss {formatINR(capitalLossCf)}
+                </strong>{" "}
+                — Sec 50 read with Sec 74: set off only against capital gains, eight assessment
+                years. It has not reduced the business income above.
+              </li>
+            )}
+          </ul>
+          <p className="mt-1.5">
+            LEKHA does not yet carry a loss into a later year&rsquo;s computation — record these
+            figures yourself. They are shown here rather than discarded, which is what used to
+            happen.
+          </p>
+        </div>
+      )}
+
+      {Math.abs(bookDepAddback - bookDepRegister) > 0.005 && (
+        <div className="border-t border-border bg-warning-soft px-4 py-3 text-xs text-ink">
+          <p className="font-medium">The books are behind the fixed asset register.</p>
+          <p className="mt-1">
+            Depreciation actually posted for the year is{" "}
+            {formatINR(bookDepAddback, { showZero: true })}, but the register computes{" "}
+            {formatINR(bookDepRegister, { showZero: true })}. The add-back above uses what was
+            posted, because that is what reduced book profit — adding back a charge that was never
+            deducted would overstate taxable income by the difference. Post the charge on{" "}
+            <Link href={`/${companyId}/depreciation`} className="underline">
+              Depreciation
+            </Link>{" "}
+            to bring the two in line.
+          </p>
+        </div>
+      )}
 
       <p className="border-t border-border px-4 py-3 text-xs text-ink-faint">
         {result.note}
