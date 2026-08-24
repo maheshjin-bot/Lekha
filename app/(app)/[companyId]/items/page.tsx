@@ -7,21 +7,29 @@ export default async function ItemsPage({
   const { companyId } = await params;
   const supabase = await createClient();
 
-  const [{ data: items }, { data: uoms }, { data: tcsSections }] = await Promise.all([
-    supabase
-      .from("items")
-      .select(
-        "id, code, name, item_type, hsn_sac, uom, maintain_stock, opening_quantity, opening_value, sale_rate, gst_rate_percent, supply_nature, default_tcs_section, is_active"
-      )
-      .eq("company_id", companyId)
-      .order("name"),
-    supabase.from("ref_uom").select("code, name").order("name"),
-    supabase
-      .from("ref_tcs_sections")
-      .select("section_code, description, rate_percent")
-      .eq("is_active", true)
-      .order("sort_order"),
-  ]);
+  const [{ data: items }, { data: uoms }, { data: tcsSections }, { data: uomConversions }] =
+    await Promise.all([
+      supabase
+        .from("items")
+        .select(
+          "id, code, name, item_type, hsn_sac, uom, maintain_stock, opening_quantity, opening_value, sale_rate, gst_rate_percent, supply_nature, default_tcs_section, is_active"
+        )
+        .eq("company_id", companyId)
+        .order("name"),
+      supabase.from("ref_uom").select("code, name").order("name"),
+      supabase
+        .from("ref_tcs_sections")
+        .select("section_code, description, rate_percent")
+        .eq("is_active", true)
+        .order("sort_order"),
+      // Alternate-unit conversions (0121) — additive to the item master, one
+      // company-wide fetch filtered client-side per item in ItemManager.
+      supabase
+        .from("item_uom_conversions")
+        .select("id, item_id, alternate_uom, conversion_factor, is_purchase_uom, is_sales_uom")
+        .eq("company_id", companyId)
+        .order("alternate_uom"),
+    ]);
 
   return (
     <main className="mx-auto max-w-5xl px-6 py-10">
@@ -36,6 +44,7 @@ export default async function ItemsPage({
         items={items ?? []}
         uoms={uoms ?? []}
         tcsSections={tcsSections ?? []}
+        uomConversions={uomConversions ?? []}
       />
     </main>
   );

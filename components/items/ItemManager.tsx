@@ -1,9 +1,10 @@
 "use client";
 
-import { useState } from "react";
+import { Fragment, useState } from "react";
 import { useRouter } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
 import { formatINR } from "@/lib/utils/currency";
+import { ItemUomPanel, type ItemUomConversion } from "@/components/items/ItemUomPanel";
 
 type Item = {
   id: string;
@@ -61,13 +62,18 @@ export function ItemManager({
   items,
   uoms,
   tcsSections,
+  uomConversions = [],
 }: {
   companyId: string;
   items: Item[];
   uoms: { code: string; name: string }[];
   tcsSections: TcsSection[];
+  // Alternate-unit conversions (0121), keyed by item_id — additive to the
+  // item master, not required by any caller that predates it.
+  uomConversions?: ItemUomConversion[];
 }) {
   const router = useRouter();
+  const [expandedItemId, setExpandedItemId] = useState<string | null>(null);
   const [name, setName] = useState("");
   const [itemType, setItemType] = useState<"goods" | "service">("goods");
   const [hsn, setHsn] = useState("");
@@ -150,19 +156,24 @@ export function ItemManager({
                 <th className="px-4 py-2.5 text-right font-medium">GST</th>
                 <th className="px-4 py-2.5 font-medium">TCS</th>
                 <th className="px-4 py-2.5 text-right font-medium">Sale rate</th>
+                <th className="px-4 py-2.5 font-medium">Alt. units</th>
               </tr>
             </thead>
             <tbody>
               {items.length === 0 && (
                 <tr>
-                  <td colSpan={7} className="px-4 py-10 text-center text-ink-faint">
+                  <td colSpan={8} className="px-4 py-10 text-center text-ink-faint">
                     No items yet. Create one on the right.
                   </td>
                 </tr>
               )}
-              {items.map((it) => (
+              {items.map((it) => {
+                const canHaveUom = it.item_type === "goods" && it.maintain_stock;
+                const itemConversions = uomConversions.filter((c) => c.item_id === it.id);
+                const expanded = expandedItemId === it.id;
+                return (
+                <Fragment key={it.id}>
                 <tr
-                  key={it.id}
                   className="border-b border-border last:border-0"
                 >
                   <td className="px-4 py-2.5">
@@ -216,8 +227,42 @@ export function ItemManager({
                   <td className="px-4 py-2.5 text-right tabular-nums font-mono">
                     {it.sale_rate ? formatINR(it.sale_rate) : <span className="text-ink-faint">—</span>}
                   </td>
+                  <td className="px-4 py-2.5">
+                    {canHaveUom ? (
+                      <button
+                        type="button"
+                        onClick={() => setExpandedItemId(expanded ? null : it.id)}
+                        className={
+                          "rounded-md border px-2 py-1 text-xs " +
+                          (itemConversions.length > 0
+                            ? "border-accent bg-accent-soft text-accent"
+                            : "border-border-strong text-ink-soft hover:bg-surface-2")
+                        }
+                      >
+                        {itemConversions.length > 0
+                          ? `${itemConversions.length} unit${itemConversions.length > 1 ? "s" : ""}`
+                          : "+ Add"}
+                      </button>
+                    ) : (
+                      <span className="text-ink-faint">—</span>
+                    )}
+                  </td>
                 </tr>
-              ))}
+                {expanded && canHaveUom && (
+                  <tr className="border-b border-border last:border-0 bg-bg">
+                    <td colSpan={8} className="px-4 py-3">
+                      <ItemUomPanel
+                        companyId={companyId}
+                        item={{ id: it.id, name: it.name, uom: it.uom }}
+                        uoms={uoms}
+                        conversions={itemConversions}
+                      />
+                    </td>
+                  </tr>
+                )}
+                </Fragment>
+              );
+              })}
             </tbody>
           </table>
         </div>
