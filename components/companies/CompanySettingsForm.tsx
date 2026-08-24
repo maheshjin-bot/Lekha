@@ -3,6 +3,7 @@
 import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
+import { UPI_VPA_PATTERN } from "@/lib/utils/upi";
 
 const TAN_PATTERN = /^[A-Z]{4}[0-9]{5}[A-Z]$/;
 // Mirrors app_private.is_valid_udyam exactly.
@@ -33,6 +34,7 @@ export function CompanySettingsForm({
   debtorMarginPercent,
   debtorEligibilityDays,
   passwordProtected,
+  upiVpa,
 }: {
   companyId: string;
   entityType: string;
@@ -46,6 +48,7 @@ export function CompanySettingsForm({
   debtorMarginPercent: number;
   debtorEligibilityDays: number;
   passwordProtected: boolean;
+  upiVpa: string | null;
 }) {
   const router = useRouter();
   const [tanInput, setTanInput] = useState(tan ?? "");
@@ -76,6 +79,11 @@ export function CompanySettingsForm({
   const [drawingPowerError, setDrawingPowerError] = useState<string | null>(null);
   const [drawingPowerSaved, setDrawingPowerSaved] = useState(false);
 
+  const [upiVpaInput, setUpiVpaInput] = useState(upiVpa ?? "");
+  const [upiVpaBusy, setUpiVpaBusy] = useState(false);
+  const [upiVpaError, setUpiVpaError] = useState<string | null>(null);
+  const [upiVpaSaved, setUpiVpaSaved] = useState(false);
+
   const [isProtected, setIsProtected] = useState(passwordProtected);
   // Two-step reveal for both setting/changing and removing — same pattern as
   // FixedAssetManager's disposal flow, not a confirm() and not a modal.
@@ -93,6 +101,7 @@ export function CompanySettingsForm({
   // RegistrationManager.
   const looksValid = tanInput.length === 0 || TAN_PATTERN.test(tanInput);
   const udyamLooksValid = udyamInput.length === 0 || UDYAM_PATTERN.test(udyamInput);
+  const upiVpaLooksValid = upiVpaInput.length === 0 || UPI_VPA_PATTERN.test(upiVpaInput);
 
   async function onSubmit(e: React.FormEvent) {
     e.preventDefault();
@@ -198,6 +207,26 @@ export function CompanySettingsForm({
       return;
     }
     setDrawingPowerSaved(true);
+    router.refresh();
+  }
+
+  async function onUpiVpaSubmit(e: React.FormEvent) {
+    e.preventDefault();
+    setUpiVpaBusy(true);
+    setUpiVpaError(null);
+    setUpiVpaSaved(false);
+
+    const { error } = await createClient()
+      .from("companies")
+      .update({ upi_vpa: upiVpaInput.trim() || null })
+      .eq("id", companyId);
+
+    setUpiVpaBusy(false);
+    if (error) {
+      setUpiVpaError(error.message);
+      return;
+    }
+    setUpiVpaSaved(true);
     router.refresh();
   }
 
@@ -505,6 +534,53 @@ export function CompanySettingsForm({
             className="mt-1 self-start rounded-lg bg-accent px-4 py-2 text-sm font-semibold text-accent-ink transition-colors hover:opacity-90 disabled:opacity-50"
           >
             {udyamBusy ? "Saving…" : "Save"}
+          </button>
+        </form>
+      </section>
+
+      <section className="rounded-lg border border-border bg-surface p-5">
+        <h2 className="font-semibold">UPI payment QR</h2>
+        <p className="mt-1 text-sm text-ink-soft">
+          Your own UPI ID (e.g. yourname@okhdfcbank). When set, a scannable
+          payment QR appears on the printed copy of any unpaid sales
+          invoice, pre-filled with the amount still outstanding on that
+          invoice — no payment gateway involved, this is the same static
+          upi://pay link any UPI app already understands.
+        </p>
+        <form onSubmit={onUpiVpaSubmit} className="mt-4 flex flex-col gap-1.5">
+          <label className="flex flex-col gap-1.5">
+            <span className="text-sm font-medium">UPI VPA</span>
+            <input
+              value={upiVpaInput}
+              onChange={(e) => setUpiVpaInput(e.target.value.trim())}
+              placeholder="yourname@okhdfcbank"
+              className={field + " font-mono"}
+            />
+          </label>
+          {upiVpaInput.length > 0 && !upiVpaLooksValid && (
+            <span className="text-xs text-warning">
+              That doesn&rsquo;t look like a UPI ID (expected something like
+              name@bank).
+            </span>
+          )}
+
+          {upiVpaError && (
+            <p className="mt-2 rounded-md bg-error-soft px-3 py-2 text-sm text-error">
+              {upiVpaError}
+            </p>
+          )}
+          {upiVpaSaved && !upiVpaError && (
+            <p className="mt-2 rounded-md bg-success-soft px-3 py-2 text-sm text-success">
+              Saved.
+            </p>
+          )}
+
+          <button
+            type="submit"
+            disabled={upiVpaBusy}
+            className="mt-3 self-start rounded-lg bg-accent px-4 py-2 text-sm font-semibold text-accent-ink transition-colors hover:opacity-90 disabled:opacity-50"
+          >
+            {upiVpaBusy ? "Saving…" : "Save"}
           </button>
         </form>
       </section>

@@ -1,8 +1,13 @@
 import { notFound } from "next/navigation";
+import Link from "next/link";
 import { createClient } from "@/lib/supabase/server";
 import { formatINR } from "@/lib/utils/currency";
 import { amountInWords } from "@/lib/utils/words";
 import { PrintButton } from "@/components/invoices/PrintButton";
+import { UpiPaymentQr } from "@/components/invoices/UpiPaymentQr";
+import { DownloadPdfButton } from "@/components/invoices/DownloadPdfButton";
+import { buildUpiPayLink } from "@/lib/utils/upi";
+import { resolveLogoDataUri } from "@/lib/server/printAssets";
 
 const TITLE: Record<string, string> = {
   sales: "Tax Invoice",
@@ -36,11 +41,18 @@ export default async function PrintInvoicePage({
 
   if (!voucher) notFound();
 
-  const [{ data: company }, { data: items }, { data: party }, { data: branch }, { data: taxMap }, { data: states }] =
-    await Promise.all([
+  const [
+    { data: company },
+    { data: items },
+    { data: party },
+    { data: branch },
+    { data: taxMap },
+    { data: states },
+    { data: outstandingRaw },
+  ] = await Promise.all([
       supabase
         .from("companies")
-        .select("name, legal_name, pan")
+        .select("name, legal_name, pan, upi_vpa, logo_url, print_terms_and_conditions, print_footer_note")
         .eq("id", companyId)
         .maybeSingle(),
       supabase
@@ -67,7 +79,22 @@ export default async function PrintInvoicePage({
         .select("purpose, ledger_id")
         .eq("company_id", companyId),
       supabase.from("ref_states").select("code, name"),
+      // Only a sales invoice can ever show a payment QR — see below — so
+      // this is skipped for every other voucher type rather than paying for
+      // an RPC round trip whose result would just be discarded.
+      voucher.voucher_type === "sales"
+        ? supabase.rpc("get_invoice_outstanding", {
+            p_company_id: companyId,
+            p_voucher_id: voucherId,
+          })
+        : Promise.resolve({ data: null }),
     ]);
+
+  // Resolved to a data: URI, not a signed URL — see lib/server/printAssets.ts
+  // for why (the same render this page produces is also what the PDF export
+  // route captures, and a data: URI has no expiry to race against however
+  // long that takes).
+  const logoDataUri = await resolveLogoDataUri(supabase, company?.logo_url ?? null);
 
   const lines = items ?? [];
   const total = Number(voucher.total_amount);
@@ -92,14 +119,50 @@ export default async function PrintInvoicePage({
 
   const stateName = (code: string | null) => states?.find((s) => s.code === code)?.name ?? code;
 
+  // A payment QR only ever makes sense on a sales invoice (the only voucher
+  // type this company is the PAYEE for) that still has money owed on it —
+  // never on a purchase/journal/credit-debit-note voucher (get_invoice_
+  // outstanding was not even called for those, above), and never on an
+  // invoice already settled in full. get_invoice_outstanding (0111) answers
+  // this at the correct grain: THIS invoice's own FIFO-remaining balance,
+  // not the party's overall ledger balance, so a paid invoice for a
+  // customer who separately owes money on a DIFFERENT invoice still
+  // correctly shows no QR here.
+  const outstandingAmount = Number(outstandingRaw ?? 0);
+  const showUpiQr = voucher.voucher_type === "sales" && !!company?.upi_vpa && outstandingAmount > 0;
+  const upiLink = showUpiQr
+    ? buildUpiPayLink({
+        vpa: company!.upi_vpa!,
+        payeeName: company?.legal_name || company?.name || "",
+        amount: outstandingAmount,
+        note: `Invoice ${voucher.voucher_number}`,
+        txnRef: voucher.voucher_number,
+      })
+    : null;
+
   return (
     <main className="mx-auto max-w-3xl px-6 py-10 print:max-w-none print:px-0 print:py-0">
-      <div className="mb-6 flex justify-end print:hidden">
+      <div className="mb-6 flex items-center justify-end gap-3 print:hidden">
+        <Link
+          href={`/${companyId}/settings/print-template`}
+          className="text-xs text-ink-faint underline underline-offset-2 hover:text-ink"
+        >
+          Customize logo &amp; terms
+        </Link>
+        <DownloadPdfButton companyId={companyId} voucherId={voucherId} />
         <PrintButton />
       </div>
 
       <article className="border border-border-strong bg-surface p-8 text-sm text-ink print:border-0 print:p-0">
         <header className="border-b-2 border-ink pb-4">
+          {logoDataUri && (
+            // eslint-disable-next-line @next/next/no-img-element -- inline data: URI, not a static asset Next's <Image> can optimise.
+            <img
+              src={logoDataUri}
+              alt={`${company?.legal_name || company?.name || "Company"} logo`}
+              className="mx-auto mb-2 max-h-16 max-w-[200px] object-contain"
+            />
+          )}
           <h1 className="text-center text-lg font-semibold uppercase tracking-wide">
             {TITLE[voucher.voucher_type] ?? "Voucher"}
           </h1>
@@ -246,15 +309,44 @@ export default async function PrintInvoicePage({
           <p className="mt-4 text-xs text-ink-soft">{voucher.narration}</p>
         )}
 
-        <footer className="mt-12 flex justify-between text-xs">
-          <div className="text-ink-faint">
-            This is a computer-generated document.
+        {company?.print_terms_and_conditions && (
+          <section className="mt-4 border-t border-border-strong pt-3">
+            <div className="text-[10px] uppercase tracking-wide text-ink-faint">
+              Terms &amp; conditions
+            </div>
+            <p className="mt-1 whitespace-pre-line text-xs text-ink-soft">
+              {company.print_terms_and_conditions}
+            </p>
+          </section>
+        )}
+
+        <footer className="mt-12 flex items-end justify-between gap-6 text-xs">
+          <div>
+            <div className="text-ink-faint">
+              This is a computer-generated document.
+            </div>
+            {upiLink && (
+              <div className="mt-4 flex items-center gap-3">
+                <UpiPaymentQr data={upiLink} size={104} />
+                <div className="text-ink-soft">
+                  <div className="font-medium text-ink">Scan to pay via UPI</div>
+                  <div className="mt-0.5">{formatINR(outstandingAmount, { showZero: true })} due</div>
+                  <div className="mt-0.5 font-mono text-[11px] text-ink-faint">{company?.upi_vpa}</div>
+                </div>
+              </div>
+            )}
           </div>
-          <div className="text-right">
+          <div className="shrink-0 text-right">
             <div className="mb-10">For {company?.legal_name || company?.name}</div>
             <div className="border-t border-border-strong pt-1">Authorised Signatory</div>
           </div>
         </footer>
+
+        {company?.print_footer_note && (
+          <p className="mt-8 border-t border-border-strong pt-3 text-center text-xs text-ink-faint">
+            {company.print_footer_note}
+          </p>
+        )}
       </article>
     </main>
   );
