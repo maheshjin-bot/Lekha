@@ -21,7 +21,7 @@ export default async function CompanyPage({
   const { companyId } = await params;
   const supabase = await createClient();
 
-  const [{ data: profile }, { data: modules }, { data: branches }, { data: kpis }, { data: attention }] =
+  const [{ data: profile }, { data: modules }, { data: branches }, { data: kpis }, { data: attention }, { count: pendingNotifications }] =
     await Promise.all([
       supabase.rpc("get_company_profile", { p_company_id: companyId }),
       supabase.rpc("get_company_modules", { p_company_id: companyId }),
@@ -32,6 +32,14 @@ export default async function CompanyPage({
         .order("is_head_office", { ascending: false }),
       supabase.rpc("get_dashboard_kpis", { p_company_id: companyId }),
       supabase.rpc("get_needs_attention", { p_company_id: companyId }),
+      // Notifications (0122) — RLS-filtered head count, so a non-admin sees
+      // only their own; an admin sees the company's. Purely a badge on the
+      // link below; the actual list lives at /notifications.
+      supabase
+        .from("notifications")
+        .select("id", { count: "exact", head: true })
+        .eq("company_id", companyId)
+        .eq("status", "pending"),
     ]);
 
   const company = profile?.[0];
@@ -44,14 +52,27 @@ export default async function CompanyPage({
 
   return (
     <main className="mx-auto max-w-5xl px-6 py-10">
-      <header className="mb-8">
-        <h1 className="font-display text-3xl font-semibold tracking-tight text-ink">
-          {company.name}
-        </h1>
-        <p className="mt-2 text-sm text-ink-soft">
-          {company.entity_name} ·{" "}
-          {company.compliance_mode === "compliance" ? "Books + compliance" : "Books only"}
-        </p>
+      <header className="mb-8 flex items-start justify-between gap-4">
+        <div>
+          <h1 className="font-display text-3xl font-semibold tracking-tight text-ink">
+            {company.name}
+          </h1>
+          <p className="mt-2 text-sm text-ink-soft">
+            {company.entity_name} ·{" "}
+            {company.compliance_mode === "compliance" ? "Books + compliance" : "Books only"}
+          </p>
+        </div>
+        <Link
+          href={`/${companyId}/notifications`}
+          className="mt-1 flex shrink-0 items-center gap-1.5 rounded-full border border-border-strong bg-surface px-3 py-1.5 text-xs font-medium text-ink-soft transition-colors hover:bg-surface-2 hover:text-ink"
+        >
+          Notifications
+          {Boolean(pendingNotifications) && (
+            <Badge tone="warn" className="ml-0.5">
+              {pendingNotifications}
+            </Badge>
+          )}
+        </Link>
       </header>
 
       {/* The first thing an owner sees is not a chart — it's the answer to
