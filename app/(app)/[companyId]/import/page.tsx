@@ -5,12 +5,16 @@ import { VoucherImport } from "@/components/csv/VoucherImport";
 import { InvoiceImport } from "@/components/csv/InvoiceImport";
 import { ItemImport } from "@/components/csv/ItemImport";
 import { LedgerImport } from "@/components/csv/LedgerImport";
+import { Gstr2bImport } from "@/components/csv/Gstr2bImport";
+import { TallyImportPanel } from "@/components/tally/TallyImportPanel";
 
 const TABS = [
   { key: "vouchers", label: "Vouchers" },
   { key: "invoices", label: "Sales & purchase" },
   { key: "items", label: "Items" },
   { key: "ledgers", label: "Ledgers" },
+  { key: "gstr2b", label: "GSTR-2B" },
+  { key: "tally", label: "From Tally" },
 ] as const;
 type TabKey = (typeof TABS)[number]["key"];
 
@@ -32,6 +36,16 @@ const COPY: Record<TabKey, { title: string; description: string }> = {
   ledgers: {
     title: "Import ledgers",
     description: "One row per ledger — the same fields the Ledgers form takes, ready in bulk.",
+  },
+  gstr2b: {
+    title: "Upload GSTR-2B",
+    description:
+      "One row per document from your downloaded GSTR-2B (B2B and CDNR). Re-uploading a period replaces it — a 2B download is a full snapshot, not something to append to.",
+  },
+  tally: {
+    title: "Import from Tally",
+    description:
+      "Bring chart-of-accounts groups and ledgers — and the plain accounting vouchers among them (Receipt, Payment, Contra, Journal) — in from a Tally XML export. Every record that can't be imported is listed with the reason, never silently dropped.",
   },
 };
 
@@ -78,6 +92,8 @@ export default async function ImportPage({
       {tab === "invoices" && <InvoicesTab companyId={companyId} lockDate={company?.lock_date ?? null} />}
       {tab === "items" && <ItemsTab companyId={companyId} />}
       {tab === "ledgers" && <LedgersTab companyId={companyId} />}
+      {tab === "gstr2b" && <Gstr2bTab companyId={companyId} />}
+      {tab === "tally" && <TallyTab companyId={companyId} lockDate={company?.lock_date ?? null} />}
     </main>
   );
 }
@@ -180,6 +196,46 @@ async function LedgersTab({ companyId }: { companyId: string }) {
       groups={groups ?? []}
       tdsSections={tdsSections ?? []}
       existingNames={(existing ?? []).map((r) => r.name)}
+    />
+  );
+}
+
+async function Gstr2bTab({ companyId }: { companyId: string }) {
+  const supabase = await createClient();
+  const [{ data: registrations }, { data: existingPeriods }] = await Promise.all([
+    supabase.from("gst_registrations").select("id, gstin").eq("company_id", companyId).order("gstin"),
+    supabase.rpc("list_gstr2b_periods", { p_company_id: companyId }),
+  ]);
+  return (
+    <Gstr2bImport
+      companyId={companyId}
+      registrations={registrations ?? []}
+      existingPeriods={existingPeriods ?? []}
+    />
+  );
+}
+
+async function TallyTab({ companyId, lockDate }: { companyId: string; lockDate: string | null }) {
+  const supabase = await createClient();
+  const [{ data: groups }, { data: ledgers }, { data: refStates }, { data: branches }] = await Promise.all([
+    supabase.from("account_groups").select("id, name, normal_balance").eq("company_id", companyId),
+    supabase.from("ledgers").select("id, name").eq("company_id", companyId).eq("is_active", true).order("name"),
+    supabase.from("ref_states").select("code, name").eq("is_active", true),
+    supabase
+      .from("branches")
+      .select("id, code, name")
+      .eq("company_id", companyId)
+      .eq("is_active", true)
+      .order("is_head_office", { ascending: false }),
+  ]);
+  return (
+    <TallyImportPanel
+      companyId={companyId}
+      existingGroups={groups ?? []}
+      existingLedgers={ledgers ?? []}
+      refStates={refStates ?? []}
+      branches={branches ?? []}
+      lockDate={lockDate}
     />
   );
 }
