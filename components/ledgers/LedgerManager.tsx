@@ -20,6 +20,7 @@ type Ledger = {
   msme_payment_days: number | null;
   is_partner_remuneration: boolean;
   is_related_party: boolean;
+  relationship_type: string | null;
   is_loan_or_deposit: boolean;
   sec43b_category: string | null;
   gst_registration_type: string | null;
@@ -74,6 +75,22 @@ const GST_REG_TYPE_OPTIONS = [
   "deemed_export",
 ];
 
+// Mirrors ledgers_relationship_type_check exactly (0105). AS 18 / Ind AS 24's
+// own relationship categories — see that migration's header for why this
+// rides the pre-existing Sec 40A(2)(b) is_related_party flag rather than a
+// separate one, and the coverage gap that reuse leaves.
+const RELATIONSHIP_TYPE_LABEL: Record<string, string> = {
+  holding_company: "Holding company",
+  subsidiary_or_fellow_subsidiary: "Subsidiary / fellow subsidiary",
+  associate_or_joint_venture: "Associate / joint venture",
+  individual_with_control_or_significant_influence: "Individual with control / significant influence",
+  relative_of_such_individual: "Relative of such individual",
+  key_management_personnel: "Key management personnel",
+  relative_of_kmp: "Relative of KMP",
+  enterprise_influenced_by_kmp_or_relative: "Enterprise influenced by KMP or relative",
+  other: "Other related party",
+};
+
 export function LedgerManager({
   companyId,
   initialLedgers,
@@ -117,6 +134,7 @@ export function LedgerManager({
   const [msmePaymentDays, setMsmePaymentDays] = useState("");
   const [isPartnerRemuneration, setIsPartnerRemuneration] = useState(false);
   const [isRelatedParty, setIsRelatedParty] = useState(false);
+  const [relationshipType, setRelationshipType] = useState("");
   const [isLoanOrDeposit, setIsLoanOrDeposit] = useState(false);
   const [sec43bCategory, setSec43bCategory] = useState("");
   const [gstRegType, setGstRegType] = useState("");
@@ -148,6 +166,7 @@ export function LedgerManager({
       msme_payment_days: isMsme && msmePaymentDays ? Number(msmePaymentDays) : null,
       is_partner_remuneration: isPartnerRemuneration,
       is_related_party: isRelatedParty,
+      relationship_type: isRelatedParty ? relationshipType || null : null,
       is_loan_or_deposit: isLoanOrDeposit,
       sec43b_category: sec43bCategory || null,
       gst_registration_type: gstRegType || null,
@@ -170,6 +189,7 @@ export function LedgerManager({
     setMsmePaymentDays("");
     setIsPartnerRemuneration(false);
     setIsRelatedParty(false);
+    setRelationshipType("");
     setIsLoanOrDeposit(false);
     setSec43bCategory("");
     setGstRegType("");
@@ -274,7 +294,11 @@ export function LedgerManager({
                   {relatedPartyOn && (
                     <td className="px-4 py-2.5 text-ink-soft">
                       {l.is_related_party ? (
-                        <span className="text-xs">Sec 40A(2)(b)</span>
+                        <span className="text-xs">
+                          {l.relationship_type
+                            ? RELATIONSHIP_TYPE_LABEL[l.relationship_type] ?? l.relationship_type
+                            : "Sec 40A(2)(b)"}
+                        </span>
                       ) : (
                         <span className="text-ink-faint">—</span>
                       )}
@@ -538,16 +562,40 @@ export function LedgerManager({
                 <input
                   type="checkbox"
                   checked={isRelatedParty}
-                  onChange={(e) => setIsRelatedParty(e.target.checked)}
+                  onChange={(e) => {
+                    setIsRelatedParty(e.target.checked);
+                    if (!e.target.checked) setRelationshipType("");
+                  }}
                 />
-                Specified person (Sec 40A(2)(b))
+                Related / specified person (Sec 40A(2)(b) and AS 18)
               </label>
               <span className="mt-1 block text-xs text-ink-faint">
                 A director, partner, their relative, or an entity in which
                 the assessee/director/partner has a substantial interest —
                 the tax audit report lists actual payments made to this
-                ledger under Form 3CD clause 23.
+                ledger under Form 3CD clause 23, and the AS 18 related-party
+                note (Reports &rsaquo; Notes to accounts) rolls up its
+                transactions and closing balance. The two tests are not
+                identical (AS 18 also reaches key management personnel with
+                no shareholding) — tick this for either reason.
               </span>
+              {isRelatedParty && (
+                <label className="mt-2 flex flex-col gap-1.5">
+                  <span className="text-sm font-medium">AS 18 relationship</span>
+                  <select
+                    value={relationshipType}
+                    onChange={(e) => setRelationshipType(e.target.value)}
+                    className={field}
+                  >
+                    <option value="">Not classified</option>
+                    {Object.entries(RELATIONSHIP_TYPE_LABEL).map(([v, l]) => (
+                      <option key={v} value={v}>
+                        {l}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+              )}
             </div>
           )}
 
