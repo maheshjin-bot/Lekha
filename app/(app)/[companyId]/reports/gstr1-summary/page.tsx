@@ -95,6 +95,28 @@ type Table9bRow = {
   note_value: number;
 };
 
+/** Table 6A/6B/6C — exports, SEZ supplies, deemed exports (all zero-rated or
+ * Sec 147 deemed-export, per 0087/0119). Same row shape across all three. */
+type Table6Row = {
+  voucher_id: string;
+  voucher_number: string;
+  voucher_date: string;
+  party_name: string | null;
+  party_gstin: string | null;
+  place_of_supply: string | null;
+  tax_payment: string | null;
+  has_goods_line: boolean;
+  shipping_bill_number: string | null;
+  shipping_bill_date: string | null;
+  port_code: string | null;
+  taxable_value: number;
+  cgst: number;
+  sgst: number;
+  igst: number;
+  cess: number;
+  invoice_value: number;
+};
+
 type Table13Row = {
   voucher_type: string;
   nature_of_document: string;
@@ -133,6 +155,97 @@ const TABLE13_ALL_CATEGORIES: { nature_of_document: string; voucher_type: string
 
 function sumTax(rows: { cgst: number; sgst: number; igst: number; cess: number }[]) {
   return rows.reduce((n, r) => n + Number(r.cgst) + Number(r.sgst) + Number(r.igst) + Number(r.cess), 0);
+}
+
+/** Table 6A/6B/6C — exports, SEZ supplies, deemed exports (invoice-wise, GSTR-1 shape). */
+const TABLE6_KIND_LABEL: Record<"6a" | "6b" | "6c", { title: string; noRows: string; shippingBill: "required" | "optional" | "na" }> = {
+  "6a": { title: "invoice", noRows: "No exports this month.", shippingBill: "required" },
+  "6b": { title: "invoice", noRows: "No SEZ supplies this month.", shippingBill: "optional" },
+  "6c": { title: "invoice", noRows: "No deemed exports this month.", shippingBill: "na" },
+};
+
+function Table6Table({ rows, kind }: { rows: Table6Row[]; kind: "6a" | "6b" | "6c" }) {
+  const cfg = TABLE6_KIND_LABEL[kind];
+  const taxTotal = sumTax(rows);
+  const taxableTotal = rows.reduce((n, r) => n + Number(r.taxable_value), 0);
+  return (
+    <table className="w-full min-w-[1000px] text-sm">
+      <thead>
+        <tr className="border-b border-border text-left">
+          <th className={th}>Date</th>
+          <th className={th}>Invoice no.</th>
+          <th className={th}>Party</th>
+          <th className={th}>GSTIN</th>
+          <th className={th}>POS</th>
+          <th className={th}>Payment</th>
+          <th className={th}>Shipping bill</th>
+          <th className={th + " text-right"}>Taxable</th>
+          <th className={th + " text-right"}>Tax</th>
+          <th className={th + " text-right"}>Invoice value</th>
+        </tr>
+      </thead>
+      <tbody>
+        {rows.length === 0 && (
+          <tr>
+            <td colSpan={10} className="px-4 py-8 text-center text-ink-faint">
+              {cfg.noRows}
+            </td>
+          </tr>
+        )}
+        {rows.map((r) => {
+          // Only a GOODS export genuinely needs a shipping bill (Table 6A) —
+          // per GSTN's own rule, a services export leaves it blank by
+          // design, not by omission. SEZ (6B) never treats it as mandatory;
+          // deemed export (6C) never has one at all (goods stay in India).
+          const missingIsGap = cfg.shippingBill === "required" && r.has_goods_line && !r.shipping_bill_number;
+          return (
+            <tr key={r.voucher_id} className="border-b border-border last:border-0">
+              <td className={td + " whitespace-nowrap"}>{r.voucher_date}</td>
+              <td className={td + " font-mono text-xs"}>{r.voucher_number}</td>
+              <td className={td}>{r.party_name ?? "—"}</td>
+              <td className={td + " font-mono text-xs"}>
+                {r.party_gstin ?? (kind === "6a" ? <span className="text-ink-faint">n/a (overseas)</span> : <Badge tone="warn">missing</Badge>)}
+              </td>
+              <td className={td}>{r.place_of_supply ?? "—"}</td>
+              <td className={td}>
+                <Badge tone="neutral">{r.tax_payment ?? "—"}</Badge>
+              </td>
+              <td className={td + " text-xs"}>
+                {r.shipping_bill_number ? (
+                  <>
+                    {r.shipping_bill_number}
+                    {r.shipping_bill_date ? <span className="text-ink-faint"> · {r.shipping_bill_date}</span> : null}
+                    {r.port_code ? <span className="text-ink-faint"> · {r.port_code}</span> : null}
+                  </>
+                ) : missingIsGap ? (
+                  <Badge tone="warn">not entered — check by hand</Badge>
+                ) : cfg.shippingBill === "na" ? (
+                  <span className="text-ink-faint">not applicable</span>
+                ) : (
+                  <span className="text-ink-faint">not entered</span>
+                )}
+              </td>
+              <td className={num}>{formatINR(Number(r.taxable_value), { showZero: true })}</td>
+              <td className={num}>
+                {formatINR(Number(r.cgst) + Number(r.sgst) + Number(r.igst) + Number(r.cess), { showZero: true })}
+              </td>
+              <td className={num + " font-medium"}>{formatINR(Number(r.invoice_value), { showZero: true })}</td>
+            </tr>
+          );
+        })}
+        {rows.length > 0 && (
+          <tr className="bg-bg font-semibold">
+            <td className={td} colSpan={7}>
+              Total ({rows.length} invoices)
+            </td>
+            <td className={num}>{formatINR(taxableTotal, { showZero: true })}</td>
+            <td className={num}>{formatINR(taxTotal, { showZero: true })}</td>
+            <td className={num}>{formatINR(taxableTotal + taxTotal, { showZero: true })}</td>
+          </tr>
+        )}
+      </tbody>
+    </table>
+  );
 }
 
 /** Table 4A — B2B, invoice-wise: every line with a registered counterparty GSTIN. */
@@ -536,7 +649,15 @@ export default async function Gstr1SummaryPage({
 
   const regId = regParam || undefined;
 
-  const [{ data: outputRows }, { data: hsnRows }, { data: table9bRows }, { data: table13Rows }] = await Promise.all([
+  const [
+    { data: outputRows },
+    { data: hsnRows },
+    { data: table9bRows },
+    { data: table13Rows },
+    { data: table6aRows },
+    { data: table6bRows },
+    { data: table6cRows },
+  ] = await Promise.all([
     supabase.rpc("get_gst_output_register", {
       p_company_id: companyId,
       p_period_start: from,
@@ -561,6 +682,27 @@ export default async function Gstr1SummaryPage({
       p_period_end: to,
       p_gst_registration_id: regId,
     }),
+    // Tables 6A/6B/6C (0134) — brand new RPCs, not yet in the generated
+    // database.types.ts (same "cast after the integration pass regenerates
+    // types" situation as get_gstr1_hsn_summary above).
+    supabase.rpc("get_gstr1_table6a", {
+      p_company_id: companyId,
+      p_period_start: from,
+      p_period_end: to,
+      p_gst_registration_id: regId,
+    }),
+    supabase.rpc("get_gstr1_table6b", {
+      p_company_id: companyId,
+      p_period_start: from,
+      p_period_end: to,
+      p_gst_registration_id: regId,
+    }),
+    supabase.rpc("get_gstr1_table6c", {
+      p_company_id: companyId,
+      p_period_start: from,
+      p_period_end: to,
+      p_gst_registration_id: regId,
+    }),
   ]);
 
   const output = (outputRows ?? []) as OutputRow[];
@@ -570,6 +712,24 @@ export default async function Gstr1SummaryPage({
   const hsn = (hsnRows ?? []) as unknown as HsnRow[];
   const table9b = (table9bRows ?? []) as Table9bRow[];
   const table13 = (table13Rows ?? []) as Table13Row[];
+  const table6a = (table6aRows ?? []) as unknown as Table6Row[];
+  const table6b = (table6bRows ?? []) as unknown as Table6Row[];
+  const table6c = (table6cRows ?? []) as unknown as Table6Row[];
+
+  // Tables 4A/5A/7 are DOMESTIC supply tables — confirmed live via WebSearch
+  // while building 0134: "Table 4 B2B specifically excludes SEZ supplies and
+  // exports, which are instead reported separately in Table 6." A
+  // export_lut/export_igst/sez/deemed_export row must never also appear
+  // here, or it double-counts against the Table 6A/6B/6C section below. This
+  // was a real, latent bug: before 0087 landed today, zero vouchers had ever
+  // carried one of these four supply_type values (confirmed live by 0087's
+  // own header), so the filter below was a no-op and the bug was invisible.
+  // Caught by this session's own hand-verification once real zero-rated/
+  // deemed-export test data existed, not by code review — see the final
+  // report. A GSTIN-bearing SEZ/deemed-export party would otherwise have
+  // landed in B2B (Table 4A) purely because it has a GSTIN, which is wrong.
+  const ZERO_RATED_OR_DEEMED = new Set(["export_lut", "export_igst", "sez", "deemed_export"]);
+  const domesticOutput = output.filter((r) => !ZERO_RATED_OR_DEEMED.has(r.supply_type ?? ""));
 
   // Re-bucket 0035's own output register into GSTR-1's table structure — no
   // new tax computation, so this can never drift from the register's own
@@ -577,11 +737,11 @@ export default async function Gstr1SummaryPage({
   // Otherwise unregistered: inter-state over the threshold is invoice-wise
   // B2C(Large) (Table 5A); everything else is state-wise consolidated
   // B2C(Small) (Table 7).
-  const b2b = output.filter((r) => r.party_gstin);
-  const b2cLarge = output.filter(
+  const b2b = domesticOutput.filter((r) => r.party_gstin);
+  const b2cLarge = domesticOutput.filter(
     (r) => !r.party_gstin && r.supply_type === "inter" && Math.abs(Number(r.invoice_value)) > B2C_LARGE_THRESHOLD
   );
-  const b2cSmallRows = output.filter(
+  const b2cSmallRows = domesticOutput.filter(
     (r) => !r.party_gstin && !(r.supply_type === "inter" && Math.abs(Number(r.invoice_value)) > B2C_LARGE_THRESHOLD)
   );
   const b2cSmallByState = new Map<string, B2csBucket>();
@@ -676,6 +836,44 @@ export default async function Gstr1SummaryPage({
 
       <div className="border-b border-t border-border p-4">
         <h2 className="flex items-center gap-2 font-semibold">
+          Table 6A — Exports <Badge tone="neutral">invoice-wise</Badge>
+        </h2>
+        <p className="mt-0.5 text-xs text-ink-faint">
+          Sales with supply_type export_lut (WOPAY, under LUT) or export_igst (WPAY, IGST charged and
+          refundable). Payment status is read directly from the voucher, not inferred. A missing shipping
+          bill is flagged only when the invoice has at least one goods line — a services export legitimately
+          has none, per GSTN&rsquo;s own rule.
+        </p>
+      </div>
+      <Table6Table rows={table6a} kind="6a" />
+
+      <div className="border-b border-t border-border p-4">
+        <h2 className="flex items-center gap-2 font-semibold">
+          Table 6B — Supplies to SEZ <Badge tone="neutral">invoice-wise</Badge>
+        </h2>
+        <p className="mt-0.5 text-xs text-ink-faint">
+          Sales with supply_type sez. LEKHA cannot store a WPAY/WOPAY route on an SEZ voucher separately from
+          export (0087&rsquo;s own gap) — payment status here is inferred from the IGST actually posted, not
+          read from a stored flag. Shipping bill is optional for SEZ movement, so its absence is shown
+          plainly and never flagged as an error.
+        </p>
+      </div>
+      <Table6Table rows={table6b} kind="6b" />
+
+      <div className="border-b border-t border-border p-4">
+        <h2 className="flex items-center gap-2 font-semibold">
+          Table 6C — Deemed exports <Badge tone="neutral">Sec 147</Badge>
+        </h2>
+        <p className="mt-0.5 text-xs text-ink-faint">
+          Sales with supply_type deemed_export. Always full GST at the ordinary domestic CGST+SGST/IGST split
+          (deemed exports can never be zero-rated under LUT — Rule 89(1), 3rd proviso) and never a shipping
+          bill (the goods do not leave India).
+        </p>
+      </div>
+      <Table6Table rows={table6c} kind="6c" />
+
+      <div className="border-b border-t border-border p-4">
+        <h2 className="flex items-center gap-2 font-semibold">
           Table 7 — B2C (Small) <Badge tone="neutral">state-wise</Badge>
         </h2>
         <p className="mt-0.5 text-xs text-ink-faint">
@@ -747,7 +945,24 @@ export default async function Gstr1SummaryPage({
         filing. Table 13&rsquo;s Cancelled column counts soft-deleted vouchers (LEKHA&rsquo;s only
         correction mechanism) in that same range — the closest available proxy, not a certified count of
         formally cancelled invoices. Not a filing-ready JSON for GSTN&rsquo;s offline tool, and nothing here
-        is submitted anywhere — LEKHA has no GSTN API access.
+        is submitted anywhere — LEKHA has no GSTN API access. Tables 6A/6B/6C (exports, SEZ, deemed exports)
+        read supply_type export_lut/export_igst/sez/deemed_export (0087) and LEFT JOIN each voucher to its
+        exim_shipment_details shipping bill (0119) — a genuinely missing shipping bill on a GOODS export is
+        shown as a real gap to hand-check before filing; a blank one on a services export, an SEZ supply, or
+        a deemed export is not, since none of those three require one. B2B/B2C(Large)/B2C(Small) above now
+        explicitly EXCLUDE these four supply_type values, matching GSTN&rsquo;s own rule that Table 4 never
+        includes an export or SEZ supply even when the recipient carries a GSTIN — before today no voucher had
+        ever used one of these supply_type values, so this exclusion was a silent no-op; it is a real fix now
+        that real zero-rated/deemed-export data exists. Table 6B&rsquo;s payment status (WPAY/WOPAY) is
+        inferred from whether IGST was actually posted, not read from a stored flag — vouchers.supply_type has
+        only one &lsquo;sez&rsquo; value for both routes (0087), so a 0%-rated item sold to an SEZ under the
+        WPAY route would misclassify as WOPAY; genuinely rare in practice. Table 6A&rsquo;s payment status, by
+        contrast, is read directly off supply_type (export_lut/export_igst), no inference needed. Table 6C is
+        always WPAY: deemed exports cannot be supplied under LUT/bond at all (Rule 89(1), 3rd proviso) — the
+        WHO of a deemed-export refund claim (supplier vs. recipient, Rule 89/Statement 5B) is a refund-application
+        fact, not a GSTR-1 field, and is not represented here, the same scoping ITC-04 prep already applied to
+        Statement 5B/5C. All three tables are invoice-wise, not split by rate the way Table 12 is — a single
+        invoice mixing two GST rates prints as one blended row, same simplification as Table 4A/9B.
       </p>
     </ReportShell>
   );
