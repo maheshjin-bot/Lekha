@@ -12,6 +12,12 @@ const eslintConfig = defineConfig([
     "out/**",
     "build/**",
     "next-env.d.ts",
+    // Isolated git worktrees this environment creates under .claude/worktrees/
+    // (e.g. for a worktree-isolated agent run) are separate checkouts on their
+    // own branch, with their own independent commit/review lifecycle — not
+    // part of this repo's own source tree, and shouldn't be linted as if they
+    // were.
+    ".claude/worktrees/**",
   ]),
   // scripts/** are plain Node CLI tools run directly via `node scripts/x.js`,
   // not part of the Next.js app bundle — require() is the correct, ordinary

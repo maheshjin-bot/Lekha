@@ -11,7 +11,7 @@ export default async function SettingsPage({
   const { data: company } = await supabase
     .from("companies")
     .select(
-      "id, name, pan, tan, udyam_number, udyam_category, entity_type, company_tax_regime, is_professional, stock_margin_percent, debtor_margin_percent, debtor_eligibility_days, password_protected"
+      "id, name, pan, tan, udyam_number, udyam_category, entity_type, company_tax_regime, is_professional, stock_margin_percent, debtor_margin_percent, debtor_eligibility_days, password_protected, upi_vpa"
     )
     .eq("id", companyId)
     .maybeSingle();
@@ -37,6 +37,7 @@ export default async function SettingsPage({
         debtorMarginPercent={Number(company?.debtor_margin_percent ?? 40)}
         debtorEligibilityDays={Number(company?.debtor_eligibility_days ?? 90)}
         passwordProtected={company?.password_protected ?? false}
+        upiVpa={company?.upi_vpa ?? null}
       />
 
       <Link
@@ -47,6 +48,19 @@ export default async function SettingsPage({
           <span className="block font-semibold text-ink">Modules</span>
           <span className="mt-0.5 block text-sm text-ink-soft">
             What this company runs — core, conditional and optional, one screen.
+          </span>
+        </span>
+        <span aria-hidden className="text-ink-faint">→</span>
+      </Link>
+
+      <Link
+        href={`/${companyId}/settings/team`}
+        className="mt-3 flex items-center justify-between rounded-lg border border-border bg-surface p-5 transition-colors hover:bg-surface-2"
+      >
+        <span>
+          <span className="block font-semibold text-ink">Team</span>
+          <span className="mt-0.5 block text-sm text-ink-soft">
+            Who has access, invite a colleague by email, and what role they get.
           </span>
         </span>
         <span aria-hidden className="text-ink-faint">→</span>

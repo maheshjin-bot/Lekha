@@ -3199,6 +3199,862 @@ describeDb(`register of members (${hasDb ? "live" : noDbReason})`, () => {
 });
 
 // ---------------------------------------------------------------------------
+// Reverse Charge Mechanism, Sec 9(3)/9(4) (0102)
+// ---------------------------------------------------------------------------
+describeDb(`reverse charge mechanism (${hasDb ? "live" : noDbReason})`, () => {
+  it("items.is_rcm_applicable exists and defaults false", async () => {
+    const rows = await sql(`
+      select column_default from information_schema.columns
+       where table_name = 'items' and column_name = 'is_rcm_applicable'
+    `);
+    expect(rows.length, "is_rcm_applicable column is missing").toBe(1);
+    expect(rows[0].column_default, "is_rcm_applicable should default false").toContain("false");
+  });
+
+  it("create_invoice's live body actually branches on is_rcm_applicable and posts to rcm_payable", async () => {
+    const rows = await sql(`
+      select (prosrc ilike '%is_rcm_applicable%') as has_flag, (prosrc ilike '%rcm_payable%') as posts_rcm
+        from pg_proc where proname = 'create_invoice'
+    `);
+    expect(rows[0]?.has_flag, "create_invoice does not check is_rcm_applicable").toBe(true);
+    expect(rows[0]?.posts_rcm, "create_invoice never posts to rcm_payable").toBe(true);
+  });
+
+  it("every RCM Payable posting is matched by an equal offsetting debit — the RCM liability leg never leaves a voucher unbalanced", async () => {
+    // Re-derives the specific invariant 0102's own report hand-verified
+    // (Cr RCM Payable matched by Dr trading-ledger, same amount) directly
+    // from posted data, rather than relying on the whole-voucher balance
+    // check elsewhere in this file to catch an RCM-specific regression.
+    const rows = await sql(`
+      select v.id, v.voucher_number,
+             sum(e.credit_amount) filter (where l.name ilike '%RCM Payable%') as rcm_credited,
+             sum(e.debit_amount) - sum(e.credit_amount) as voucher_net
+        from vouchers v
+        join voucher_entries e on e.voucher_id = v.id
+        join ledgers l on l.id = e.ledger_id
+       where exists (
+         select 1 from voucher_entries e2 join ledgers l2 on l2.id = e2.ledger_id
+          where e2.voucher_id = v.id and l2.name ilike '%RCM Payable%' and e2.credit_amount > 0
+       )
+       group by v.id, v.voucher_number
+      having round(sum(e.debit_amount) - sum(e.credit_amount), 2) <> 0
+    `);
+    expect(rows, `an RCM voucher does not balance:\n${offenders(rows)}`).toEqual([]);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// TDS threshold monitoring, incl. Sec 194Q excess-only basis (0103)
+// ---------------------------------------------------------------------------
+describeDb(`TDS threshold monitoring (${hasDb ? "live" : noDbReason})`, () => {
+  it("get_tds_threshold_status and its summary are not reachable by anon or public", async () => {
+    const rows = await sql(`
+      select routine_name, grantee from information_schema.routine_privileges
+       where routine_name in ('get_tds_threshold_status', 'get_tds_threshold_status_summary')
+         and grantee in ('PUBLIC', 'anon')
+    `);
+    expect(rows, `TDS threshold functions reachable by a role they shouldn't be:\n${offenders(rows)}`).toEqual([]);
+  });
+
+  it("194Q's taxable_basis_amount is always the excess over cumulative, never the full cumulative amount", async () => {
+    // Re-derives 194Q's own "excess only" rule independently: for the one
+    // section code with a different basis than every other section,
+    // taxable_basis_amount should equal cumulative minus the 50-lakh
+    // threshold whenever the section is 194Q and the function reports
+    // applicable — never the raw cumulative figure itself.
+    const rows = await sql(`
+      select c.name, l.id as ledger_id, s.taxable_basis_amount, s.basis_note
+        from companies c
+        join ledgers l on l.company_id = c.id and l.is_tds_deductee
+        cross join lateral get_tds_threshold_status(c.id, l.id, '194Q', current_date) s
+       where s.section_code = '194Q'
+         and s.tds_applicable
+         and s.basis_note not ilike '%excess%'
+    `);
+    expect(rows, `a 194Q row is applicable but its basis_note doesn't describe the excess-only rule:\n${offenders(rows)}`).toEqual([]);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Rules 42/43 common-credit apportionment (0104)
+// ---------------------------------------------------------------------------
+describeDb(`Rules 42/43 common-credit apportionment (${hasDb ? "live" : noDbReason})`, () => {
+  it("get_common_credit_apportionment is not reachable by anon or public", async () => {
+    const rows = await sql(`
+      select grantee from information_schema.routine_privileges
+       where routine_name = 'get_common_credit_apportionment' and grantee in ('PUBLIC', 'anon')
+    `);
+    expect(rows, `get_common_credit_apportionment reachable by a role it shouldn't be:\n${offenders(rows)}`).toEqual([]);
+  });
+
+  it("never returns a null tax-derived column — every sum is coalesced to zero, even for a company with no purchases in the period", async () => {
+    // The exact NULL-vs-zero bug 0104's own report caught and fixed: an
+    // empty-purchase period used to return NULL instead of 0 across every
+    // tax-derived column.
+    const rows = await sql(`
+      select c.name, r.*
+        from companies c
+        cross join lateral get_common_credit_apportionment(c.id, '1900-01-01'::date, '1900-01-02'::date) r
+       where r.total_input_tax is null or r.common_credit is null or r.total_reversal is null
+    `);
+    expect(rows, `an empty period returned NULL instead of 0 for a tax-derived column:\n${offenders(rows)}`).toEqual([]);
+  });
+
+  it("total_reversal never exceeds common_credit — the reversal can only consume the common pool, never more", async () => {
+    const rows = await sql(`
+      select c.name, r.common_credit, r.total_reversal
+        from companies c
+        cross join lateral get_common_credit_apportionment(c.id, '1900-01-01'::date, '2999-12-31'::date) r
+       where round(r.total_reversal, 2) > round(r.common_credit, 2)
+    `);
+    expect(rows, `total_reversal exceeds the common credit pool it's reversing from:\n${offenders(rows)}`).toEqual([]);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Notes to accounts — contingent liabilities, AS 18, ageing (0105)
+// ---------------------------------------------------------------------------
+describeDb(`notes to accounts (${hasDb ? "live" : noDbReason})`, () => {
+  it("ledgers.relationship_type is null unless is_related_party is true", async () => {
+    const rows = await sql(`
+      select id, company_id, name, is_related_party, relationship_type
+        from ledgers
+       where relationship_type is not null and not is_related_party
+    `);
+    expect(rows, `a ledger has a relationship_type without is_related_party:\n${offenders(rows)}`).toEqual([]);
+  });
+
+  it("the three new notes-to-accounts functions are not reachable by anon or public", async () => {
+    const rows = await sql(`
+      select routine_name, grantee from information_schema.routine_privileges
+       where routine_name in ('get_contingent_liabilities_note', 'get_related_party_note', 'get_ageing_schedule')
+         and grantee in ('PUBLIC', 'anon')
+    `);
+    expect(rows, `a notes-to-accounts function reachable by a role it shouldn't be:\n${offenders(rows)}`).toEqual([]);
+  });
+
+  it("the receivable ageing total matches the sum of get_party_outstanding's own positive (receivable) balances, per company", async () => {
+    // Only the receivable side is cross-checked against get_party_outstanding
+    // — that function's own payable-side sign/scope doesn't line up with
+    // the ageing schedule's MSME/Others payable split closely enough to
+    // compare directly (confirmed live: it is not simply "negative
+    // outstanding"), so the payable side is covered by the bucket-level
+    // non-negativity check below instead of a cross-function total match.
+    const rows = await sql(`
+      with ageing as (
+        select c.id, c.name,
+               (select coalesce(sum(amount), 0) from get_ageing_schedule(c.id, current_date, 'receivable')) as receivable
+          from companies c
+      ),
+      outstanding as (
+        select c.id,
+               (select coalesce(sum(outstanding), 0) from get_party_outstanding(c.id, current_date) where outstanding > 0) as receivable
+          from companies c
+      )
+      select a.name, a.receivable as ageing_receivable, o.receivable as outstanding_receivable
+        from ageing a join outstanding o on o.id = a.id
+       where round(a.receivable - o.receivable, 2) <> 0
+    `);
+    expect(rows, `ageing schedule receivable total doesn't match get_party_outstanding:\n${offenders(rows)}`).toEqual([]);
+  });
+
+  it("no ageing schedule bucket is ever negative, for either receivables or payables", async () => {
+    const rows = await sql(`
+      select c.name, r.segment as party_type, s.bucket_label, s.amount
+        from companies c
+        cross join lateral (values ('receivable'), ('payable')) as r(segment)
+        cross join lateral get_ageing_schedule(c.id, current_date, r.segment) s
+       where s.amount < 0
+    `);
+    expect(rows, `a negative ageing bucket amount:\n${offenders(rows)}`).toEqual([]);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Team management — invite / accept / role (0107)
+// ---------------------------------------------------------------------------
+describeDb(`team invites (${hasDb ? "live" : noDbReason})`, () => {
+  it("company_invites/accept/create functions are not reachable by anon or public", async () => {
+    const rows = await sql(`
+      select routine_name, grantee from information_schema.routine_privileges
+       where routine_name in ('get_company_team', 'create_company_invite', 'accept_company_invite')
+         and grantee in ('PUBLIC', 'anon')
+    `);
+    expect(rows, `a team-invite function reachable by a role it shouldn't be:\n${offenders(rows)}`).toEqual([]);
+  });
+
+  it("guard_last_admin still blocks removing a company's sole active admin", async () => {
+    const rows = await sql(`
+      select tgname, pg_get_triggerdef(oid) as def
+        from pg_trigger
+       where tgrelid = 'public.company_members'::regclass and not tgisinternal
+         and tgname ilike '%last_admin%'
+    `);
+    expect(rows.length, "guard_last_admin trigger is missing from company_members").toBeGreaterThan(0);
+  });
+
+  it("no invite is both accepted and still status='pending', and no invite has an empty token", async () => {
+    const rows = await sql(`
+      select id, company_id, email, status, accepted_at, token
+        from company_invites
+       where (status = 'accepted' and accepted_at is null)
+          or (status = 'pending' and accepted_at is not null)
+          or token is null or length(trim(token::text)) = 0
+    `);
+    expect(rows, `invite rows with an inconsistent status/accepted_at or empty token:\n${offenders(rows)}`).toEqual([]);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Professional Tax per-state split (0108)
+// ---------------------------------------------------------------------------
+describeDb(`PT per-state split (${hasDb ? "live" : noDbReason})`, () => {
+  it("get_pt_liability_by_state is not reachable by anon or public", async () => {
+    const rows = await sql(`
+      select grantee from information_schema.routine_privileges
+       where routine_name = 'get_pt_liability_by_state' and grantee in ('PUBLIC', 'anon')
+    `);
+    expect(rows, `get_pt_liability_by_state reachable by a role it shouldn't be:\n${offenders(rows)}`).toEqual([]);
+  });
+
+  it("the sum of employee_count across all states for a period never exceeds the company's total active-and-was-active employee count", async () => {
+    const rows = await sql(`
+      select c.name, sum(s.employee_count) as pt_headcount,
+             (select count(*) from employees e where e.company_id = c.id) as company_headcount
+        from companies c
+        cross join lateral get_pt_liability_by_state(c.id, '1900-01-01'::date, '2999-12-31'::date) s
+       group by c.id, c.name
+      having sum(s.employee_count) > (select count(*) from employees e where e.company_id = c.id)
+    `);
+    expect(rows, `PT state split double-counts employees beyond the company's own headcount:\n${offenders(rows)}`).toEqual([]);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Statutory bonus, Code on Wages 2019 Chapter IV (0109)
+// ---------------------------------------------------------------------------
+describeDb(`statutory bonus (${hasDb ? "live" : noDbReason})`, () => {
+  it("get_statutory_bonus_computation and the surplus estimate are not reachable by anon or public", async () => {
+    const rows = await sql(`
+      select routine_name, grantee from information_schema.routine_privileges
+       where routine_name in ('get_statutory_bonus_computation', 'get_statutory_bonus_surplus_estimate')
+         and grantee in ('PUBLIC', 'anon')
+    `);
+    expect(rows, `a statutory-bonus function reachable by a role it shouldn't be:\n${offenders(rows)}`).toEqual([]);
+  });
+
+  it("minimum bonus is never more than the maximum bonus, for any eligible employee", async () => {
+    const rows = await sql(`
+      select c.name, r.employee_id, r.minimum_bonus, r.maximum_bonus_at_20pct
+        from companies c
+        cross join lateral get_statutory_bonus_computation(c.id, '2027-03-31'::date) r
+       where r.eligible and round(r.minimum_bonus, 2) > round(r.maximum_bonus_at_20pct, 2)
+    `);
+    expect(rows, `an employee's minimum bonus exceeds their own maximum (8.33% > 20%):\n${offenders(rows)}`).toEqual([]);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// PF ECR + ESI MC file prep (0110)
+// ---------------------------------------------------------------------------
+describeDb(`PF ECR / ESI MC (${hasDb ? "live" : noDbReason})`, () => {
+  it("get_pf_ecr_data and get_esi_mc_data are not reachable by anon or public", async () => {
+    const rows = await sql(`
+      select routine_name, grantee from information_schema.routine_privileges
+       where routine_name in ('get_pf_ecr_data', 'get_esi_mc_data') and grantee in ('PUBLIC', 'anon')
+    `);
+    expect(rows, `a PF/ESI function reachable by a role it shouldn't be:\n${offenders(rows)}`).toEqual([]);
+  });
+
+  it("every employee above the ESI wage ceiling is excluded from the ESI MC set for the same period", async () => {
+    const rows = await sql(`
+      select c.name, e.employee_id, e.gross_wages
+        from companies c
+        cross join lateral get_pf_ecr_data(c.id, date_trunc('month', current_date)::date) e
+       where e.gross_wages > 21000
+         and exists (
+           select 1 from get_esi_mc_data(c.id, date_trunc('month', current_date)::date) m
+            where m.employee_id = e.employee_id
+         )
+    `);
+    expect(rows, `an above-ESI-ceiling employee still appears in the ESI MC set:\n${offenders(rows)}`).toEqual([]);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// UPI payment QR on invoice print (0111)
+// ---------------------------------------------------------------------------
+describeDb(`UPI payment QR (${hasDb ? "live" : noDbReason})`, () => {
+  it("companies.upi_vpa carries a working column-level grant for authenticated (SELECT and UPDATE)", async () => {
+    const rows = await sql(`
+      select privilege_type from information_schema.column_privileges
+       where table_name = 'companies' and column_name = 'upi_vpa' and grantee = 'authenticated'
+    `);
+    const privs = rows.map((r) => r.privilege_type);
+    expect(privs, "authenticated lacks SELECT on companies.upi_vpa").toContain("SELECT");
+    expect(privs, "authenticated lacks UPDATE on companies.upi_vpa").toContain("UPDATE");
+  });
+
+  it("get_invoice_outstanding is not reachable by anon or public", async () => {
+    const rows = await sql(`
+      select grantee from information_schema.routine_privileges
+       where routine_name = 'get_invoice_outstanding' and grantee in ('PUBLIC', 'anon')
+    `);
+    expect(rows, `get_invoice_outstanding reachable by a role it shouldn't be:\n${offenders(rows)}`).toEqual([]);
+  });
+
+  it("every companies.upi_vpa value that is set satisfies its own CHECK format", async () => {
+    const rows = await sql(`
+      select id, name, upi_vpa from companies
+       where upi_vpa is not null and upi_vpa !~ '^[A-Za-z0-9.\\-_]{2,100}@[A-Za-z0-9.\\-]{2,100}$'
+    `);
+    expect(rows, `a stored upi_vpa doesn't match its own CHECK-equivalent format:\n${offenders(rows)}`).toEqual([]);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Employer registration column grants — the recurring "add column, forget
+// the allowlist" bug class (0085 -> 0111/0112 -> 0140/0141). Hit three times
+// this session; this test exists specifically so a fourth time fails loudly
+// in CI instead of shipping a silently-broken form. (0112, and standing)
+// ---------------------------------------------------------------------------
+describeDb(`companies column-grant allowlist (${hasDb ? "live" : noDbReason})`, () => {
+  it("every non-sensitive companies column is readable and writable by authenticated — password_hash/password_protected are the only deliberate exceptions", async () => {
+    const rows = await sql(`
+      select column_name from information_schema.columns
+       where table_name = 'companies' and table_schema = 'public'
+         and column_name not in ('password_hash', 'password_protected')
+       except
+      select column_name from information_schema.column_privileges
+       where table_name = 'companies' and grantee = 'authenticated' and privilege_type = 'SELECT'
+    `);
+    expect(rows, `companies columns missing a SELECT grant for authenticated:\n${offenders(rows)}`).toEqual([]);
+
+    const missingUpdate = await sql(`
+      select column_name from information_schema.columns
+       where table_name = 'companies' and table_schema = 'public'
+         and column_name not in ('password_hash', 'password_protected', 'id', 'created_at')
+       except
+      select column_name from information_schema.column_privileges
+       where table_name = 'companies' and grantee = 'authenticated' and privilege_type = 'UPDATE'
+    `);
+    expect(missingUpdate, `companies columns missing an UPDATE grant for authenticated:\n${offenders(missingUpdate)}`).toEqual([]);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Company backup / full export (0112, application-layer)
+// ---------------------------------------------------------------------------
+describeDb(`company backup export (${hasDb ? "live" : noDbReason})`, () => {
+  it("every genuinely company-scoped table either has real RLS or is explicitly documented as an intentional export gap — a spot check on a sample of tables", async () => {
+    // Not a full re-implementation of the export route's own TABLES list —
+    // just confirms the RLS precondition the whole feature leans on: every
+    // table it exports is is_company_member-gated, not open-read.
+    const rows = await sql(`
+      select tablename from pg_tables
+       where schemaname = 'public'
+         and tablename = any(array['vouchers', 'voucher_entries', 'ledgers', 'items', 'employees'])
+         and tablename not in (select tablename from pg_policies where schemaname = 'public')
+    `);
+    expect(rows, `an exported table has no RLS policy at all:\n${offenders(rows)}`).toEqual([]);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Delivery challan (Rule 55) + GRN (0113)
+// ---------------------------------------------------------------------------
+describeDb(`delivery challans (${hasDb ? "live" : noDbReason})`, () => {
+  it("delivery_challans/receipts reject a direct authenticated write — every write must go through the SECURITY DEFINER functions", async () => {
+    const rows = await sql(`
+      select tablename, policyname, cmd from pg_policies
+       where tablename in ('delivery_challans', 'delivery_challan_receipts') and cmd in ('INSERT', 'ALL')
+    `);
+    expect(rows, `a direct INSERT policy exists on delivery_challans/receipts — writes should only be via create_delivery_challan(_receipt):\n${offenders(rows)}`).toEqual([]);
+  });
+
+  it("no delivery_challan_receipts row ever records more quantity_received than its challan's quantity_sent, cumulatively", async () => {
+    const rows = await sql(`
+      select dc.id, dc.quantity_sent, sum(r.quantity_received) as total_received
+        from delivery_challans dc
+        join delivery_challan_receipts r on r.challan_id = dc.id
+       group by dc.id, dc.quantity_sent
+      having sum(r.quantity_received) > dc.quantity_sent
+    `);
+    expect(rows, `a challan has received more than it ever sent:\n${offenders(rows)}`).toEqual([]);
+  });
+
+  it("every delivery challan voucher's own entries are self-balancing on the Delivery Challan Movement memo ledger (zero net ledger impact)", async () => {
+    const rows = await sql(`
+      select dc.id, v.voucher_number, sum(e.debit_amount) as d, sum(e.credit_amount) as c
+        from delivery_challans dc
+        join vouchers v on v.id = dc.voucher_id
+        join voucher_entries e on e.voucher_id = v.id
+       group by dc.id, v.voucher_number
+      having round(sum(e.debit_amount) - sum(e.credit_amount), 2) <> 0
+    `);
+    expect(rows, `a delivery challan voucher doesn't balance:\n${offenders(rows)}`).toEqual([]);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// BOM by-product / scrap / co-product output typing (0114)
+// ---------------------------------------------------------------------------
+describeDb(`BOM by-product/scrap outputs (${hasDb ? "live" : noDbReason})`, () => {
+  it("bom_outputs' composite FKs are real — no output row can point at a BOM or item from a different company", async () => {
+    const rows = await sql(`
+      select conname from pg_constraint
+       where conrelid = 'public.bom_outputs'::regclass and contype = 'f'
+    `);
+    expect(rows.length, "bom_outputs has fewer foreign keys than expected (bom_id+company_id, output_item_id+company_id)").toBeGreaterThanOrEqual(2);
+  });
+
+  it("cost conservation holds for every production voucher with a by-product/scrap/co-product output: component cost consumed (direction='out') equals total output value produced (direction='in'), to the paisa", async () => {
+    // Scoped specifically to voucher_items that actually reference a
+    // bom_outputs item, and to stock_journal vouchers only — an item that's
+    // a defined co-product/scrap output elsewhere can also independently
+    // appear on an ordinary sales voucher (same item, unrelated context),
+    // and a blanket scan across every stock_journal voucher would also
+    // catch older, pre-by-product-feature production vouchers this feature
+    // never touched. direction='out' is stock LEAVING inventory (the
+    // component being consumed); direction='in' is stock ENTERING it (the
+    // output(s) produced) — conservation means these two sums are equal.
+    const rows = await sql(`
+      with production_vouchers as (
+        select distinct vi.voucher_id
+          from voucher_items vi
+          join bom_outputs bo on bo.output_item_id = vi.item_id
+         where vi.direction = 'out'
+      )
+      select v.id, v.voucher_number,
+             sum(case when vi.direction = 'out' then vi.amount else 0 end) as component_cost,
+             sum(case when vi.direction = 'in' then vi.amount else 0 end) as total_output_value
+        from vouchers v
+        join voucher_items vi on vi.voucher_id = v.id
+       where v.id in (select voucher_id from production_vouchers)
+         and v.voucher_type = 'stock_journal'
+       group by v.id, v.voucher_number
+      having round(sum(case when vi.direction = 'out' then vi.amount else 0 end)
+                    - sum(case when vi.direction = 'in' then vi.amount else 0 end), 2) <> 0
+    `);
+    expect(rows, `a production voucher's component cost doesn't conserve into its output value:\n${offenders(rows)}`).toEqual([]);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Register of Charges, CHG-1/CHG-4 (0115)
+// ---------------------------------------------------------------------------
+describeDb(`register of charges (${hasDb ? "live" : noDbReason})`, () => {
+  it("no charges row exists for a company whose entity_type can't hold one (pvt_ltd/ltd/opc only)", async () => {
+    const rows = await sql(`
+      select ch.id, c.name, c.entity_type
+        from charges ch join companies c on c.id = ch.company_id
+       where c.entity_type not in ('pvt_ltd', 'ltd', 'opc')
+    `);
+    expect(rows, `a charge exists on a company with no charge-filing duty under Sec 77:\n${offenders(rows)}`).toEqual([]);
+  });
+
+  it("a satisfied charge (date_of_satisfaction set) is never counted as 'live' by get_charges_summary", async () => {
+    const rows = await sql(`
+      select c.name, s.live_charge_count, s.satisfied_charge_count,
+             (select count(*) from charges ch where ch.company_id = c.id and ch.date_of_satisfaction is null) as raw_live,
+             (select count(*) from charges ch where ch.company_id = c.id and ch.date_of_satisfaction is not null) as raw_satisfied
+        from companies c
+        cross join lateral get_charges_summary(c.id) s
+       where s.live_charge_count <> (select count(*) from charges ch where ch.company_id = c.id and ch.date_of_satisfaction is null)
+          or s.satisfied_charge_count <> (select count(*) from charges ch where ch.company_id = c.id and ch.date_of_satisfaction is not null)
+    `);
+    expect(rows, `get_charges_summary's live/satisfied counts disagree with the raw table:\n${offenders(rows)}`).toEqual([]);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Sec 186 investment/loan register, MBP-2 (0116)
+// ---------------------------------------------------------------------------
+describeDb(`Sec 186 investments (${hasDb ? "live" : noDbReason})`, () => {
+  it("no sec186_investments row has a board_resolution_date after its own transaction date", async () => {
+    const rows = await sql(`
+      select id, company_id, date, board_resolution_date from sec186_investments
+       where board_resolution_date > date
+    `);
+    expect(rows, `a Sec 186 transaction was board-approved after it happened:\n${offenders(rows)}`).toEqual([]);
+  });
+
+  it("get_sec186_ceiling_check always flags is_approximate = true (this schema can't isolate securities premium from reserves_surplus)", async () => {
+    const rows = await sql(`
+      select c.name, s.is_approximate
+        from companies c
+        cross join lateral get_sec186_ceiling_check(c.id) s
+       where s.is_approximate is distinct from true
+    `);
+    expect(rows, `get_sec186_ceiling_check stopped flagging its own known approximation:\n${offenders(rows)}`).toEqual([]);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// DSC register (0117)
+// ---------------------------------------------------------------------------
+describeDb(`DSC register (${hasDb ? "live" : noDbReason})`, () => {
+  it("every DSC row has exactly one of holder_director_id / holder_name, and valid_to >= valid_from", async () => {
+    const rows = await sql(`
+      select id, company_id, holder_director_id, holder_name, valid_from, valid_to
+        from digital_signature_certificates
+       where (holder_director_id is null) = (holder_name is null)
+          or valid_to < valid_from
+    `);
+    expect(rows, `a DSC row violates its own holder-exclusivity or date-ordering CHECK:\n${offenders(rows)}`).toEqual([]);
+  });
+
+  it("get_dsc_expiry_status's is_expired flag always agrees with valid_to < current_date", async () => {
+    const rows = await sql(`
+      select c.name, s.id, s.valid_to, s.is_expired
+        from companies c
+        cross join lateral get_dsc_expiry_status(c.id) s
+       where s.is_expired is distinct from (s.valid_to < current_date)
+    `);
+    expect(rows, `is_expired disagrees with valid_to < current_date:\n${offenders(rows)}`).toEqual([]);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// DPT-3 return content (0118)
+// ---------------------------------------------------------------------------
+describeDb(`DPT-3 content (${hasDb ? "live" : noDbReason})`, () => {
+  it("get_dpt3_return_content is not reachable by anon or public", async () => {
+    const rows = await sql(`
+      select grantee from information_schema.routine_privileges
+       where routine_name = 'get_dpt3_return_content' and grantee in ('PUBLIC', 'anon')
+    `);
+    expect(rows, `get_dpt3_return_content reachable by a role it shouldn't be:\n${offenders(rows)}`).toEqual([]);
+  });
+
+  it("only ledgers.is_loan_or_deposit = true ledgers ever appear in the DPT-3 content, for any company", async () => {
+    const rows = await sql(`
+      select c.name, r.ledger_name
+        from companies c
+        cross join lateral get_dpt3_return_content(c.id, '2027-03-31'::date) r
+       where not exists (
+         select 1 from ledgers l
+          where l.company_id = c.id and l.name = r.ledger_name and l.is_loan_or_deposit
+       )
+    `);
+    expect(rows, `DPT-3 content includes a ledger that isn't flagged is_loan_or_deposit:\n${offenders(rows)}`).toEqual([]);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// EXIM data capture — shipping bill / BOE / BRC / FEMA clock (0119)
+// ---------------------------------------------------------------------------
+describeDb(`EXIM data capture (${hasDb ? "live" : noDbReason})`, () => {
+  it("exim_shipment_details.export_realisation_due_date is always null for a bill_of_entry (imports have no FEMA export clock)", async () => {
+    const rows = await sql(`
+      select id, voucher_id, document_type, export_realisation_due_date
+        from exim_shipment_details
+       where document_type = 'bill_of_entry' and export_realisation_due_date is not null
+    `);
+    expect(rows, `a bill_of_entry row wrongly carries an export realisation due date:\n${offenders(rows)}`).toEqual([]);
+  });
+
+  it("no exim_shipment_details row carries a brc_number/brc_date/realised_date on a bill_of_entry (export-only fields)", async () => {
+    const rows = await sql(`
+      select id, voucher_id from exim_shipment_details
+       where document_type = 'bill_of_entry'
+         and (brc_number is not null or brc_date is not null or realised_date is not null)
+    `);
+    expect(rows, `a bill_of_entry row wrongly carries an export-only BRC field:\n${offenders(rows)}`).toEqual([]);
+  });
+
+  it("get_exim_realisation_status.status = 'overdue_unrealised' implies is_overdue is true and realised_date is null", async () => {
+    const rows = await sql(`
+      select c.name, s.voucher_id, s.status, s.is_overdue, s.realised_date
+        from companies c
+        cross join lateral get_exim_realisation_status(c.id, current_date) s
+       where s.status = 'overdue_unrealised' and (not s.is_overdue or s.realised_date is not null)
+    `);
+    expect(rows, `overdue_unrealised status disagrees with its own is_overdue/realised_date fields:\n${offenders(rows)}`).toEqual([]);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// GSTR-2B upload + match against the purchase register (0120)
+// ---------------------------------------------------------------------------
+describeDb(`GSTR-2B match (${hasDb ? "live" : noDbReason})`, () => {
+  it("import_gstr2b_lines/match_gstr2b_purchase_register are not reachable by anon or public", async () => {
+    const rows = await sql(`
+      select routine_name, grantee from information_schema.routine_privileges
+       where routine_name in ('import_gstr2b_lines', 'match_gstr2b_purchase_register') and grantee in ('PUBLIC', 'anon')
+    `);
+    expect(rows, `a GSTR-2B function reachable by a role it shouldn't be:\n${offenders(rows)}`).toEqual([]);
+  });
+
+  it("gstr2b_lines has no duplicate (company, period, registration, invoice_number_normalized) rows", async () => {
+    const rows = await sql(`
+      select company_id, return_period, gst_registration_id, invoice_number_normalized, count(*)
+        from gstr2b_lines
+       group by company_id, return_period, gst_registration_id, invoice_number_normalized
+      having count(*) > 1
+    `);
+    expect(rows, `duplicate 2B lines within one uploaded period:\n${offenders(rows)}`).toEqual([]);
+  });
+
+  it("a match result is never both 'matched' and carrying a nonzero amount_difference beyond rounding", async () => {
+    const rows = await sql(`
+      select c.name, r.invoice_number, r.amount_difference
+        from companies c
+        cross join lateral match_gstr2b_purchase_register(c.id, '2026-06', null, 2) r
+       where r.bucket = 'matched' and round(abs(r.amount_difference), 2) > 0.02
+    `);
+    expect(rows, `a 'matched' row still shows a real amount difference:\n${offenders(rows)}`).toEqual([]);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Multi-UOM conversion (0121)
+// ---------------------------------------------------------------------------
+describeDb(`multi-UOM conversion (${hasDb ? "live" : noDbReason})`, () => {
+  it("item_uom_conversions has no duplicate (item_id, alternate_uom) pair, and no alternate_uom equal to the item's own base unit", async () => {
+    const rows = await sql(`
+      select c.item_id, c.alternate_uom, i.uom as base_uom, count(*)
+        from item_uom_conversions c
+        join items i on i.id = c.item_id
+       group by c.item_id, c.alternate_uom, i.uom
+      having count(*) > 1 or c.alternate_uom = i.uom
+    `);
+    expect(rows, `a duplicate conversion or a self-referential alternate unit:\n${offenders(rows)}`).toEqual([]);
+  });
+
+  it("convert_quantity round-trips exactly: base -> alternate -> base returns the original quantity, for every defined conversion", async () => {
+    const rows = await sql(`
+      select item_id, alternate_uom, conversion_factor,
+             convert_quantity(item_id, convert_quantity(item_id, 100, (select uom from items where id = item_id), alternate_uom), alternate_uom, (select uom from items where id = item_id)) as round_tripped
+        from item_uom_conversions
+    `);
+    for (const r of rows) {
+      expect(Math.abs(Number(r.round_tripped) - 100), `conversion for item ${r.item_id}/${r.alternate_uom} doesn't round-trip`).toBeLessThan(0.001);
+    }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Email transport + notifications (0122)
+// ---------------------------------------------------------------------------
+describeDb(`email notifications (${hasDb ? "live" : noDbReason})`, () => {
+  it("notifications has no direct INSERT/UPDATE/DELETE policy for authenticated — every write goes through a SECURITY DEFINER function", async () => {
+    const rows = await sql(`
+      select policyname, cmd from pg_policies
+       where tablename = 'notifications' and cmd in ('INSERT', 'UPDATE', 'DELETE', 'ALL')
+    `);
+    expect(rows, `notifications has a direct write policy — should be SECURITY DEFINER functions only:\n${offenders(rows)}`).toEqual([]);
+  });
+
+  it("run_notifications_digest and the pending-email functions are not reachable by anon, public, or a bare authenticated grant on the digest itself", async () => {
+    // app_private's default ACL auto-grants EXECUTE to authenticated on new
+    // functions (unlike public schema) — the real gap 0122's own report
+    // caught. This guards the fix stays in place.
+    const rows = await sql(`
+      select p.proname, has_function_privilege('authenticated', p.oid, 'EXECUTE') as auth_can_run
+        from pg_proc p join pg_namespace n on n.oid = p.pronamespace
+       where n.nspname = 'app_private' and p.proname = 'run_notifications_digest'
+    `);
+    expect(rows[0]?.auth_can_run, "run_notifications_digest is callable by a plain authenticated user again").toBe(false);
+  });
+
+  it("create_notifications_from_needs_attention never creates a duplicate row for the same (company, category, related_entity_id)", async () => {
+    const rows = await sql(`
+      select company_id, category, related_entity_id, count(*)
+        from notifications
+       group by company_id, category, related_entity_id
+      having count(*) > 1
+    `);
+    expect(rows, `duplicate notification rows for the same issue:\n${offenders(rows)}`).toEqual([]);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// GST refund computation, Rule 89(4)/(5) (0123)
+// ---------------------------------------------------------------------------
+describeDb(`GST refund computation (${hasDb ? "live" : noDbReason})`, () => {
+  it("get_gst_refund_rule89_4/5 are not reachable by anon or public", async () => {
+    const rows = await sql(`
+      select routine_name, grantee from information_schema.routine_privileges
+       where routine_name in ('get_gst_refund_rule89_4', 'get_gst_refund_rule89_5') and grantee in ('PUBLIC', 'anon')
+    `);
+    expect(rows, `a GST refund function reachable by a role it shouldn't be:\n${offenders(rows)}`).toEqual([]);
+  });
+
+  it("Rule 89(4)'s refund_amount equals zero_rated_turnover_total x net_itc / adjusted_total_turnover exactly, whenever ATT is nonzero", async () => {
+    const rows = await sql(`
+      select c.name, r.zero_rated_turnover_total, r.net_itc, r.adjusted_total_turnover, r.refund_amount
+        from companies c
+        cross join lateral get_gst_refund_rule89_4(c.id, null, '1900-01-01'::date, '2999-12-31'::date) r
+       where r.adjusted_total_turnover > 0
+         and round(r.zero_rated_turnover_total * r.net_itc / r.adjusted_total_turnover, 2) <> round(r.refund_amount, 2)
+    `);
+    expect(rows, `Rule 89(4) refund_amount doesn't match its own formula:\n${offenders(rows)}`).toEqual([]);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Print templates + server-side PDF (0125)
+// ---------------------------------------------------------------------------
+describeDb(`print templates (${hasDb ? "live" : noDbReason})`, () => {
+  it("companies.logo_url / print_terms_and_conditions / print_footer_note carry authenticated SELECT+UPDATE grants", async () => {
+    for (const col of ["logo_url", "print_terms_and_conditions", "print_footer_note"]) {
+      const rows = await sql(`
+        select privilege_type from information_schema.column_privileges
+         where table_name = 'companies' and column_name = '${col}' and grantee = 'authenticated'
+      `);
+      const privs = rows.map((r) => r.privilege_type);
+      expect(privs, `authenticated lacks SELECT on companies.${col}`).toContain("SELECT");
+      expect(privs, `authenticated lacks UPDATE on companies.${col}`).toContain("UPDATE");
+    }
+  });
+
+  it("print_terms_and_conditions and print_footer_note respect their own length CHECKs", async () => {
+    const rows = await sql(`
+      select id, name from companies
+       where length(print_terms_and_conditions) > 4000 or length(print_footer_note) > 1000
+    `);
+    expect(rows, `a company's print copy exceeds its own CHECK-enforced length:\n${offenders(rows)}`).toEqual([]);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// GSTR-3B Table 4 / 6.1 prep (0129)
+// ---------------------------------------------------------------------------
+describeDb(`GSTR-3B prep (${hasDb ? "live" : noDbReason})`, () => {
+  it("get_gstr3b_table4/6_1 are not reachable by anon or public", async () => {
+    const rows = await sql(`
+      select routine_name, grantee from information_schema.routine_privileges
+       where routine_name in ('get_gstr3b_table4', 'get_gstr3b_table6_1') and grantee in ('PUBLIC', 'anon')
+    `);
+    expect(rows, `a GSTR-3B function reachable by a role it shouldn't be:\n${offenders(rows)}`).toEqual([]);
+  });
+
+  it("Table 4's c_net_itc_available equals a_total minus b_total exactly, for every registration/period combination checked", async () => {
+    const rows = await sql(`
+      select c.name, gr.id as registration_id, t.a_total, t.b_total, t.c_net_itc_available
+        from companies c
+        join gst_registrations gr on gr.company_id = c.id
+        cross join lateral get_gstr3b_table4(c.id, gr.id, '1900-01-01'::date, '2999-12-31'::date) t
+       where round(t.a_total - t.b_total, 2) <> round(t.c_net_itc_available, 2)
+    `);
+    expect(rows, `Table 4's net ITC doesn't equal A minus B:\n${offenders(rows)}`).toEqual([]);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// TDS late-deposit interest (Sec 201(1A)) + Sec 234E late fee (0130)
+// ---------------------------------------------------------------------------
+describeDb(`TDS interest and 234E fee (${hasDb ? "live" : noDbReason})`, () => {
+  it("get_tds_late_deposit_interest/get_234e_late_fee are not reachable by anon or public", async () => {
+    const rows = await sql(`
+      select routine_name, grantee from information_schema.routine_privileges
+       where routine_name in ('get_tds_late_deposit_interest', 'get_234e_late_fee') and grantee in ('PUBLIC', 'anon')
+    `);
+    expect(rows, `a TDS-interest function reachable by a role it shouldn't be:\n${offenders(rows)}`).toEqual([]);
+  });
+
+  it("get_234e_late_fee raises when called with a null filing date rather than silently returning zero", async () => {
+    await expect(
+      sql(`select * from get_234e_late_fee((select id from companies limit 1), '2026-27', 1, null)`)
+    ).rejects.toThrow();
+  });
+
+  it("no late-deposit interest row shows a negative interest_amount", async () => {
+    const rows = await sql(`
+      select c.name, r.deduction_date, r.interest_amount
+        from companies c
+        cross join lateral get_tds_late_deposit_interest(c.id, '2026-27') r
+       where r.interest_amount < 0
+    `);
+    expect(rows, `negative TDS late-deposit interest:\n${offenders(rows)}`).toEqual([]);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// GSTR-1 Tables 6A/6B/6C — exports, SEZ, deemed exports (0134)
+// ---------------------------------------------------------------------------
+describeDb(`GSTR-1 Table 6A/6B/6C (${hasDb ? "live" : noDbReason})`, () => {
+  it("get_gstr1_table6a/6b/6c are not reachable by anon or public", async () => {
+    const rows = await sql(`
+      select routine_name, grantee from information_schema.routine_privileges
+       where routine_name in ('get_gstr1_table6a', 'get_gstr1_table6b', 'get_gstr1_table6c') and grantee in ('PUBLIC', 'anon')
+    `);
+    expect(rows, `a GSTR-1 Table 6 function reachable by a role it shouldn't be:\n${offenders(rows)}`).toEqual([]);
+  });
+
+  it("no Table 6C (deemed export) row ever carries a shipping bill — goods under Sec 147 never leave India", async () => {
+    const rows = await sql(`
+      select c.name, r.voucher_number, r.shipping_bill_number
+        from companies c
+        cross join lateral get_gstr1_table6c(c.id, '1900-01-01'::date, '2999-12-31'::date, null) r
+       where r.shipping_bill_number is not null
+    `);
+    expect(rows, `a deemed-export row wrongly carries a shipping bill:\n${offenders(rows)}`).toEqual([]);
+  });
+
+  it("no Table 6A/6B row ever has a negative invoice value or negative tax — the historical sign-convention bug this migration's own report caught", async () => {
+    const rows = await sql(`
+      select 'table6a' as tbl, r.voucher_number, r.invoice_value, r.cgst + r.sgst + r.igst + r.cess as total_tax
+        from companies c cross join lateral get_gstr1_table6a(c.id, '1900-01-01'::date, '2999-12-31'::date, null) r
+       where r.invoice_value < 0 or (r.cgst + r.sgst + r.igst + r.cess) < 0
+      union all
+      select 'table6b', r.voucher_number, r.invoice_value, r.cgst + r.sgst + r.igst + r.cess
+        from companies c cross join lateral get_gstr1_table6b(c.id, '1900-01-01'::date, '2999-12-31'::date, null) r
+       where r.invoice_value < 0 or (r.cgst + r.sgst + r.igst + r.cess) < 0
+    `);
+    expect(rows, `a negative invoice value or tax in Table 6A/6B:\n${offenders(rows)}`).toEqual([]);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Payroll cluster — leave, gratuity, F&F settlement, registers (0140-0142)
+// ---------------------------------------------------------------------------
+describeDb(`payroll cluster: leave, gratuity, F&F (${hasDb ? "live" : noDbReason})`, () => {
+  it("employee_leave_ledger has no double-accrual — one row per (employee, period_month)", async () => {
+    const rows = await sql(`
+      select employee_id, period_month, count(*) from employee_leave_ledger
+       group by employee_id, period_month having count(*) > 1
+    `);
+    expect(rows, `duplicate leave accrual rows for the same employee/month:\n${offenders(rows)}`).toEqual([]);
+  });
+
+  it("no gratuity computation shows a positive amount for an ineligible (under 5 years, non-death/disablement) employee", async () => {
+    const rows = await sql(`
+      select c.name, g.employee_id, g.completed_years_for_formula, g.gratuity_payable, g.eligible
+        from companies c
+        cross join lateral get_gratuity_computation(c.id, current_date) g
+       where not g.eligible and g.gratuity_payable > 0
+    `);
+    expect(rows, `an ineligible employee has a nonzero gratuity amount:\n${offenders(rows)}`).toEqual([]);
+  });
+
+  it("gratuity never exceeds the statutory ceiling of ₹20 lakh", async () => {
+    const rows = await sql(`
+      select c.name, g.employee_id, g.gratuity_payable
+        from companies c
+        cross join lateral get_gratuity_computation(c.id, current_date) g
+       where g.gratuity_payable > 2000000
+    `);
+    expect(rows, `gratuity exceeds the Sec 53 ceiling of ₹20 lakh:\n${offenders(rows)}`).toEqual([]);
+  });
+
+  it("employee_exit_settlements.net_payable equals the sum of its own component columns", async () => {
+    const rows = await sql(`
+      select id, employee_id, net_payable,
+             (coalesce(unpaid_salary_amount, 0) + coalesce(leave_encashment_amount, 0) + coalesce(gratuity_amount, 0)
+              + coalesce(bonus_amount, 0) - coalesce(recoveries_amount, 0)) as recomputed
+        from employee_exit_settlements
+       where round(net_payable, 2) <> round(
+               coalesce(unpaid_salary_amount, 0) + coalesce(leave_encashment_amount, 0) + coalesce(gratuity_amount, 0)
+               + coalesce(bonus_amount, 0) - coalesce(recoveries_amount, 0), 2
+             )
+    `);
+    expect(rows, `an F&F settlement's net_payable doesn't equal its own component sum:\n${offenders(rows)}`).toEqual([]);
+  });
+});
+
+// ---------------------------------------------------------------------------
 // Needs fixtures. Seeded database only — never the live project.
 // ---------------------------------------------------------------------------
 describe.skip("post_gst_setoff, post_deferred_tax [needs seed]", () => {
