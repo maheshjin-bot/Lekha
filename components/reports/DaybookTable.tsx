@@ -230,6 +230,15 @@ export function DaybookTable({
                   <Link href={editHrefFor(companyId, r.voucher_id, r.voucher_type)} className="text-accent underline underline-offset-4">
                     Edit
                   </Link>
+                  {(r.voucher_type === "sales" || r.voucher_type === "purchase") && (
+                    <Link
+                      href={`/${companyId}/exim/${r.voucher_id}`}
+                      className="text-accent underline underline-offset-4"
+                      title="Shipping bill / Bill of Entry / BRC — EXIM addendum"
+                    >
+                      EXIM
+                    </Link>
+                  )}
                   <DeleteVoucherButton companyId={companyId} voucherId={r.voucher_id} />
                 </div>
               </td>

@@ -14,6 +14,7 @@ export default async function PurchaseInvoicesPage({
       title="Purchase Invoices"
       description="Every purchase bill in the period — view, edit or delete any one directly."
       lockedTypes={["purchase"]}
+      eximHubLink
       searchParams={{
         from: typeof sp.from === "string" ? sp.from : undefined,
         to: typeof sp.to === "string" ? sp.to : undefined,
