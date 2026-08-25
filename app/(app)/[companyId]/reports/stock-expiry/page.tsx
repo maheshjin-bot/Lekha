@@ -28,12 +28,33 @@ function urgency(days: number | null): { tone: "bad" | "warn" | "ok" | "neutral"
 
 export default async function StockExpiryPage({
   params,
+  searchParams,
 }: PageProps<"/[companyId]/reports/stock-expiry">) {
   const { companyId } = await params;
+  const sp = await searchParams;
   const supabase = await createClient();
 
+  const { data: godowns } = await supabase
+    .from("godowns")
+    .select("id, code, name")
+    .eq("company_id", companyId)
+    .eq("is_active", true)
+    .order("code");
+
+  const activeGodowns = godowns ?? [];
+  const requestedGodownId = typeof sp.godown === "string" ? sp.godown : undefined;
+  const selectedGodownId =
+    requestedGodownId && activeGodowns.some((g) => g.id === requestedGodownId)
+      ? requestedGodownId
+      : null;
+  const selectedGodown = activeGodowns.find((g) => g.id === selectedGodownId);
+  const base = `/${companyId}/reports/stock-expiry`;
+
   const [{ data }, { data: unallocatedOut }] = await Promise.all([
-    supabase.rpc("get_batch_stock_summary", { p_company_id: companyId }),
+    supabase.rpc("get_batch_stock_summary", {
+      p_company_id: companyId,
+      p_godown_id: selectedGodownId ?? undefined,
+    }),
     supabase.rpc("get_unallocated_stock_lines", { p_company_id: companyId, p_direction: "out" }),
   ]);
 
@@ -52,7 +73,18 @@ export default async function StockExpiryPage({
     (r) => r.days_to_expiry != null && r.days_to_expiry >= 0 && r.days_to_expiry <= 30
   ).length;
 
-  const unallocatedOutRows = (unallocatedOut ?? []) as { unallocated_quantity: number }[];
+  // get_unallocated_stock_lines has no godown filter of its own, but it
+  // already returns godown_id/godown_name per row (see 0067) — so the same
+  // selectedGodownId narrows this footer client-side rather than needing
+  // the RPC extended for a count that's advisory, not part of the tabulated
+  // report above.
+  const unallocatedOutAllRows = (unallocatedOut ?? []) as {
+    unallocated_quantity: number;
+    godown_id: string | null;
+  }[];
+  const unallocatedOutRows = selectedGodownId
+    ? unallocatedOutAllRows.filter((r) => r.godown_id === selectedGodownId)
+    : unallocatedOutAllRows;
   const unallocatedOutTotal = unallocatedOutRows.reduce(
     (n, r) => n + Number(r.unallocated_quantity),
     0
@@ -61,7 +93,10 @@ export default async function StockExpiryPage({
   return (
     <ReportShell
       title="Stock expiry"
-      period={`As at ${new Date().toISOString().slice(0, 10)}`}
+      period={
+        `As at ${new Date().toISOString().slice(0, 10)}` +
+        (selectedGodown ? ` · ${selectedGodown.name}` : "")
+      }
       status={
         expiredCount > 0
           ? { label: `${expiredCount} expired`, tone: "bad" }
@@ -70,6 +105,35 @@ export default async function StockExpiryPage({
             : { label: "Nothing urgent", tone: "ok" }
       }
     >
+      {activeGodowns.length > 1 && (
+        <div className="flex flex-wrap items-center gap-2 border-b border-border p-4">
+          <Link
+            href={base}
+            className={
+              "rounded-md border px-2.5 py-1 text-sm " +
+              (!selectedGodownId
+                ? "border-accent bg-accent-soft text-accent"
+                : "border-border-strong hover:bg-surface-2")
+            }
+          >
+            All godowns
+          </Link>
+          {activeGodowns.map((g) => (
+            <Link
+              key={g.id}
+              href={`${base}?godown=${g.id}`}
+              className={
+                "rounded-md border px-2.5 py-1 text-sm " +
+                (selectedGodownId === g.id
+                  ? "border-accent bg-accent-soft text-accent"
+                  : "border-border-strong hover:bg-surface-2")
+              }
+            >
+              {g.code} — {g.name}
+            </Link>
+          ))}
+        </div>
+      )}
       <table className="w-full min-w-[760px] text-sm">
         <thead>
           <tr className="border-b border-border text-left">
@@ -85,7 +149,9 @@ export default async function StockExpiryPage({
           {rows.length === 0 && (
             <tr>
               <td colSpan={6} className="px-4 py-10 text-center text-ink-faint">
-                No batch-tracked stock currently on hand.
+                {selectedGodown
+                  ? `No batch-tracked stock currently on hand in ${selectedGodown.name}.`
+                  : "No batch-tracked stock currently on hand."}
               </td>
             </tr>
           )}

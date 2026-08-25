@@ -1,3 +1,4 @@
+import Link from "next/link";
 import { createClient } from "@/lib/supabase/server";
 import { formatINR } from "@/lib/utils/currency";
 import { defaultPeriod } from "@/lib/utils/period";
@@ -50,9 +51,24 @@ export default async function StockSummaryPage({
     to: typeof sp.as_at === "string" ? sp.as_at : undefined,
   });
 
+  // Godown filter: an id in the query string is only honoured when it
+  // actually belongs to this company's own godown list (fetched above) —
+  // this keeps a stale/foreign id from silently falling through to
+  // get_stock_summary, which would otherwise just treat it as "no matches"
+  // rather than "all godowns". Not a tenancy risk either way (the RPC scopes
+  // every row by p_company_id first), just a correctness guard.
+  const activeGodowns = godowns ?? [];
+  const requestedGodownId = typeof sp.godown === "string" ? sp.godown : undefined;
+  const selectedGodownId =
+    requestedGodownId && activeGodowns.some((g) => g.id === requestedGodownId)
+      ? requestedGodownId
+      : null;
+  const selectedGodown = activeGodowns.find((g) => g.id === selectedGodownId);
+
   const { data: rows } = await supabase.rpc("get_stock_summary", {
     p_company_id: companyId,
     p_as_at: period.to,
+    p_godown_id: selectedGodownId ?? undefined,
   });
 
   const stock = rows ?? [];
@@ -61,12 +77,49 @@ export default async function StockSummaryPage({
   const method =
     company?.inventory_valuation_method === "fifo" ? "FIFO" : "Weighted average";
 
+  const base = `/${companyId}/reports/stock`;
+  const asAtParam = typeof sp.as_at === "string" ? sp.as_at : undefined;
+  const asAtQuery = asAtParam ? `&as_at=${asAtParam}` : "";
+  const allGodownsHref = asAtParam ? `${base}?as_at=${asAtParam}` : base;
+
   return (
     <ReportShell
       title="Stock Summary"
-      period={`As at ${period.label.split(" to ").pop()} · valued at ${method.toLowerCase()}`}
+      period={
+        `As at ${period.label.split(" to ").pop()} · valued at ${method.toLowerCase()}` +
+        (selectedGodown ? ` · ${selectedGodown.name}` : "")
+      }
       status={{ label: formatINR(totalValue, { showZero: true }), tone: "ok" }}
     >
+      {activeGodowns.length > 1 && (
+        <div className="flex flex-wrap items-center gap-2 border-b border-border p-4">
+          <Link
+            href={allGodownsHref}
+            className={
+              "rounded-md border px-2.5 py-1 text-sm " +
+              (!selectedGodownId
+                ? "border-accent bg-accent-soft text-accent"
+                : "border-border-strong hover:bg-surface-2")
+            }
+          >
+            All godowns
+          </Link>
+          {activeGodowns.map((g) => (
+            <Link
+              key={g.id}
+              href={`${base}?godown=${g.id}${asAtQuery}`}
+              className={
+                "rounded-md border px-2.5 py-1 text-sm " +
+                (selectedGodownId === g.id
+                  ? "border-accent bg-accent-soft text-accent"
+                  : "border-border-strong hover:bg-surface-2")
+              }
+            >
+              {g.code} — {g.name}
+            </Link>
+          ))}
+        </div>
+      )}
       <table className="w-full min-w-[720px] text-sm">
         <thead>
           <tr className="border-b border-border text-left">
@@ -85,8 +138,10 @@ export default async function StockSummaryPage({
           {stock.length === 0 && (
             <tr>
               <td colSpan={9} className="px-4 py-12 text-center text-ink-faint">
-                {godowns?.length
-                  ? "No stock movement yet."
+                {activeGodowns.length
+                  ? selectedGodown
+                    ? `No stock movement in ${selectedGodown.name}.`
+                    : "No stock movement yet."
                   : "No godown configured, so stock cannot be recorded."}
               </td>
             </tr>
@@ -132,6 +187,17 @@ export default async function StockSummaryPage({
           </tfoot>
         )}
       </table>
+      {selectedGodown && (
+        <p className="border-t border-border px-4 py-3 text-xs text-ink-faint">
+          Quantities filtered to {selectedGodown.name} always add up exactly
+          across every godown to the all-godowns figure above. Rate and Value
+          do not: each is its own moving-weighted-average of only the
+          receipts posted into {selectedGodown.name}, so a godown&rsquo;s own
+          average cost can differ from the item&rsquo;s company-wide average
+          — the two views are both correct, just averaged over different
+          receipts.
+        </p>
+      )}
     </ReportShell>
   );
 }
