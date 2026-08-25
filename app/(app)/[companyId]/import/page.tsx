@@ -6,6 +6,7 @@ import { InvoiceImport } from "@/components/csv/InvoiceImport";
 import { ItemImport } from "@/components/csv/ItemImport";
 import { LedgerImport } from "@/components/csv/LedgerImport";
 import { Gstr2bImport } from "@/components/csv/Gstr2bImport";
+import { IncomeTaxStatementImport } from "@/components/csv/IncomeTaxStatementImport";
 import { TallyImportPanel } from "@/components/tally/TallyImportPanel";
 
 const TABS = [
@@ -14,6 +15,7 @@ const TABS = [
   { key: "items", label: "Items" },
   { key: "ledgers", label: "Ledgers" },
   { key: "gstr2b", label: "GSTR-2B" },
+  { key: "tax-statement", label: "26AS / AIS / TIS" },
   { key: "tally", label: "From Tally" },
 ] as const;
 type TabKey = (typeof TABS)[number]["key"];
@@ -41,6 +43,11 @@ const COPY: Record<TabKey, { title: string; description: string }> = {
     title: "Upload GSTR-2B",
     description:
       "One row per document from your downloaded GSTR-2B (B2B and CDNR). Re-uploading a period replaces it — a 2B download is a full snapshot, not something to append to.",
+  },
+  "tax-statement": {
+    title: "Upload 26AS / AIS / TIS",
+    description:
+      "One row per deductor transaction from your downloaded tax credit statement. Re-uploading a source for a year replaces it — a statement download is a full snapshot for the year, not something to append to.",
   },
   tally: {
     title: "Import from Tally",
@@ -93,6 +100,7 @@ export default async function ImportPage({
       {tab === "items" && <ItemsTab companyId={companyId} />}
       {tab === "ledgers" && <LedgersTab companyId={companyId} />}
       {tab === "gstr2b" && <Gstr2bTab companyId={companyId} />}
+      {tab === "tax-statement" && <TaxStatementTab companyId={companyId} />}
       {tab === "tally" && <TallyTab companyId={companyId} lockDate={company?.lock_date ?? null} />}
     </main>
   );
@@ -213,6 +221,14 @@ async function Gstr2bTab({ companyId }: { companyId: string }) {
       existingPeriods={existingPeriods ?? []}
     />
   );
+}
+
+async function TaxStatementTab({ companyId }: { companyId: string }) {
+  const supabase = await createClient();
+  const { data: existingPeriods } = await supabase.rpc("list_income_tax_statement_periods", {
+    p_company_id: companyId,
+  });
+  return <IncomeTaxStatementImport companyId={companyId} existingPeriods={existingPeriods ?? []} />;
 }
 
 async function TallyTab({ companyId, lockDate }: { companyId: string; lockDate: string | null }) {
