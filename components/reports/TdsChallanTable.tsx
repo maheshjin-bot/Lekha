@@ -2,11 +2,12 @@ import { formatINR } from "@/lib/utils/currency";
 import { num, td, th } from "@/components/ui/Table";
 
 /**
- * Every tax_payments (0079) row with tax_type = 'tds' in the return's
- * deposit window. Shared by 24Q/26Q/27Q's prep pages because OLTAS itself
- * does not tag a challan to one specific return — see each page's own
- * disclaimer for why the SAME list can legitimately appear on more than
- * one of them.
+ * Every tax_payments (0079) row with tax_type = 'tds' (or 'tcs' — see
+ * 27EQ's page, 0146) in the return's deposit window. Shared by 24Q/26Q/27Q/
+ * 27EQ's prep pages because OLTAS itself does not tag a challan to one
+ * specific return — see each page's own disclaimer for why the SAME list
+ * can legitimately appear on more than one of them. Column shape is
+ * tax_payments' own schema, not TDS-specific, despite the type name.
  */
 export type TdsChallanRow = {
   id: string;
@@ -35,7 +36,7 @@ export function TdsChallanTable({ rows }: { rows: TdsChallanRow[] }) {
         {rows.length === 0 && (
           <tr>
             <td colSpan={5} className="px-4 py-10 text-center text-ink-faint">
-              No TDS challan payments recorded for this company in this window.
+              No challan payments recorded for this company in this window.
             </td>
           </tr>
         )}

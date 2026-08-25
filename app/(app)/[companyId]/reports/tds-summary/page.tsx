@@ -3,6 +3,7 @@ import { createClient } from "@/lib/supabase/server";
 import { formatINR } from "@/lib/utils/currency";
 import { ReportShell, num, td, th } from "@/components/reports/ReportShell";
 import { Badge } from "@/components/ui/Badge";
+import { TcsCollecteeTable, type TcsCollecteeRow } from "@/components/reports/TcsCollecteeTable";
 
 /** Today as a local wall-clock date — not toISOString(), which is UTC. */
 function todayLocal(): string {
@@ -163,6 +164,28 @@ export default async function TdsSummaryPage({
   const totalTds = summary.reduce((n, r) => n + Number(r.tds_deducted), 0);
   const unattributedTds = unattributed.reduce((n, r) => n + Number(r.tds_deducted), 0);
 
+  // --- TCS mirror (0146's get_tcs_collectee_summary) --------------------
+  // Additive only: the page stays "TDS summary" in title and top status
+  // badge, this just appends a second, independently-gated section below
+  // using the same quarter this page is already showing. qkey parsing
+  // mirrors this file's own shiftQuarter, above — not imported from
+  // tdsReturnQuarters.ts, per this file's own header note that its quarter
+  // math is intentionally private to it.
+  const tcsOn = (modules ?? []).some((m) => m.code === "tcs" && m.active);
+  const fyStartNum = Number(qkey.slice(0, 4));
+  const qNum = Number(qkey.slice(6, 7));
+  const fyLabel = `${fyStartNum}-${String((fyStartNum + 1) % 100).padStart(2, "0")}`;
+  const { data: tcsRows } = tcsOn
+    ? await supabase.rpc("get_tcs_collectee_summary", {
+        p_company_id: companyId,
+        p_financial_year_label: fyLabel,
+        p_quarter: qNum,
+      })
+    : { data: null };
+  const tcsSummary = (tcsRows ?? []) as TcsCollecteeRow[];
+  const tcsAttributed = tcsSummary.filter((r) => r.collectee_ledger_id && r.section_code);
+  const tcsNeedsReview = tcsSummary.filter((r) => !r.collectee_ledger_id || !r.section_code);
+
   const base = `/${companyId}/reports/tds-summary`;
 
   return (
@@ -219,6 +242,39 @@ export default async function TdsSummaryPage({
         </>
       )}
 
+      {tcsOn && (
+        <>
+          <div className="border-b border-t border-border p-4">
+            <h2 className="flex items-center gap-2 font-semibold">
+              Collectee-wise TCS <Badge tone="neutral">quarterly</Badge>
+            </h2>
+            <p className="mt-0.5 text-xs text-ink-faint">
+              Sec 206C TCS collected this quarter, one row per collectee per section — see{" "}
+              <Link href={`/${companyId}/reports/tds-return-27eq?q=${qkey}`} className="underline">
+                TCS return prep (Form 143/27EQ)
+              </Link>{" "}
+              for the collector-detail and challan-summary sections this page does not repeat.
+            </p>
+          </div>
+          <TcsCollecteeTable rows={tcsAttributed} />
+
+          {tcsNeedsReview.length > 0 && (
+            <>
+              <div className="border-b border-t border-border bg-warning-soft p-4">
+                <h2 className="flex items-center gap-2 font-semibold text-warning">
+                  TCS needs review — collectee or section could not be attributed
+                </h2>
+                <p className="mt-0.5 text-xs text-ink-faint">
+                  Either the voucher had no party ledger on file, or its item lines carried more than one
+                  different TCS section. Open each voucher directly to confirm the split by hand.
+                </p>
+              </div>
+              <TcsCollecteeTable rows={tcsNeedsReview} />
+            </>
+          )}
+        </>
+      )}
+
       <p className="border-t border-border px-4 py-3 text-xs text-ink-faint">
         Form 140 (was Form 26Q under the 1961 Act) Annexure I precursor — deductee-wise
         breakup of TDS on payments other than salary. TDS deducted is read back from actual
@@ -232,7 +288,10 @@ export default async function TdsSummaryPage({
         deductee crossed the limit that makes TDS deductible at all) and challan/remittance
         detail (BSR code, deposit date) are not tracked. Sec 192 salary TDS has its own
         estimate — see Reports → Payroll register. Not a filing-ready return, and nothing
-        here is submitted anywhere — LEKHA has no TRACES API access.
+        here is submitted anywhere — LEKHA has no TRACES API access. The TCS section above
+        (Sec 206C, Form 143/27EQ) covers specified-goods and motor-vehicle TCS only — Sec
+        206C(1G) foreign-remittance/overseas-tour-package TCS is not an item sale and is not
+        represented; see the 27EQ page linked above for the full scope note.
       </p>
     </ReportShell>
   );
