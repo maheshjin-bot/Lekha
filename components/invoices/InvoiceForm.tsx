@@ -24,6 +24,10 @@ type TcsSection = {
   no_pan_rate_percent: number;
   threshold_rupees: number | null;
 };
+// One item's rate on the company's DEFAULT price list only (see get_effective_item_price,
+// 0147) — a convenience prefill, never a hard lock, so the form only ever needs the one
+// list the invoice screen defaults to rather than asking "which list" per line.
+type PriceListEntry = { item_id: string; price: number; effective_from: string };
 
 const TYPES = [
   { value: "sales", label: "Sales invoice", party: "Customer", trading: "Sales ledger", roles: ["debtor", "cash_bank"] },
@@ -32,8 +36,22 @@ const TYPES = [
   { value: "debit_note", label: "Debit note", party: "Supplier", trading: "Purchase ledger", roles: ["creditor", "cash_bank"] },
 ] as const;
 
-type Line = { itemId: string; quantity: string; rate: string; description: string };
-const emptyLine = (): Line => ({ itemId: "", quantity: "1", rate: "", description: "" });
+type Line = { itemId: string; quantity: string; rate: string; discountPercent: string; description: string };
+const emptyLine = (): Line => ({ itemId: "", quantity: "1", rate: "", discountPercent: "", description: "" });
+
+// Mirrors create_invoice/update_invoice's own per-line formula exactly (0147):
+// gross = round(qty * rate, 2); discount = round(gross * discPct / 100, 2);
+// net = gross - discount. Used by every client-side preview below so the
+// number shown here never disagrees with what the database will actually post.
+function lineAmounts(quantity: string, rate: string, discountPercent: string) {
+  const qty = Number(quantity) || 0;
+  const r = Number(rate) || 0;
+  const discPct = Math.min(100, Math.max(0, Number(discountPercent) || 0));
+  const gross = Math.round(qty * r * 100) / 100;
+  const discount = Math.round(((gross * discPct) / 100) * 100) / 100;
+  const net = Math.round((gross - discount) * 100) / 100;
+  return { gross, discount, net };
+}
 
 /**
  * An existing invoice being edited. voucherType and branchId are read but
@@ -73,6 +91,7 @@ export function InvoiceForm({
   tcsOn,
   tcsSections,
   states,
+  priceListItems = [],
   existing,
 }: {
   companyId: string;
@@ -84,6 +103,7 @@ export function InvoiceForm({
   tcsOn: boolean;
   tcsSections: TcsSection[];
   states: StateOption[];
+  priceListItems?: PriceListEntry[];
   existing?: ExistingInvoice;
 }) {
   const router = useRouter();
@@ -136,10 +156,12 @@ export function InvoiceForm({
         : "inter"
       : null;
 
+  // Post-discount (net) taxable value per line — Sec 15(3)(a)/Rule 46(k),
+  // see 0147. lineAmounts mirrors create_invoice's own formula exactly.
   const taxable = useMemo(
     () =>
       sumPaise(
-        lines.map((l) => toPaise(Math.round((Number(l.quantity) || 0) * (Number(l.rate) || 0) * 100) / 100))
+        lines.map((l) => toPaise(lineAmounts(l.quantity, l.rate, l.discountPercent).net))
       ) / 100,
     [lines]
   );
@@ -153,7 +175,7 @@ export function InvoiceForm({
     for (const l of lines) {
       const item = items.find((x) => x.id === l.itemId);
       if (!item || !item.gst_rate_percent) continue;
-      const amount = Math.round((Number(l.quantity) || 0) * (Number(l.rate) || 0) * 100) / 100;
+      const amount = lineAmounts(l.quantity, l.rate, l.discountPercent).net;
       if (supplyType === "intra") {
         const half = Math.round(((amount * item.gst_rate_percent) / 2 / 100) * 100) / 100;
         cgst += half;
@@ -180,7 +202,7 @@ export function InvoiceForm({
       if (!item || !item.default_tcs_section) continue;
       const section = tcsSections.find((s) => s.section_code === item.default_tcs_section);
       if (!section) continue;
-      const amount = Math.round((Number(l.quantity) || 0) * (Number(l.rate) || 0) * 100) / 100;
+      const amount = lineAmounts(l.quantity, l.rate, l.discountPercent).net;
       if (section.threshold_rupees != null && amount <= section.threshold_rupees) continue;
       // This line's own GST, computed inline rather than reused from `tax`
       // above, since that memo only keeps invoice-wide totals.
@@ -202,16 +224,32 @@ export function InvoiceForm({
 
   const grandTotal = taxable + tax.cgst + tax.sgst + tax.igst + tcs;
 
+  // The company's default price list (0147), as of the invoice's own date —
+  // NOT necessarily today, so a back-dated invoice still prefills the rate
+  // that was actually in force on that date. Sales side only: a price list
+  // represents what this company charges a customer, which has no bearing
+  // on what a supplier billed on a purchase.
+  function priceListRate(itemId: string): number | undefined {
+    if (!isSale) return undefined;
+    const candidates = priceListItems.filter((p) => p.item_id === itemId && p.effective_from <= date);
+    if (!candidates.length) return undefined;
+    return candidates.reduce((latest, p) => (p.effective_from > latest.effective_from ? p : latest)).price;
+  }
+
   function update(i: number, patch: Partial<Line>) {
     setLines((prev) =>
       prev.map((l, idx) => {
         if (idx !== i) return l;
         const next = { ...l, ...patch };
-        // Prefill the rate from the item master when one is picked and the
-        // rate is still blank — never overwrite something already typed.
+        // Prefill the rate when an item is picked and the rate is still
+        // blank — never overwrite something already typed. The price list
+        // (if it has an entry effective on this invoice's date) takes
+        // priority over the item master's flat sale_rate/purchase_rate,
+        // since it is the more specific, more recently-updated figure —
+        // still just a suggestion, still fully editable either way.
         if (patch.itemId && !l.rate) {
           const it = items.find((x) => x.id === patch.itemId);
-          const suggested = isSale ? it?.sale_rate : it?.purchase_rate;
+          const suggested = priceListRate(patch.itemId) ?? (isSale ? it?.sale_rate : it?.purchase_rate);
           if (suggested) next.rate = String(suggested);
         }
         return next;
@@ -235,6 +273,7 @@ export function InvoiceForm({
       item_id: l.itemId,
       quantity: Number(l.quantity),
       rate: Number(l.rate) || 0,
+      discount_percent: Number(l.discountPercent) || 0,
       description: l.description.trim() || null,
     }));
 
@@ -407,6 +446,7 @@ export function InvoiceForm({
               <th className="w-24 px-3 py-2.5 text-right font-medium">Qty</th>
               <th className="w-16 px-3 py-2.5 font-medium">Unit</th>
               <th className="w-28 px-3 py-2.5 text-right font-medium">Rate</th>
+              <th className="w-20 px-3 py-2.5 text-right font-medium">Disc %</th>
               {gstOn && <th className="w-16 px-3 py-2.5 text-right font-medium">GST</th>}
               <th className="w-32 px-3 py-2.5 text-right font-medium">Amount</th>
               <th className="w-10" />
@@ -415,7 +455,7 @@ export function InvoiceForm({
           <tbody>
             {lines.map((line, i) => {
               const item = items.find((x) => x.id === line.itemId);
-              const amount = Math.round((Number(line.quantity) || 0) * (Number(line.rate) || 0) * 100) / 100;
+              const { gross, discount, net } = lineAmounts(line.quantity, line.rate, line.discountPercent);
               return (
                 <tr key={i} className="border-b border-border last:border-0">
                   <td className="px-3 py-2">
@@ -451,12 +491,28 @@ export function InvoiceForm({
                       className={cell + " text-right tabular-nums"}
                     />
                   </td>
+                  <td className="px-3 py-2">
+                    <input
+                      inputMode="decimal"
+                      value={line.discountPercent}
+                      placeholder="0"
+                      onChange={(e) => update(i, { discountPercent: e.target.value })}
+                      className={cell + " text-right tabular-nums"}
+                    />
+                  </td>
                   {gstOn && (
                     <td className="px-3 py-2 text-right text-xs tabular-nums text-ink-faint font-mono">
                       {item ? `${item.gst_rate_percent}%` : "—"}
                     </td>
                   )}
-                  <td className="px-3 py-2 text-right tabular-nums font-mono">{formatINR(amount)}</td>
+                  <td className="px-3 py-2 text-right tabular-nums font-mono">
+                    {formatINR(net)}
+                    {discount > 0 && (
+                      <span className="block text-[11px] font-sans text-ink-faint">
+                        {formatINR(gross)} − {formatINR(discount)} disc.
+                      </span>
+                    )}
+                  </td>
                   <td className="px-2 py-2 text-center">
                     {lines.length > 1 && (
                       <button
@@ -475,7 +531,7 @@ export function InvoiceForm({
           </tbody>
           <tfoot>
             <tr className="border-t border-border bg-bg">
-              <td className="px-3 py-2.5" colSpan={gstOn ? 5 : 4}>
+              <td className="px-3 py-2.5" colSpan={gstOn ? 6 : 5}>
                 <button
                   type="button"
                   onClick={() => setLines((p) => [...p, emptyLine()])}
@@ -494,14 +550,14 @@ export function InvoiceForm({
                 {supplyType === "intra" ? (
                   <>
                     <tr className="text-xs text-ink-soft">
-                      <td className="px-3 py-1" colSpan={gstOn ? 5 : 4}>
+                      <td className="px-3 py-1" colSpan={gstOn ? 6 : 5}>
                         CGST
                       </td>
                       <td className="px-3 py-1 text-right tabular-nums font-mono">{formatINR(tax.cgst)}</td>
                       <td />
                     </tr>
                     <tr className="text-xs text-ink-soft">
-                      <td className="px-3 py-1" colSpan={gstOn ? 5 : 4}>
+                      <td className="px-3 py-1" colSpan={gstOn ? 6 : 5}>
                         SGST
                       </td>
                       <td className="px-3 py-1 text-right tabular-nums font-mono">{formatINR(tax.sgst)}</td>
@@ -510,7 +566,7 @@ export function InvoiceForm({
                   </>
                 ) : supplyType === "inter" ? (
                   <tr className="text-xs text-ink-soft">
-                    <td className="px-3 py-1" colSpan={gstOn ? 5 : 4}>
+                    <td className="px-3 py-1" colSpan={gstOn ? 6 : 5}>
                       IGST
                     </td>
                     <td className="px-3 py-1 text-right tabular-nums font-mono">
@@ -521,7 +577,7 @@ export function InvoiceForm({
                 ) : null}
                 {tcs > 0 && (
                   <tr className="text-xs text-ink-soft">
-                    <td className="px-3 py-1" colSpan={gstOn ? 5 : 4}>
+                    <td className="px-3 py-1" colSpan={gstOn ? 6 : 5}>
                       TCS
                     </td>
                     <td className="px-3 py-1 text-right tabular-nums font-mono">{formatINR(tcs)}</td>
@@ -529,7 +585,7 @@ export function InvoiceForm({
                   </tr>
                 )}
                 <tr className="border-t-2 border-border-strong font-semibold">
-                  <td className="px-3 py-2.5" colSpan={gstOn ? 5 : 4}>
+                  <td className="px-3 py-2.5" colSpan={gstOn ? 6 : 5}>
                     Total
                   </td>
                   <td className="px-3 py-2.5 text-right tabular-nums font-mono">

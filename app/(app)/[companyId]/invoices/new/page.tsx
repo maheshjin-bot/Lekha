@@ -16,6 +16,7 @@ export default async function NewInvoicePage({
     { data: modules },
     { data: states },
     { data: tcsSections },
+    { data: priceListItemsRaw },
   ] = await Promise.all([
     supabase
       .from("items")
@@ -53,7 +54,23 @@ export default async function NewInvoicePage({
       .from("ref_tcs_sections")
       .select("section_code, rate_percent, no_pan_rate_percent, threshold_rupees")
       .eq("is_active", true),
+    // The company's DEFAULT price list only (0147) — InvoiceForm's rate-
+    // prefill convenience never has to ask "which list" this way. Every
+    // row for every item, not filtered by date here, since the invoice's
+    // own date (which the user can still change) decides which effective_
+    // from applies — that filtering happens client-side in InvoiceForm.
+    supabase
+      .from("price_list_items")
+      .select("item_id, price, effective_from, price_lists!inner(is_default)")
+      .eq("company_id", companyId)
+      .eq("price_lists.is_default", true),
   ]);
+
+  const priceListItems = (priceListItemsRaw ?? []).map((p) => ({
+    item_id: p.item_id,
+    price: Number(p.price),
+    effective_from: p.effective_from,
+  }));
 
   const flatLedgers = (ledgers ?? []).map((l) => ({
     id: l.id,
@@ -118,6 +135,7 @@ export default async function NewInvoicePage({
           tcsOn={tcsOn}
           tcsSections={tcsSections ?? []}
           states={states ?? []}
+          priceListItems={priceListItems}
         />
       )}
     </main>

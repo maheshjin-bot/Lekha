@@ -57,7 +57,7 @@ export default async function PrintInvoicePage({
         .maybeSingle(),
       supabase
         .from("voucher_items")
-        .select("id, quantity, uom, rate, amount, hsn_sac, description, items(name)")
+        .select("id, quantity, uom, rate, amount, discount_percent, amount_before_discount, hsn_sac, description, items(name)")
         .eq("voucher_id", voucherId)
         .order("line_order"),
       voucher.party_ledger_id
@@ -99,6 +99,11 @@ export default async function PrintInvoicePage({
   const lines = items ?? [];
   const total = Number(voucher.total_amount);
   const taxable = lines.reduce((n, l) => n + Number(l.amount), 0);
+  // Rule 46(k) CGST Rules: a discount must be a distinct particular on the
+  // invoice, not netted silently into the rate (see 0147). Only widen the
+  // table with its own column when at least one line actually carries one —
+  // the common no-discount invoice stays exactly as it always looked.
+  const hasDiscount = lines.some((l) => Number(l.discount_percent) > 0);
 
   // Tax entries are whichever voucher_entries used a ledger that
   // tax_ledger_map has on file for this company, keyed by purpose.
@@ -242,13 +247,14 @@ export default async function PrintInvoicePage({
               <th className="py-2 pr-2 text-right font-medium">Qty</th>
               <th className="py-2 pr-2 font-medium">Unit</th>
               <th className="py-2 pr-2 text-right font-medium">Rate</th>
+              {hasDiscount && <th className="py-2 pr-2 text-right font-medium">Discount</th>}
               <th className="py-2 text-right font-medium">Amount</th>
             </tr>
           </thead>
           <tbody>
             {lines.length === 0 && (
               <tr>
-                <td colSpan={7} className="py-8 text-center text-ink-faint">
+                <td colSpan={hasDiscount ? 8 : 7} className="py-8 text-center text-ink-faint">
                   This voucher has no item lines.
                 </td>
               </tr>
@@ -266,6 +272,13 @@ export default async function PrintInvoicePage({
                 <td className="py-2 pr-2 text-right tabular-nums font-mono">{Number(l.quantity)}</td>
                 <td className="py-2 pr-2">{l.uom}</td>
                 <td className="py-2 pr-2 text-right tabular-nums font-mono">{formatINR(Number(l.rate))}</td>
+                {hasDiscount && (
+                  <td className="py-2 pr-2 text-right tabular-nums font-mono text-xs">
+                    {Number(l.discount_percent) > 0
+                      ? `${Number(l.discount_percent)}% (−${formatINR(Number(l.amount_before_discount) - Number(l.amount))})`
+                      : "—"}
+                  </td>
+                )}
                 <td className="py-2 text-right tabular-nums font-mono">{formatINR(Number(l.amount))}</td>
               </tr>
             ))}
@@ -274,14 +287,14 @@ export default async function PrintInvoicePage({
             {taxByKind.size > 0 && (
               <>
                 <tr>
-                  <td className="pt-2" colSpan={6}>
+                  <td className="pt-2" colSpan={hasDiscount ? 7 : 6}>
                     Taxable value
                   </td>
                   <td className="pt-2 text-right tabular-nums font-mono">{formatINR(taxable)}</td>
                 </tr>
                 {[...taxByKind.entries()].map(([kind, amount]) => (
                   <tr key={kind} className="text-ink-soft">
-                    <td className="py-0.5" colSpan={6}>
+                    <td className="py-0.5" colSpan={hasDiscount ? 7 : 6}>
                       {TAX_LABEL[kind] ?? kind.toUpperCase()}
                     </td>
                     <td className="py-0.5 text-right tabular-nums font-mono">{formatINR(amount)}</td>
@@ -290,7 +303,7 @@ export default async function PrintInvoicePage({
               </>
             )}
             <tr className="border-t-2 border-ink font-semibold">
-              <td className="py-2.5" colSpan={6}>
+              <td className="py-2.5" colSpan={hasDiscount ? 7 : 6}>
                 Total
               </td>
               <td className="py-2.5 text-right tabular-nums font-mono">

@@ -32,6 +32,7 @@ export default async function EditInvoicePage({
     { data: tcsSections },
     { data: voucherItems },
     { data: tradingEntry },
+    { data: priceListItemsRaw },
   ] = await Promise.all([
     supabase
       .from("items")
@@ -66,7 +67,7 @@ export default async function EditInvoicePage({
       .eq("is_active", true),
     supabase
       .from("voucher_items")
-      .select("item_id, quantity, rate, description, godown_id, line_order")
+      .select("item_id, quantity, rate, discount_percent, description, godown_id, line_order")
       .eq("voucher_id", voucherId)
       .order("line_order"),
     // The trading ledger isn't stored on the voucher header — create_invoice
@@ -77,7 +78,19 @@ export default async function EditInvoicePage({
       .from("voucher_entries")
       .select("ledger_id, ledgers(account_groups(ledger_role))")
       .eq("voucher_id", voucherId),
+    // See invoices/new/page.tsx — the company's default price list only.
+    supabase
+      .from("price_list_items")
+      .select("item_id, price, effective_from, price_lists!inner(is_default)")
+      .eq("company_id", companyId)
+      .eq("price_lists.is_default", true),
   ]);
+
+  const priceListItems = (priceListItemsRaw ?? []).map((p) => ({
+    item_id: p.item_id,
+    price: Number(p.price),
+    effective_from: p.effective_from,
+  }));
 
   const flatLedgers = (ledgers ?? []).map((l) => ({
     id: l.id,
@@ -119,6 +132,7 @@ export default async function EditInvoicePage({
       itemId: vi.item_id,
       quantity: String(vi.quantity),
       rate: String(vi.rate),
+      discountPercent: Number(vi.discount_percent) > 0 ? String(vi.discount_percent) : "",
       description: vi.description ?? "",
     })),
   };
@@ -155,6 +169,7 @@ export default async function EditInvoicePage({
           tcsOn={tcsOn}
           tcsSections={tcsSections ?? []}
           states={states ?? []}
+          priceListItems={priceListItems}
           existing={existing}
         />
       )}
