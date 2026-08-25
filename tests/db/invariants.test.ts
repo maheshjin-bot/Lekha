@@ -4055,6 +4055,217 @@ describeDb(`payroll cluster: leave, gratuity, F&F (${hasDb ? "live" : noDbReason
 });
 
 // ---------------------------------------------------------------------------
+// Line-level discounts + price lists (0147)
+// ---------------------------------------------------------------------------
+describeDb(`line discounts and price lists (${hasDb ? "live" : noDbReason})`, () => {
+  it("voucher_items.discount_percent stays within its own 0-100 CHECK", async () => {
+    const rows = await sql(`
+      select id, voucher_id, discount_percent from voucher_items
+       where discount_percent < 0 or discount_percent > 100
+    `);
+    expect(rows, `a discount_percent outside 0-100:\n${offenders(rows)}`).toEqual([]);
+  });
+
+  it("amount_before_discount minus discount_amount equals amount, for every discounted line", async () => {
+    // amount_before_discount and discount_amount are GENERATED columns;
+    // amount itself is a plain column create_invoice/update_invoice write
+    // separately (deliberately — other RPCs like BOM production populate
+    // voucher_items with their own valuation logic that doesn't always
+    // satisfy qty*rate to the cent). This only holds — and is only
+    // meaningful to check — for rows that actually carry a discount.
+    const rows = await sql(`
+      select id, voucher_id, amount_before_discount, discount_amount, amount
+        from voucher_items
+       where discount_percent <> 0
+         and round(amount_before_discount - discount_amount, 2) <> round(amount, 2)
+    `);
+    expect(rows, `a discounted line's amount doesn't equal gross minus discount:\n${offenders(rows)}`).toEqual([]);
+  });
+
+  it("no company has more than one default price list", async () => {
+    const rows = await sql(`
+      select company_id, count(*) from price_lists
+       where is_default group by company_id having count(*) > 1
+    `);
+    expect(rows, `a company has multiple default price lists:\n${offenders(rows)}`).toEqual([]);
+  });
+
+  it("get_effective_item_price and the invoice-affecting functions are not reachable by anon or public", async () => {
+    const rows = await sql(`
+      select routine_name, grantee from information_schema.routine_privileges
+       where routine_name = 'get_effective_item_price' and grantee in ('PUBLIC', 'anon')
+    `);
+    expect(rows, `get_effective_item_price reachable by a role it shouldn't be:\n${offenders(rows)}`).toEqual([]);
+  });
+
+  it("every non-discounted pre-existing voucher line still has amount = amount_before_discount (byte-identical regression)", async () => {
+    const rows = await sql(`
+      select id, voucher_id, amount_before_discount, amount from voucher_items
+       where discount_percent = 0 and round(amount_before_discount, 2) <> round(amount, 2)
+    `);
+    expect(rows, `a non-discounted line's amount drifted from its own gross value:\n${offenders(rows)}`).toEqual([]);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// 26AS / AIS / TIS upload + match (0148)
+// ---------------------------------------------------------------------------
+describeDb(`26AS/AIS/TIS match (${hasDb ? "live" : noDbReason})`, () => {
+  it("import_income_tax_statement_lines and the match function are not reachable by anon or public", async () => {
+    const rows = await sql(`
+      select routine_name, grantee from information_schema.routine_privileges
+       where routine_name in ('import_income_tax_statement_lines', 'match_income_tax_statement_tds_receivable')
+         and grantee in ('PUBLIC', 'anon')
+    `);
+    expect(rows, `an income-tax-statement function reachable by a role it shouldn't be:\n${offenders(rows)}`).toEqual([]);
+  });
+
+  it("every match bucket is one of the three the function is documented to return", async () => {
+    const rows = await sql(`
+      select c.name, r.bucket
+        from companies c
+        cross join lateral list_income_tax_statement_periods(c.id) p
+        cross join lateral match_income_tax_statement_tds_receivable(c.id, p.financial_year_label, p.source) r
+       where r.bucket not in ('matched', 'missing_from_books', 'missing_from_statement')
+    `);
+    expect(rows, `an unexpected match bucket value:\n${offenders(rows)}`).toEqual([]);
+  });
+
+  it("a 'matched' row's amount_difference equals tds_receivable_register minus tax_deposited_statement", async () => {
+    const rows = await sql(`
+      select c.name, r.deductor_tan, r.tax_deposited_statement, r.tds_receivable_register, r.amount_difference
+        from companies c
+        cross join lateral list_income_tax_statement_periods(c.id) p
+        cross join lateral match_income_tax_statement_tds_receivable(c.id, p.financial_year_label, p.source) r
+       where r.bucket = 'matched'
+         and round(coalesce(r.tds_receivable_register, 0) - coalesce(r.tax_deposited_statement, 0), 2) <> round(coalesce(r.amount_difference, 0), 2)
+    `);
+    expect(rows, `amount_difference doesn't equal statement minus register:\n${offenders(rows)}`).toEqual([]);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// GSTR-9 / 9C annual return workpaper (0155)
+// ---------------------------------------------------------------------------
+describeDb(`GSTR-9/9C workpaper (${hasDb ? "live" : noDbReason})`, () => {
+  it("the three workpaper functions are not reachable by anon or public", async () => {
+    const rows = await sql(`
+      select routine_name, grantee from information_schema.routine_privileges
+       where routine_name in ('get_gstr9_table4_5', 'get_gstr9_table8', 'get_gstr9c_turnover_reconciliation')
+         and grantee in ('PUBLIC', 'anon')
+    `);
+    expect(rows, `a GSTR-9/9C function reachable by a role it shouldn't be:\n${offenders(rows)}`).toEqual([]);
+  });
+
+  it("Table 8's 8B (ITC per books) equals get_gst_input_register's own taxable-value total for the same period exactly", async () => {
+    // 8A (ITC per GSTR-2B) and 8B (ITC per books) are two independent
+    // comparison figures, not additive components of one total — 8B alone
+    // is the one that must reconcile exactly to the input register, since
+    // both describe "ITC per books" from the same underlying data.
+    const rows = await sql(`
+      with t8b as (
+        select c.id, c.name,
+               max(t.taxable_value) filter (where t.row_code = '8B') as t8b_taxable
+          from companies c
+          join gst_registrations gr on gr.company_id = c.id
+          cross join lateral get_gstr9_table8(c.id, gr.id, '2026-04-01'::date, '2027-03-31'::date) t
+         group by c.id, c.name
+      ),
+      register as (
+        select c.id,
+               (select coalesce(sum(taxable_value), 0) from get_gst_input_register(c.id, '2026-04-01'::date, '2027-03-31'::date)) as reg_taxable
+          from companies c
+      )
+      select t8b.name, t8b.t8b_taxable, register.reg_taxable
+        from t8b join register on register.id = t8b.id
+       where round(coalesce(t8b.t8b_taxable, 0), 2) <> round(coalesce(register.reg_taxable, 0), 2)
+    `);
+    expect(rows, `GSTR-9 Table 8's "ITC per books" doesn't match the whole year's own input register total:\n${offenders(rows)}`).toEqual([]);
+  });
+
+  it("get_gstr9c_turnover_reconciliation's difference equals books revenue from operations minus the GST workpaper turnover (other income correctly excluded)", async () => {
+    // books_other_income is deliberately NOT part of this reconciliation —
+    // confirmed live: including it in the expected formula produced a
+    // mismatch of exactly books_other_income on every company, which is
+    // the correct accounting position (interest/other income generally
+    // isn't a GST-taxable supply, so GSTR-9C Table 5 reconciles revenue
+    // FROM OPERATIONS against GST turnover, not total books income).
+    const rows = await sql(`
+      select c.name, r.books_revenue_from_operations, r.books_other_income, r.gst_workpaper_turnover, r.difference
+        from companies c
+        join gst_registrations gr on gr.company_id = c.id
+        cross join lateral get_gstr9c_turnover_reconciliation(c.id, gr.id, '2026-04-01'::date, '2027-03-31'::date) r
+       where round(
+               coalesce(r.books_revenue_from_operations, 0) - coalesce(r.gst_workpaper_turnover, 0), 2
+             ) <> round(coalesce(r.difference, 0), 2)
+    `);
+    expect(rows, `GSTR-9C turnover reconciliation's difference doesn't equal revenue-from-operations minus GST turnover:\n${offenders(rows)}`).toEqual([]);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// TCS collectee summary + Form 27EQ/143 (0146)
+// ---------------------------------------------------------------------------
+describeDb(`TCS collectee summary (${hasDb ? "live" : noDbReason})`, () => {
+  it("get_tcs_collectee_summary is not reachable by anon or public", async () => {
+    const rows = await sql(`
+      select grantee from information_schema.routine_privileges
+       where routine_name = 'get_tcs_collectee_summary' and grantee in ('PUBLIC', 'anon')
+    `);
+    expect(rows, `get_tcs_collectee_summary reachable by a role it shouldn't be:\n${offenders(rows)}`).toEqual([]);
+  });
+
+  it("no company/quarter shows more voucher_count than the whole company has TCS-relevant sales vouchers", async () => {
+    const rows = await sql(`
+      select c.name, r.collectee_name, r.voucher_count,
+             (select count(*) from vouchers v where v.company_id = c.id and v.voucher_type in ('sales', 'credit_note') and not v.is_deleted) as company_voucher_ceiling
+        from companies c
+        cross join lateral get_tcs_collectee_summary(c.id, '2026-27', 1) r
+       where r.voucher_count > (select count(*) from vouchers v where v.company_id = c.id and v.voucher_type in ('sales', 'credit_note') and not v.is_deleted)
+    `);
+    expect(rows, `a TCS collectee's voucher_count exceeds the company's own total sales/credit-note voucher count:\n${offenders(rows)}`).toEqual([]);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Recurring voucher templates (0151)
+// ---------------------------------------------------------------------------
+describeDb(`recurring vouchers (${hasDb ? "live" : noDbReason})`, () => {
+  it("generate_due_recurring_vouchers and its management functions are not reachable by anon or public", async () => {
+    const rows = await sql(`
+      select routine_name, grantee from information_schema.routine_privileges
+       where routine_name in ('generate_due_recurring_vouchers', 'list_recurring_voucher_templates', 'create_recurring_voucher_template')
+         and grantee in ('PUBLIC', 'anon')
+    `);
+    expect(rows, `a recurring-voucher function reachable by a role it shouldn't be:\n${offenders(rows)}`).toEqual([]);
+  });
+
+  it("recurring_voucher_generation_log has no duplicate (template_id, run_date) — the idempotency guard actually holds", async () => {
+    const rows = await sql(`
+      select template_id, run_date, count(*) from recurring_voucher_generation_log
+       group by template_id, run_date having count(*) > 1
+    `);
+    expect(rows, `duplicate generation-log rows for the same template/date — re-running would double-post:\n${offenders(rows)}`).toEqual([]);
+  });
+
+  it("every generation-log row that claims a voucher_id points at a real, still-existing voucher", async () => {
+    const rows = await sql(`
+      select l.id, l.template_id, l.voucher_id from recurring_voucher_generation_log l
+       where l.voucher_id is not null and not exists (select 1 from vouchers v where v.id = l.voucher_id)
+    `);
+    expect(rows, `a generation-log row references a voucher that no longer exists:\n${offenders(rows)}`).toEqual([]);
+  });
+
+  it("every active template's next_run_date is on or after its own start_date", async () => {
+    const rows = await sql(`
+      select id, template_name, start_date, next_run_date from recurring_voucher_templates
+       where is_active and next_run_date < start_date
+    `);
+    expect(rows, `a template's next_run_date precedes its own start_date:\n${offenders(rows)}`).toEqual([]);
+  });
+});
+
+// ---------------------------------------------------------------------------
 // Needs fixtures. Seeded database only — never the live project.
 // ---------------------------------------------------------------------------
 describe.skip("post_gst_setoff, post_deferred_tax [needs seed]", () => {

@@ -2677,6 +2677,74 @@ export type Database = {
           },
         ]
       }
+      income_tax_statement_lines: {
+        Row: {
+          amount_paid_credited: number
+          company_id: string
+          created_at: string
+          deductor_name: string | null
+          deductor_tan: string | null
+          deductor_tan_normalized: string | null
+          financial_year_label: string
+          id: string
+          information_category: string | null
+          section_code: string | null
+          source: string
+          status_of_booking: string | null
+          tax_deducted: number
+          tax_deposited: number
+          transaction_date: string | null
+          transaction_type: string
+          uploaded_by: string | null
+        }
+        Insert: {
+          amount_paid_credited?: number
+          company_id: string
+          created_at?: string
+          deductor_name?: string | null
+          deductor_tan?: string | null
+          deductor_tan_normalized?: string | null
+          financial_year_label: string
+          id?: string
+          information_category?: string | null
+          section_code?: string | null
+          source: string
+          status_of_booking?: string | null
+          tax_deducted?: number
+          tax_deposited?: number
+          transaction_date?: string | null
+          transaction_type?: string
+          uploaded_by?: string | null
+        }
+        Update: {
+          amount_paid_credited?: number
+          company_id?: string
+          created_at?: string
+          deductor_name?: string | null
+          deductor_tan?: string | null
+          deductor_tan_normalized?: string | null
+          financial_year_label?: string
+          id?: string
+          information_category?: string | null
+          section_code?: string | null
+          source?: string
+          status_of_booking?: string | null
+          tax_deducted?: number
+          tax_deposited?: number
+          transaction_date?: string | null
+          transaction_type?: string
+          uploaded_by?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "income_tax_statement_lines_company_id_fkey"
+            columns: ["company_id"]
+            isOneToOne: false
+            referencedRelation: "companies"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       item_batches: {
         Row: {
           batch_no: string
@@ -3111,6 +3179,7 @@ export type Database = {
           relationship_type: string | null
           sec43b_category: string | null
           state_code: string | null
+          tan: string | null
           udyam_number: string | null
           updated_at: string
         }
@@ -3153,6 +3222,7 @@ export type Database = {
           relationship_type?: string | null
           sec43b_category?: string | null
           state_code?: string | null
+          tan?: string | null
           udyam_number?: string | null
           updated_at?: string
         }
@@ -3195,6 +3265,7 @@ export type Database = {
           relationship_type?: string | null
           sec43b_category?: string | null
           state_code?: string | null
+          tan?: string | null
           udyam_number?: string | null
           updated_at?: string
         }
@@ -3718,6 +3789,102 @@ export type Database = {
           },
         ]
       }
+      price_list_items: {
+        Row: {
+          company_id: string
+          created_at: string
+          created_by: string | null
+          effective_from: string
+          id: string
+          item_id: string
+          price: number
+          price_list_id: string
+        }
+        Insert: {
+          company_id: string
+          created_at?: string
+          created_by?: string | null
+          effective_from?: string
+          id?: string
+          item_id: string
+          price: number
+          price_list_id: string
+        }
+        Update: {
+          company_id?: string
+          created_at?: string
+          created_by?: string | null
+          effective_from?: string
+          id?: string
+          item_id?: string
+          price?: number
+          price_list_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "price_list_items_company_id_fkey"
+            columns: ["company_id"]
+            isOneToOne: false
+            referencedRelation: "companies"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "price_list_items_item_id_company_id_fkey"
+            columns: ["item_id", "company_id"]
+            isOneToOne: false
+            referencedRelation: "items"
+            referencedColumns: ["id", "company_id"]
+          },
+          {
+            foreignKeyName: "price_list_items_price_list_id_company_id_fkey"
+            columns: ["price_list_id", "company_id"]
+            isOneToOne: false
+            referencedRelation: "price_lists"
+            referencedColumns: ["id", "company_id"]
+          },
+        ]
+      }
+      price_lists: {
+        Row: {
+          company_id: string
+          created_at: string
+          created_by: string | null
+          id: string
+          is_active: boolean
+          is_default: boolean
+          name: string
+          updated_at: string
+        }
+        Insert: {
+          company_id: string
+          created_at?: string
+          created_by?: string | null
+          id?: string
+          is_active?: boolean
+          is_default?: boolean
+          name: string
+          updated_at?: string
+        }
+        Update: {
+          company_id?: string
+          created_at?: string
+          created_by?: string | null
+          id?: string
+          is_active?: boolean
+          is_default?: boolean
+          name?: string
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "price_lists_company_id_fkey"
+            columns: ["company_id"]
+            isOneToOne: false
+            referencedRelation: "companies"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       profiles: {
         Row: {
           avatar_url: string | null
@@ -3738,6 +3905,195 @@ export type Database = {
           id?: string
         }
         Relationships: []
+      }
+      recurring_voucher_generation_log: {
+        Row: {
+          company_id: string
+          generated_at: string
+          generated_by: string | null
+          id: string
+          run_date: string
+          template_id: string
+          voucher_id: string | null
+        }
+        Insert: {
+          company_id: string
+          generated_at?: string
+          generated_by?: string | null
+          id?: string
+          run_date: string
+          template_id: string
+          voucher_id?: string | null
+        }
+        Update: {
+          company_id?: string
+          generated_at?: string
+          generated_by?: string | null
+          id?: string
+          run_date?: string
+          template_id?: string
+          voucher_id?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "recurring_voucher_generation_log_company_id_fkey"
+            columns: ["company_id"]
+            isOneToOne: false
+            referencedRelation: "companies"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "recurring_voucher_generation_log_template_id_company_id_fkey"
+            columns: ["template_id", "company_id"]
+            isOneToOne: false
+            referencedRelation: "recurring_voucher_templates"
+            referencedColumns: ["id", "company_id"]
+          },
+          {
+            foreignKeyName: "recurring_voucher_generation_log_voucher_id_fkey"
+            columns: ["voucher_id"]
+            isOneToOne: false
+            referencedRelation: "vouchers"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      recurring_voucher_template_lines: {
+        Row: {
+          company_id: string
+          credit_amount: number
+          debit_amount: number
+          id: string
+          ledger_id: string
+          line_order: number
+          narration: string | null
+          template_id: string
+        }
+        Insert: {
+          company_id: string
+          credit_amount?: number
+          debit_amount?: number
+          id?: string
+          ledger_id: string
+          line_order?: number
+          narration?: string | null
+          template_id: string
+        }
+        Update: {
+          company_id?: string
+          credit_amount?: number
+          debit_amount?: number
+          id?: string
+          ledger_id?: string
+          line_order?: number
+          narration?: string | null
+          template_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "recurring_voucher_template_lines_company_id_fkey"
+            columns: ["company_id"]
+            isOneToOne: false
+            referencedRelation: "companies"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "recurring_voucher_template_lines_ledger_id_company_id_fkey"
+            columns: ["ledger_id", "company_id"]
+            isOneToOne: false
+            referencedRelation: "ledgers"
+            referencedColumns: ["id", "company_id"]
+          },
+          {
+            foreignKeyName: "recurring_voucher_template_lines_template_id_company_id_fkey"
+            columns: ["template_id", "company_id"]
+            isOneToOne: false
+            referencedRelation: "recurring_voucher_templates"
+            referencedColumns: ["id", "company_id"]
+          },
+        ]
+      }
+      recurring_voucher_templates: {
+        Row: {
+          branch_id: string
+          company_id: string
+          created_at: string
+          created_by: string | null
+          day_of_month: number
+          end_date: string | null
+          frequency: string
+          id: string
+          is_active: boolean
+          narration_template: string | null
+          next_run_date: string
+          party_ledger_id: string | null
+          start_date: string
+          template_name: string
+          updated_at: string
+          updated_by: string | null
+          voucher_type: string
+        }
+        Insert: {
+          branch_id: string
+          company_id: string
+          created_at?: string
+          created_by?: string | null
+          day_of_month: number
+          end_date?: string | null
+          frequency: string
+          id?: string
+          is_active?: boolean
+          narration_template?: string | null
+          next_run_date: string
+          party_ledger_id?: string | null
+          start_date: string
+          template_name: string
+          updated_at?: string
+          updated_by?: string | null
+          voucher_type: string
+        }
+        Update: {
+          branch_id?: string
+          company_id?: string
+          created_at?: string
+          created_by?: string | null
+          day_of_month?: number
+          end_date?: string | null
+          frequency?: string
+          id?: string
+          is_active?: boolean
+          narration_template?: string | null
+          next_run_date?: string
+          party_ledger_id?: string | null
+          start_date?: string
+          template_name?: string
+          updated_at?: string
+          updated_by?: string | null
+          voucher_type?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "recurring_voucher_templates_branch_id_company_id_fkey"
+            columns: ["branch_id", "company_id"]
+            isOneToOne: false
+            referencedRelation: "branches"
+            referencedColumns: ["id", "company_id"]
+          },
+          {
+            foreignKeyName: "recurring_voucher_templates_company_id_fkey"
+            columns: ["company_id"]
+            isOneToOne: false
+            referencedRelation: "companies"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "recurring_voucher_templates_party_ledger_id_company_id_fkey"
+            columns: ["party_ledger_id", "company_id"]
+            isOneToOne: false
+            referencedRelation: "ledgers"
+            referencedColumns: ["id", "company_id"]
+          },
+        ]
       }
       ref_depreciation_blocks_it: {
         Row: {
@@ -4511,11 +4867,14 @@ export type Database = {
       voucher_items: {
         Row: {
           amount: number
+          amount_before_discount: number | null
           branch_id: string
           company_id: string
           created_at: string
           description: string | null
           direction: string
+          discount_amount: number | null
+          discount_percent: number
           godown_id: string
           hsn_sac: string | null
           id: string
@@ -4529,11 +4888,14 @@ export type Database = {
         }
         Insert: {
           amount?: number
+          amount_before_discount?: number | null
           branch_id: string
           company_id: string
           created_at?: string
           description?: string | null
           direction: string
+          discount_amount?: number | null
+          discount_percent?: number
           godown_id: string
           hsn_sac?: string | null
           id?: string
@@ -4547,11 +4909,14 @@ export type Database = {
         }
         Update: {
           amount?: number
+          amount_before_discount?: number | null
           branch_id?: string
           company_id?: string
           created_at?: string
           description?: string | null
           direction?: string
+          discount_amount?: number | null
+          discount_percent?: number
           godown_id?: string
           hsn_sac?: string | null
           id?: string
@@ -5033,6 +5398,22 @@ export type Database = {
         }
         Returns: string
       }
+      create_recurring_voucher_template: {
+        Args: {
+          p_branch_id: string
+          p_company_id: string
+          p_day_of_month: number
+          p_end_date?: string
+          p_frequency: string
+          p_lines: Json
+          p_narration_template?: string
+          p_party_ledger_id?: string
+          p_start_date: string
+          p_template_name: string
+          p_voucher_type: string
+        }
+        Returns: string
+      }
       create_voucher: {
         Args: {
           p_branch_id: string
@@ -5094,6 +5475,21 @@ export type Database = {
           id: string
           total_amount: number
           voucher_date: string
+          voucher_number: string
+        }[]
+      }
+      generate_due_recurring_vouchers: {
+        Args: {
+          p_as_of?: string
+          p_company_id: string
+          p_template_ids?: string[]
+        }
+        Returns: {
+          run_date: string
+          status: string
+          template_id: string
+          template_name: string
+          voucher_id: string
           voucher_number: string
         }[]
       }
@@ -5560,6 +5956,15 @@ export type Database = {
           valid_from: string
           valid_to: string
         }[]
+      }
+      get_effective_item_price: {
+        Args: {
+          p_as_of_date?: string
+          p_company_id: string
+          p_item_id: string
+          p_price_list_id?: string
+        }
+        Returns: number
       }
       get_esi_mc_data: {
         Args: { p_company_id: string; p_period_month: string }
@@ -6081,6 +6486,57 @@ export type Database = {
           tax_head: string
           tax_payable: number
           tds_tcs_credit: number
+        }[]
+      }
+      get_gstr9_table4_5: {
+        Args: {
+          p_company_id: string
+          p_fy_end: string
+          p_fy_start: string
+          p_gst_registration_id: string
+        }
+        Returns: {
+          cess: number
+          cgst: number
+          description: string
+          igst: number
+          note: string
+          row_code: string
+          sgst: number
+          table_ref: string
+          tax_total: number
+          taxable_value: number
+        }[]
+      }
+      get_gstr9_table8: {
+        Args: {
+          p_company_id: string
+          p_fy_end: string
+          p_fy_start: string
+          p_gst_registration_id: string
+        }
+        Returns: {
+          description: string
+          document_count: number
+          note: string
+          row_code: string
+          tax_total: number
+          taxable_value: number
+        }[]
+      }
+      get_gstr9c_turnover_reconciliation: {
+        Args: {
+          p_company_id: string
+          p_fy_end: string
+          p_fy_start: string
+          p_gst_registration_id: string
+        }
+        Returns: {
+          books_other_income: number
+          books_revenue_from_operations: number
+          difference: number
+          gst_workpaper_turnover: number
+          note: string
         }[]
       }
       get_income_tax_computation: {
@@ -6673,6 +7129,24 @@ export type Database = {
           short_term_capital_loss: number
         }[]
       }
+      get_tcs_collectee_summary: {
+        Args: {
+          p_company_id: string
+          p_financial_year_label: string
+          p_quarter: number
+        }
+        Returns: {
+          collectee_ledger_id: string
+          collectee_name: string
+          pan: string
+          party_ledger_movement: number
+          section_code: string
+          section_description: string
+          section_rate_percent: number
+          tcs_collected: number
+          voucher_count: number
+        }[]
+      }
       get_tds_deductee_summary: {
         Args: {
           p_company_id: string
@@ -6805,6 +7279,15 @@ export type Database = {
         }
         Returns: number
       }
+      import_income_tax_statement_lines: {
+        Args: {
+          p_company_id: string
+          p_financial_year_label: string
+          p_lines: Json
+          p_source: string
+        }
+        Returns: number
+      }
       list_gstr2b_periods: {
         Args: { p_company_id: string }
         Returns: {
@@ -6813,6 +7296,42 @@ export type Database = {
           line_count: number
           return_period: string
           uploaded_at: string
+        }[]
+      }
+      list_income_tax_statement_periods: {
+        Args: { p_company_id: string }
+        Returns: {
+          financial_year_label: string
+          line_count: number
+          source: string
+          tan_count: number
+          uploaded_at: string
+        }[]
+      }
+      list_recurring_voucher_templates: {
+        Args: { p_company_id: string }
+        Returns: {
+          branch_id: string
+          branch_name: string
+          day_of_month: number
+          end_date: string
+          frequency: string
+          id: string
+          is_active: boolean
+          is_due: boolean
+          last_run_date: string
+          last_run_voucher_id: string
+          last_run_voucher_number: string
+          line_count: number
+          lines: Json
+          narration_template: string
+          next_run_date: string
+          party_ledger_id: string
+          party_ledger_name: string
+          start_date: string
+          template_amount: number
+          template_name: string
+          voucher_type: string
         }[]
       }
       mark_notification_sent: {
@@ -6850,6 +7369,25 @@ export type Database = {
           voucher_date: string
           voucher_id: string
           voucher_number: string
+        }[]
+      }
+      match_income_tax_statement_tds_receivable: {
+        Args: {
+          p_company_id: string
+          p_financial_year_label: string
+          p_source: string
+        }
+        Returns: {
+          amount_difference: number
+          amount_paid_credited_statement: number
+          bucket: string
+          deductor_name: string
+          deductor_tan: string
+          ledger_id: string
+          ledger_name: string
+          tax_deducted_statement: number
+          tax_deposited_statement: number
+          tds_receivable_register: number
         }[]
       }
       post_closing_stock: {
@@ -6992,6 +7530,10 @@ export type Database = {
         }
         Returns: undefined
       }
+      set_recurring_voucher_template_active: {
+        Args: { p_is_active: boolean; p_template_id: string }
+        Returns: undefined
+      }
       unmatch_bank_line: {
         Args: { p_statement_line_id: string }
         Returns: undefined
@@ -7008,6 +7550,17 @@ export type Database = {
           p_trading_ledger_id: string
           p_voucher_date: string
           p_voucher_id: string
+        }
+        Returns: string
+      }
+      update_recurring_voucher_template: {
+        Args: {
+          p_end_date?: string
+          p_lines: Json
+          p_narration_template?: string
+          p_party_ledger_id?: string
+          p_template_id: string
+          p_template_name: string
         }
         Returns: string
       }
