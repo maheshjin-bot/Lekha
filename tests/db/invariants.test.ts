@@ -4446,6 +4446,42 @@ describeDb(`GSTR-3B Table 5.1 interest and late fee (${hasDb ? "live" : noDbReas
 });
 
 // ---------------------------------------------------------------------------
+// anon EXECUTE allowlist (0231) — mirrors the companies column-grant
+// allowlist test above: a permanent trip-wire so a future function that
+// forgets `revoke ... from public, anon` (the exact bug 0064 hit for write
+// RPCs, and every plain `revoke ... from anon` alone is a no-op against,
+// since anon inherits EXECUTE through its implicit PUBLIC membership) fails
+// loudly in CI instead of quietly reopening an internal RPC to anon.
+//
+// Every one of these six is a deliberate, narrowly-scoped exception:
+//   api_get_dashboard_kpis, api_get_trial_balance   — 0063 public-API-key-gated
+//   get_signature_request_by_token,
+//   record_signed_document_by_token                 — 0575 token-gated external-signer RPCs
+//   signature_request_source_doc_visible,
+//   signature_request_signer_upload_allowed          — 0660 storage-policy helpers anon
+//                                                       genuinely needs to invoke
+// Anything else in public/app_private granting anon EXECUTE is a regression.
+// ---------------------------------------------------------------------------
+describeDb(`anon EXECUTE allowlist (${hasDb ? "live" : noDbReason})`, () => {
+  it("no public/app_private function grants EXECUTE to anon outside the explicit allowlist", async () => {
+    const allowlist = [
+      "api_get_dashboard_kpis",
+      "api_get_trial_balance",
+      "get_signature_request_by_token",
+      "record_signed_document_by_token",
+      "signature_request_source_doc_visible",
+      "signature_request_signer_upload_allowed",
+    ];
+    const rows = await sql(`
+      select routine_schema, routine_name from information_schema.routine_privileges
+       where grantee = 'anon' and routine_schema in ('public', 'app_private')
+         and routine_name != all(array[${allowlist.map((n) => `'${n}'`).join(", ")}])
+    `);
+    expect(rows, `a function outside the allowlist grants anon EXECUTE:\n${offenders(rows)}`).toEqual([]);
+  });
+});
+
+// ---------------------------------------------------------------------------
 // Needs fixtures. Seeded database only — never the live project.
 // ---------------------------------------------------------------------------
 describe.skip("post_gst_setoff, post_deferred_tax [needs seed]", () => {
