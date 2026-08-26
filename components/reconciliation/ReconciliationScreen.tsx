@@ -6,6 +6,13 @@ import Papa from "papaparse";
 import { createClient } from "@/lib/supabase/client";
 import { describeDate, inferDateOrder, type DateOrder } from "@/lib/csv/coerce";
 import { buildBankPreview, type BankCsvRow, type ExistingLine } from "@/lib/csv/bank-import";
+import {
+  BANK_FORMATS,
+  detectBankFormat,
+  getBankFormat,
+  mapRowToCanonical,
+  type BankFormatId,
+} from "@/lib/csv/bank-format-adapters";
 import { formatINR } from "@/lib/utils/currency";
 
 type Summary = {
@@ -34,12 +41,35 @@ type Line = {
   credit_amount: number;
 };
 
-const TEMPLATE = [
-  "Date,Description,Reference,Debit,Credit",
-  "01/04/2026,Inward transfer,UTR8827,,5000.00",
-  "02/04/2026,Cheque 000451,,2000.00,",
-  "03/04/2026,Bank charges,,150.00,",
-].join("\n");
+// One downloadable sample per adapter, in that bank's own real column
+// layout — see lib/csv/bank-format-adapters.ts for the sourcing behind
+// each layout. "generic" is this app's own pre-existing template.
+const SAMPLE_CSV: Record<BankFormatId, string> = {
+  generic: [
+    "Date,Description,Reference,Debit,Credit",
+    "01/04/2026,Inward transfer,UTR8827,,5000.00",
+    "02/04/2026,Cheque 000451,,2000.00,",
+    "03/04/2026,Bank charges,,150.00,",
+  ].join("\n"),
+  hdfc_netbanking: [
+    "Date,Narration,Chq./Ref.No.,Value Dt,Withdrawal Amt.,Deposit Amt.,Closing Balance",
+    "01/04/2026,NEFT-UTR8827-ABC TRADERS,UTR8827,01/04/2026,,5000.00,55000.00",
+    "02/04/2026,CHQ PAID 000451,000451,02/04/2026,2000.00,,53000.00",
+    "03/04/2026,BANK CHARGES,,03/04/2026,150.00,,52850.00",
+  ].join("\n"),
+  icici_netbanking: [
+    "Value Date,Transaction Date,Cheque Number,Transaction Remarks,Transaction Type,Amount (INR),Balance (INR)",
+    "01-04-2026,01-04-2026,UTR8827,NEFT INWARD ABC TRADERS,Cr,5000.00,55000.00",
+    "02-04-2026,02-04-2026,000451,CHEQUE PAID,Dr,2000.00,53000.00",
+    "03-04-2026,03-04-2026,,BANK CHARGES,Dr,150.00,52850.00",
+  ].join("\n"),
+  axis_netbanking: [
+    "Tran Date,Value Date,Transaction Particulars,Chq No,Amount(in Rs.),DR/CR,Balance(in Rs.)",
+    "01-04-2026,01-04-2026,NEFT INWARD ABC TRADERS,UTR8827,5000.00,CR,55000.00",
+    "02-04-2026,02-04-2026,CHEQUE PAID,000451,2000.00,DR,53000.00",
+    "03-04-2026,03-04-2026,BANK CHARGES,,150.00,DR,52850.00",
+  ].join("\n"),
+};
 
 export function ReconciliationScreen({
   companyId,
@@ -67,18 +97,30 @@ export function ReconciliationScreen({
 
   // ---- import ---------------------------------------------------------
   const [rawRows, setRawRows] = useState<BankCsvRow[]>([]);
+  const [formatId, setFormatId] = useState<BankFormatId>("generic");
+  const [detectedFormatId, setDetectedFormatId] = useState<BankFormatId | null>(null);
   const [dateOrder, setDateOrder] = useState<DateOrder>("dmy");
   const [orderConfirmed, setOrderConfirmed] = useState(false);
-  const [importResult, setImportResult] = useState<{ imported: number } | null>(null);
+  const [importResult, setImportResult] = useState<{ imported: number; skipped: number } | null>(null);
+
+  const format = useMemo(() => getBankFormat(formatId), [formatId]);
 
   const inference = useMemo(
-    () => (rawRows.length ? inferDateOrder(rawRows.map((r) => findCol(r, "date"))) : null),
-    [rawRows]
+    () => (rawRows.length ? inferDateOrder(rawRows.map((r) => mapRowToCanonical(r, format).date)) : null),
+    [rawRows, format]
   );
   const preview = useMemo(
-    () => (rawRows.length ? buildBankPreview(rawRows, dateOrder, existingLines) : null),
-    [rawRows, dateOrder, existingLines]
+    () => (rawRows.length ? buildBankPreview(rawRows, dateOrder, format, existingLines) : null),
+    [rawRows, dateOrder, format, existingLines]
   );
+
+  // Recomputes date-order inference for whichever format is now selected —
+  // a different format can mean a different date column entirely.
+  function reinferDateOrder(rows: BankCsvRow[], fmt = format) {
+    const inf = inferDateOrder(rows.map((r) => mapRowToCanonical(r, fmt).date));
+    setDateOrder(inf.order);
+    setOrderConfirmed(inf.certain);
+  }
 
   function onFile(file: File) {
     setImportResult(null);
@@ -88,11 +130,27 @@ export function ReconciliationScreen({
       skipEmptyLines: "greedy",
       complete: (out) => {
         setRawRows(out.data);
-        const inf = inferDateOrder(out.data.map((r) => findCol(r, "date")));
-        setDateOrder(inf.order);
-        setOrderConfirmed(inf.certain);
+        // Auto-detect from the header row to prefill the picker below, but
+        // never silently commit to a guess: the dropdown always shows what
+        // was picked (detected or defaulted to "generic"), it stays fully
+        // editable, and the preview table re-renders live off whatever is
+        // selected — the same "infer, then let the file's own preview
+        // confirm or refute it" approach this screen already uses for date
+        // order, chosen over a silent auto-detect-only because picking the
+        // wrong bank format can flip which column is debit and which is
+        // credit, which is a worse failure than asking.
+        const detected = detectBankFormat(out.meta.fields ?? []);
+        setDetectedFormatId(detected);
+        const fmt = getBankFormat(detected ?? "generic");
+        setFormatId(fmt.id);
+        reinferDateOrder(out.data, fmt);
       },
     });
+  }
+
+  function onFormatChange(id: BankFormatId) {
+    setFormatId(id);
+    if (rawRows.length) reinferDateOrder(rawRows, getBankFormat(id));
   }
 
   async function commitImport() {
@@ -101,9 +159,19 @@ export function ReconciliationScreen({
     if (!good.length) return;
 
     setBusy(true);
-    const { error } = await createClient()
-      .from("bank_statement_lines")
-      .insert(
+    // ignoreDuplicates -> ON CONFLICT (company_id, ledger_id,
+    // external_txn_id) DO NOTHING. Re-uploading the identical file a
+    // second time reproduces the identical external_txn_id per row (see
+    // computeExternalTxnId), so every row conflicts and is silently
+    // skipped rather than duplicated — .select() then returns only the
+    // rows that were ACTUALLY inserted, which is how imported/skipped
+    // below are told apart.
+    // source_format/external_txn_id (0164) predate the generated types
+    // being refreshed — same "as any" escape hatch the manufacturing/backup
+    // code already uses for a column/table ahead of codegen.
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const { data, error } = (await (createClient().from("bank_statement_lines") as any)
+      .upsert(
         good.map((r) => ({
           company_id: companyId,
           ledger_id: ledgerId,
@@ -112,15 +180,20 @@ export function ReconciliationScreen({
           reference: r.reference,
           debit_amount: r.side === "debit" ? r.amount! : 0,
           credit_amount: r.side === "credit" ? r.amount! : 0,
-        }))
-      );
+          source_format: formatId,
+          external_txn_id: r.externalTxnId,
+        })),
+        { onConflict: "company_id,ledger_id,external_txn_id", ignoreDuplicates: true }
+      )
+      .select("id")) as { data: { id: string }[] | null; error: { message: string } | null };
 
     if (error) {
       setError(error.message);
       setBusy(false);
       return;
     }
-    setImportResult({ imported: good.length });
+    const imported = data?.length ?? 0;
+    setImportResult({ imported, skipped: good.length - imported });
     setRawRows([]);
     if (fileRef.current) fileRef.current.value = "";
     setBusy(false);
@@ -228,6 +301,20 @@ export function ReconciliationScreen({
 
       {/* ---- import ---------------------------------------------------- */}
       <div className="mt-6 flex flex-wrap items-center gap-3">
+        <label className="flex items-center gap-2 text-sm">
+          <span className="font-medium">Bank format</span>
+          <select
+            value={formatId}
+            onChange={(e) => onFormatChange(e.target.value as BankFormatId)}
+            className={field}
+          >
+            {BANK_FORMATS.map((f) => (
+              <option key={f.id} value={f.id}>
+                {f.label}
+              </option>
+            ))}
+          </select>
+        </label>
         <input
           ref={fileRef}
           type="file"
@@ -238,16 +325,16 @@ export function ReconciliationScreen({
         <button
           type="button"
           onClick={() => {
-            const url = URL.createObjectURL(new Blob([TEMPLATE], { type: "text/csv" }));
+            const url = URL.createObjectURL(new Blob([SAMPLE_CSV[formatId]], { type: "text/csv" }));
             const a = document.createElement("a");
             a.href = url;
-            a.download = "lekha-bank-statement-template.csv";
+            a.download = `lekha-bank-statement-${formatId}-sample.csv`;
             a.click();
             URL.revokeObjectURL(url);
           }}
           className="text-sm text-accent underline underline-offset-4"
         >
-          Download template
+          Download sample for this format
         </button>
         <button
           type="button"
@@ -258,6 +345,14 @@ export function ReconciliationScreen({
           Auto-match exact same-day amounts
         </button>
       </div>
+
+      {rawRows.length > 0 && (
+        <p className="mt-2 text-xs text-ink-faint">
+          {detectedFormatId
+            ? `Detected as ${getBankFormat(detectedFormatId).label} from the file's own column headers.`
+            : "Could not confidently detect the bank format from this file's headers — check the format above is right before importing; the preview below will show wrong amounts or a wrong debit/credit side if it isn't."}
+        </p>
+      )}
 
       {autoMatchedJustNow !== null && (
         <p className="mt-2 text-sm text-ink-soft">
@@ -270,6 +365,8 @@ export function ReconciliationScreen({
       {importResult && (
         <p className="mt-2 rounded-md bg-success-soft px-3 py-2 text-sm text-success">
           Imported {importResult.imported} line{importResult.imported === 1 ? "" : "s"}.
+          {importResult.skipped > 0 &&
+            ` Skipped ${importResult.skipped} already imported earlier (same statement re-uploaded).`}
         </p>
       )}
 
@@ -435,11 +532,4 @@ export function ReconciliationScreen({
       )}
     </div>
   );
-}
-
-function findCol(row: BankCsvRow, header: string): string {
-  for (const [k, v] of Object.entries(row)) {
-    if (k.trim().toLowerCase() === header) return String(v ?? "");
-  }
-  return "";
 }

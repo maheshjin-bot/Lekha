@@ -51,11 +51,14 @@ export default async function ReconciliationPage({
         .eq("ledger_id", ledgerId)
         .is("matched_entry_id", null)
         .order("txn_date"),
-      supabase
-        .from("bank_statement_lines")
-        .select("txn_date, description, debit_amount, credit_amount")
+      // external_txn_id (0164) predates the generated types being
+      // refreshed — same "as any" escape hatch the manufacturing/backup
+      // code already uses for a column/table ahead of codegen.
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      (supabase.from("bank_statement_lines") as any)
+        .select("external_txn_id")
         .eq("company_id", companyId)
-        .eq("ledger_id", ledgerId),
+        .eq("ledger_id", ledgerId) as Promise<{ data: { external_txn_id: string }[] | null }>,
     ]);
 
   // The unmatched-entries query can't filter matched_entry_id from here (it
@@ -104,10 +107,7 @@ export default async function ReconciliationPage({
           credit_amount: Number(l.credit_amount),
         }))}
         existingLines={(existingLines ?? []).map((l) => ({
-          txnDate: l.txn_date,
-          description: l.description,
-          debit: Number(l.debit_amount),
-          credit: Number(l.credit_amount),
+          externalTxnId: l.external_txn_id,
         }))}
       />
     </main>

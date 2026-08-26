@@ -3,13 +3,20 @@
  * grouping, since a statement line stands alone — but it reuses the same
  * amount and date coercion, because a bank export is exactly as likely to
  * carry Indian digit grouping and an ambiguous date order as a voucher file.
+ *
+ * Column layout is no longer hardcoded here. A BankFormatDef (see
+ * bank-format-adapters.ts) maps whatever headers the file actually has onto
+ * the canonical 5-field shape this module has always worked with, so
+ * everything below is unchanged in spirit from before that layer existed.
  */
 import { normalizeName } from "@/lib/csv/normalize";
 import { parseAmount, parseDate, type DateOrder } from "@/lib/csv/coerce";
+import { type BankFormatDef, mapRowToCanonical, computeExternalTxnId } from "@/lib/csv/bank-format-adapters";
 
 export type BankCsvRow = Record<string, string>;
 
-export type ExistingLine = { txnDate: string; description: string | null; debit: number; credit: number };
+/** externalTxnId is the same fingerprint commitImport writes as bank_statement_lines.external_txn_id. */
+export type ExistingLine = { externalTxnId: string | null };
 
 export type BankRowResult = {
   rowNumber: number;
@@ -19,43 +26,38 @@ export type BankRowResult = {
   side: "debit" | "credit" | null;
   amount: number | null;
   issues: string[];
-  /** Not an error — a same date/description/amount row already on file. */
+  /** The idempotency key this row would be inserted with — see computeExternalTxnId. */
+  externalTxnId: string;
+  /** Not an error — a line with this exact fingerprint is already on file. Re-importing skips it (see commitImport's upsert). */
   possibleDuplicate: boolean;
 };
-
-const COLUMNS = { date: "date", description: "description", reference: "reference", debit: "debit", credit: "credit" };
-
-function pick(row: BankCsvRow, header: string): string {
-  for (const [k, v] of Object.entries(row)) {
-    if (k.trim().toLowerCase() === header) return (v ?? "").trim();
-  }
-  return "";
-}
 
 export function buildBankPreview(
   rawRows: BankCsvRow[],
   dateOrder: DateOrder,
+  format: BankFormatDef,
   existing: ExistingLine[]
 ): BankRowResult[] {
-  const existingKeys = new Set(
-    existing.map(
-      (e) => `${e.txnDate}|${normalizeName(e.description)}|${e.debit.toFixed(2)}|${e.credit.toFixed(2)}`
-    )
-  );
+  const existingIds = new Set(existing.map((e) => e.externalTxnId).filter((x): x is string => !!x));
+  // Occurrence index per identical-looking (date, description, reference,
+  // debit, credit) tuple within THIS file — see computeExternalTxnId for
+  // why this is what makes re-uploading an identical file idempotent.
+  const seenCounts = new Map<string, number>();
 
   return rawRows.map((raw, i) => {
     const rowNumber = i + 2;
     const issues: string[] = [];
 
-    const dateRaw = pick(raw, COLUMNS.date);
-    const date = parseDate(dateRaw, dateOrder);
-    if (!date) issues.push(dateRaw ? `"${dateRaw}" is not a valid date.` : "Date is required.");
+    const canon = mapRowToCanonical(raw, format);
 
-    const description = pick(raw, COLUMNS.description) || null;
-    const reference = pick(raw, COLUMNS.reference) || null;
+    const date = parseDate(canon.date, dateOrder);
+    if (!date) issues.push(canon.date ? `"${canon.date}" is not a valid date.` : "Date is required.");
 
-    const debitRaw = pick(raw, COLUMNS.debit);
-    const creditRaw = pick(raw, COLUMNS.credit);
+    const description = canon.description || null;
+    const reference = canon.reference || null;
+
+    const debitRaw = canon.debitRaw;
+    const creditRaw = canon.creditRaw;
     const debit = debitRaw ? parseAmount(debitRaw) : null;
     const credit = creditRaw ? parseAmount(creditRaw) : null;
 
@@ -76,14 +78,23 @@ export function buildBankPreview(
       issues.push("Either a debit or a credit amount is required.");
     }
 
-    const possibleDuplicate =
-      date !== null &&
-      amount !== null &&
-      side !== null &&
-      existingKeys.has(
-        `${date}|${normalizeName(description)}|${side === "debit" ? amount.toFixed(2) : "0.00"}|${side === "credit" ? amount.toFixed(2) : "0.00"}`
-      );
+    const groupKey = `${date ?? ""}|${normalizeName(description)}|${normalizeName(reference)}|${(side === "debit" ? amount : 0)?.toFixed(2) ?? "0.00"}|${(side === "credit" ? amount : 0)?.toFixed(2) ?? "0.00"}`;
+    const occurrenceIndex = seenCounts.get(groupKey) ?? 0;
+    seenCounts.set(groupKey, occurrenceIndex + 1);
 
-    return { rowNumber, date, description, reference, side, amount, issues, possibleDuplicate };
+    const externalTxnId = computeExternalTxnId(
+      {
+        date: date ?? "",
+        description: description ?? "",
+        reference: reference ?? "",
+        debit: side === "debit" ? (amount ?? 0) : 0,
+        credit: side === "credit" ? (amount ?? 0) : 0,
+      },
+      occurrenceIndex
+    );
+
+    const possibleDuplicate = issues.length === 0 && existingIds.has(externalTxnId);
+
+    return { rowNumber, date, description, reference, side, amount, issues, externalTxnId, possibleDuplicate };
   });
 }
