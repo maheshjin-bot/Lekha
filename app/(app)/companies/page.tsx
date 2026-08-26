@@ -1,15 +1,17 @@
 import Link from "next/link";
 import { Lock } from "lucide-react";
 import { createClient } from "@/lib/supabase/server";
+import { callRpc } from "@/lib/supabase/rpc";
 import { NewCompanyDialog } from "@/components/companies/NewCompanyDialog";
 import { SignOutButton } from "@/components/auth/SignOutButton";
+import { SendAllPendingButton, type PendingSummaryRow } from "@/components/notifications/SendAllPendingButton";
 
 export default async function CompaniesPage() {
   const supabase = await createClient();
 
   // RLS scopes this to companies the signed-in user is an active member of —
   // there is no company_id filter here because there does not need to be.
-  const [{ data: companies }, { data: entityTypes }, { data: states }] =
+  const [{ data: companies }, { data: entityTypes }, { data: states }, { data: pendingSummary }] =
     await Promise.all([
       supabase
         .from("companies")
@@ -22,6 +24,12 @@ export default async function CompaniesPage() {
         .eq("is_active", true)
         .not("jurisdiction", "eq", "other")
         .order("name"),
+      // get_pending_notification_summary (0167) predates the next
+      // regeneration of types/database.types.ts (a file this task must not
+      // touch — see AGENTS.md), so it's called through callRpc's untyped
+      // overload rather than the typed supabase.rpc(...) call, same as
+      // every other brand-new RPC in this shared tree right now.
+      callRpc<Record<string, never>, PendingSummaryRow[]>(supabase, "get_pending_notification_summary", {}),
     ]);
 
   return (
@@ -38,6 +46,8 @@ export default async function CompaniesPage() {
           <SignOutButton />
         </div>
       </header>
+
+      <SendAllPendingButton summary={pendingSummary ?? []} />
 
       {companies && companies.length > 0 ? (
         <ul className="divide-y divide-border rounded-lg border border-border bg-surface">
