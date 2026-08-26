@@ -18,6 +18,8 @@ type Payment = {
   challan_serial: string | null;
   challan_reference: string | null;
   tds_section: string | null;
+  period_start: string | null;
+  period_end: string | null;
 };
 
 const TAX_TYPE_LABEL: Record<string, string> = {
@@ -52,6 +54,8 @@ export function TaxPaymentManager({
   const [challanSerial, setChallanSerial] = useState("");
   const [challanReference, setChallanReference] = useState("");
   const [tdsSection, setTdsSection] = useState("");
+  const [periodStart, setPeriodStart] = useState("");
+  const [periodEnd, setPeriodEnd] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -63,6 +67,12 @@ export function TaxPaymentManager({
     e.preventDefault();
     setBusy(true);
     setError(null);
+
+    if (isGst && Boolean(periodStart) !== Boolean(periodEnd)) {
+      setBusy(false);
+      setError("Return period: set both the start and end date, or leave both blank.");
+      return;
+    }
 
     const { error } = await createClient()
       .from("tax_payments")
@@ -78,6 +88,8 @@ export function TaxPaymentManager({
         challan_serial: challanSerial.trim() || null,
         challan_reference: challanReference.trim() || null,
         tds_section: isTdsOrTcs ? tdsSection.trim() || null : null,
+        period_start: isGst ? periodStart || null : null,
+        period_end: isGst ? periodEnd || null : null,
       });
 
     setBusy(false);
@@ -90,6 +102,8 @@ export function TaxPaymentManager({
     setChallanSerial("");
     setChallanReference("");
     setTdsSection("");
+    setPeriodStart("");
+    setPeriodEnd("");
     router.refresh();
   }
 
@@ -191,7 +205,7 @@ export function TaxPaymentManager({
           )}
 
           {isGst && (
-            <label className="flex flex-col gap-1.5 sm:col-span-2">
+            <label className="flex flex-col gap-1.5">
               <span className="text-xs text-ink-faint">CIN / BRN</span>
               <input
                 value={challanReference}
@@ -199,6 +213,29 @@ export function TaxPaymentManager({
                 className={field + " font-mono"}
               />
             </label>
+          )}
+
+          {isGst && (
+            <>
+              <label className="flex flex-col gap-1.5">
+                <span className="text-xs text-ink-faint">Return period from</span>
+                <input
+                  type="date"
+                  value={periodStart}
+                  onChange={(e) => setPeriodStart(e.target.value)}
+                  className={field}
+                />
+              </label>
+              <label className="flex flex-col gap-1.5">
+                <span className="text-xs text-ink-faint">Return period to</span>
+                <input
+                  type="date"
+                  value={periodEnd}
+                  onChange={(e) => setPeriodEnd(e.target.value)}
+                  className={field}
+                />
+              </label>
+            </>
           )}
 
           {isTdsOrTcs && (
@@ -259,7 +296,14 @@ export function TaxPaymentManager({
                     <div className="text-xs text-ink-faint">Sec {p.tds_section}</div>
                   )}
                 </td>
-                <td className="px-4 py-2">{p.financial_year_label}</td>
+                <td className="px-4 py-2">
+                  {p.financial_year_label}
+                  {p.period_start && p.period_end && (
+                    <div className="text-xs text-ink-faint">
+                      Period {p.period_start} to {p.period_end}
+                    </div>
+                  )}
+                </td>
                 <td className="px-4 py-2">{p.payment_date}</td>
                 <td className="px-4 py-2 font-mono text-xs">
                   {p.challan_reference

@@ -79,6 +79,29 @@ type Table61Row = {
   late_fee_payable: number;
 };
 
+type Table51Row = {
+  tax_head: "igst" | "cgst" | "sgst" | "cess";
+  cash_tax_payable: number;
+  filing_frequency: string;
+  qrmp_category: string | null;
+  return_period_start: string;
+  return_period_end: string;
+  due_date: string;
+  matched_payment_count: number;
+  matched_payment_total: number;
+  settlement_date: string | null;
+  is_provisional: boolean;
+  days_late: number;
+  interest_rate_percent: number;
+  interest_amount: number;
+  is_nil_return_proxy: boolean;
+  late_fee_rate_per_day: number;
+  turnover_preceding_fy: number;
+  late_fee_cap: number;
+  late_fee_amount: number | null;
+  note: string;
+};
+
 const HEAD_LABEL: Record<string, string> = {
   igst: "Integrated tax (IGST)",
   cgst: "Central tax (CGST)",
@@ -146,7 +169,11 @@ export default async function Gstr3bPrepPage({
     );
   }
 
-  const [{ data: t4Rows, error: t4Error }, { data: t61Rows, error: t61Error }] = await Promise.all([
+  const [
+    { data: t4Rows, error: t4Error },
+    { data: t61Rows, error: t61Error },
+    { data: t51Rows, error: t51Error },
+  ] = await Promise.all([
     supabase.rpc("get_gstr3b_table4", {
       p_company_id: companyId,
       p_gst_registration_id: regId,
@@ -159,12 +186,19 @@ export default async function Gstr3bPrepPage({
       p_period_start: from,
       p_period_end: to,
     }),
+    supabase.rpc("get_gstr3b_table5_1", {
+      p_company_id: companyId,
+      p_gst_registration_id: regId,
+      p_period_start: from,
+      p_period_end: to,
+    }),
   ]);
 
   const t4 = (Array.isArray(t4Rows) ? t4Rows[0] : t4Rows) as Table4 | undefined;
   const t61 = (t61Rows ?? []) as Table61Row[];
+  const t51 = (t51Rows ?? []) as Table51Row[];
   const base = `/${companyId}/reports/gstr3b-prep`;
-  const error = t4Error ?? t61Error;
+  const error = t4Error ?? t61Error ?? t51Error;
 
   const totalCashPayable = t61.reduce((n, r) => n + Number(r.cash_tax_payable), 0);
   const totalTaxPayable = t61.reduce((n, r) => n + Number(r.tax_payable), 0);
@@ -212,8 +246,9 @@ export default async function Gstr3bPrepPage({
         <strong className="text-ink">Tables 3.1 and 3.2 are not shown here.</strong> Outward
         supplies and inter-State supplies to unregistered persons/composition dealers/UIN holders
         are portal-auto-populated from GSTR-1 and locked for edit once GSTR-1 is filed for the
-        period — there is nothing for LEKHA to prepare there. This screen covers only Table 4 (ITC)
-        and Table 6.1 (payment of tax), the two tables a filer actually needs source figures for.
+        period — there is nothing for LEKHA to prepare there. This screen covers Table 4 (ITC),
+        Table 5.1 (interest and late fee) and Table 6.1 (payment of tax) — the tables a filer
+        actually needs source figures for.
       </div>
 
       {error && (
@@ -400,23 +435,117 @@ export default async function Gstr3bPrepPage({
             </tbody>
           </table>
 
-          <div className="border-t border-border p-4">
-            <h2 className="font-semibold">Table 5.1 — Interest and late fee: not computed</h2>
-            <p className="mt-1 text-xs text-ink-faint">
-              Sec 50(1) interest (18% p.a., on the net tax actually paid through the cash ledger —
-              proviso inserted by the Finance Act 2019, retrospective from 1 July 2017 per
-              Notification 16/2021-CT) and Sec 47(1) late fee (₹50/day standard, ₹20/day for a NIL
-              return, turnover-capped) both need each GST challan matched to the SPECIFIC return
-              period it settles, checked against that period&rsquo;s own due date (20th of the
-              following month for a monthly filer — QRMP&rsquo;s 22nd/24th dates are not modelled,
-              LEKHA has no QRMP election flag). <Link href={`/${companyId}/tax-payments`} className="underline">Tax payments</Link>{" "}
-              records a payment date and financial year for a GST challan, but not which month or
-              quarter&rsquo;s liability it settles — so a payment cannot be matched to a due date
-              reliably, and a guessed match would be presented with false confidence. Shipped as an
-              explicit gap rather than an approximate number; see the underlying migration for what
-              schema change would make this reliably computable.
-            </p>
+          <div className="border-b border-t border-border p-4">
+            <h2 className="font-semibold">Table 5.1 — Interest and late fee</h2>
+            {t51.length > 0 && (
+              <p className="mt-0.5 text-xs text-ink-faint">
+                Sec 50(1) interest (18% p.a., daily basis, on the net cash liability) and Sec 47(1)
+                late fee (₹50/day, ₹20/day for a nil-return proxy, turnover-capped), for the return
+                period {t51[0].return_period_start} to {t51[0].return_period_end} (
+                {t51[0].filing_frequency === "qrmp"
+                  ? `QRMP, Category ${t51[0].qrmp_category}`
+                  : "monthly filer"}
+                ), due {t51[0].due_date}
+                {t51[0].return_period_start !== from || t51[0].return_period_end !== to ? (
+                  <>
+                    {" "}
+                    — this registration files quarterly, so the actual return period differs from
+                    the calendar month selected above.
+                  </>
+                ) : null}
+                . Matched against{" "}
+                <Link href={`/${companyId}/tax-payments`} className="underline">
+                  tax payments
+                </Link>{" "}
+                tagged with this exact period.
+              </p>
+            )}
           </div>
+          {t51.length > 0 && (
+            <>
+              <table className="w-full min-w-[900px] text-sm">
+                <thead>
+                  <tr className="border-b border-border text-left">
+                    <th className={th}>Head</th>
+                    <th className={th + " text-right"}>Cash tax payable</th>
+                    <th className={th}>Settlement date</th>
+                    <th className={th + " text-right"}>Days late</th>
+                    <th className={th + " text-right"}>Interest (a)</th>
+                    <th className={th + " text-right"}>Late fee (b)</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {t51.map((r) => (
+                    <tr key={r.tax_head} className="border-b border-border last:border-0">
+                      <td className={td + " font-medium"}>{HEAD_LABEL[r.tax_head]}</td>
+                      <td className={num}>{formatINR(r.cash_tax_payable, { showZero: true })}</td>
+                      <td className={td}>
+                        {r.settlement_date ?? "—"}
+                        {r.is_provisional && (
+                          <div className="text-xs text-warning">provisional, as if paid today</div>
+                        )}
+                        {!r.is_provisional && r.matched_payment_count > 1 && (
+                          <div className="text-xs text-ink-faint">
+                            {r.matched_payment_count} challans, latest date used
+                          </div>
+                        )}
+                      </td>
+                      <td className={num}>{r.days_late}</td>
+                      <td className={num + (r.interest_amount > 0 ? " font-semibold text-warning" : "")}>
+                        {formatINR(r.interest_amount, { showZero: true })}
+                      </td>
+                      <td className={num + ((r.late_fee_amount ?? 0) > 0 ? " font-semibold text-warning" : "")}>
+                        {r.late_fee_amount === null ? "—" : formatINR(r.late_fee_amount, { showZero: true })}
+                      </td>
+                    </tr>
+                  ))}
+                  <tr className="bg-bg font-semibold">
+                    <td className={td}>Total</td>
+                    <td className={num}>
+                      {formatINR(t51.reduce((n, r) => n + Number(r.cash_tax_payable), 0), { showZero: true })}
+                    </td>
+                    <td className={td} colSpan={2}></td>
+                    <td className={num}>
+                      {formatINR(t51.reduce((n, r) => n + Number(r.interest_amount), 0), { showZero: true })}
+                    </td>
+                    <td className={num}>
+                      {formatINR(
+                        t51.reduce((n, r) => n + Number(r.late_fee_amount ?? 0), 0),
+                        { showZero: true }
+                      )}
+                    </td>
+                  </tr>
+                </tbody>
+              </table>
+              <div className="border-t border-border px-4 py-3 text-xs text-ink-faint">
+                {t51[0].matched_payment_count > 0 ? (
+                  <p>
+                    {t51[0].matched_payment_count} challan(s) tagged to this period, totalling{" "}
+                    {formatINR(t51[0].matched_payment_total, { showZero: true })}
+                    {Math.abs(t51[0].matched_payment_total - t51.reduce((n, r) => n + Number(r.cash_tax_payable), 0)) > 1 && (
+                      <> — this differs from the computed net cash liability above; interest and late fee are based on the computed liability, not the challan total.</>
+                    )}
+                    .
+                  </p>
+                ) : (
+                  <p>
+                    No challan is tagged to this exact period yet on{" "}
+                    <Link href={`/${companyId}/tax-payments`} className="underline">
+                      Tax payments
+                    </Link>
+                    {t51.some((r) => r.cash_tax_payable > 0) &&
+                      " — the figures above are provisional, computed as if paid today, and will keep growing until a challan is recorded and tagged."}
+                  </p>
+                )}
+                <p className="mt-2">
+                  {t51[0].is_nil_return_proxy
+                    ? "Treated as a NIL return for the late-fee rate (no outward supply, no ITC claimed, no RCM liability accrued this period, by proxy — Table 3.1/3.2 are not built here, see note below)."
+                    : `Turnover in the preceding financial year (this registration only): ${formatINR(t51[0].turnover_preceding_fy, { showZero: true })}, late-fee cap ${formatINR(t51[0].late_fee_cap, { showZero: true })}.`}
+                </p>
+                <p className="mt-2">{t51[0].note}</p>
+              </div>
+            </>
+          )}
         </>
       )}
     </ReportShell>

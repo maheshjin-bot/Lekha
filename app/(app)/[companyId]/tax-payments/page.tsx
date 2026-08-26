@@ -21,7 +21,7 @@ export default async function TaxPaymentsPage({
   const { data: payments } = await supabase
     .from("tax_payments")
     .select(
-      "id, tax_type, minor_head, financial_year_label, payment_date, amount, bsr_code, challan_serial, challan_reference, tds_section"
+      "id, tax_type, minor_head, financial_year_label, payment_date, amount, bsr_code, challan_serial, challan_reference, tds_section, period_start, period_end"
     )
     .eq("company_id", companyId)
     .order("payment_date", { ascending: false });
@@ -59,6 +59,19 @@ export default async function TaxPaymentsPage({
         TDS that your <em>customers</em> deducted from your receipts is different again — post that
         to the TDS Receivable ledger on the receipt voucher (Dr Bank, Dr TDS Receivable, Cr the
         customer) and it is credited automatically.
+      </p>
+      <p className="border-t border-border px-4 py-3 text-xs text-ink-faint">
+        For a <strong className="font-medium text-ink">GST</strong> challan, tagging the{" "}
+        <strong className="font-medium text-ink">return period from/to</strong> dates lets{" "}
+        <Link href={`/${companyId}/reports/gstr3b-prep`} className="underline">
+          GSTR-3B Table 5.1
+        </Link>{" "}
+        match this payment against the correct due date and compute Sec 50(1) interest and Sec
+        47(1) late fee for that specific period. Use the calendar month for a monthly filer (e.g. 1
+        to 30 Sep), or the full quarter for a QRMP filer (e.g. 1 Apr to 30 Jun). Left blank, this
+        challan is not matched to any period and Table 5.1 will not see it. Existing challans
+        recorded before this field existed are not backfilled with a guessed period — there was no
+        reliable way to infer one.
       </p>
     </ReportShell>
   );
