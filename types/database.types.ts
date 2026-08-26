@@ -10,7 +10,7 @@ export type Database = {
   // Allows to automatically instantiate createClient with right options
   // instead of createClient<Database, { PostgrestVersion: 'XX' }>(URL, KEY)
   __InternalSupabase: {
-    PostgrestVersion: "14.15"
+    PostgrestVersion: "14.17"
   }
   public: {
     Tables: {
@@ -710,12 +710,14 @@ export type Database = {
           credit_amount: number
           debit_amount: number
           description: string | null
+          external_txn_id: string
           id: string
           ledger_id: string
           matched_at: string | null
           matched_by: string | null
           matched_entry_id: string | null
           reference: string | null
+          source_format: string
           txn_date: string
         }
         Insert: {
@@ -724,12 +726,14 @@ export type Database = {
           credit_amount?: number
           debit_amount?: number
           description?: string | null
+          external_txn_id: string
           id?: string
           ledger_id: string
           matched_at?: string | null
           matched_by?: string | null
           matched_entry_id?: string | null
           reference?: string | null
+          source_format?: string
           txn_date: string
         }
         Update: {
@@ -738,12 +742,14 @@ export type Database = {
           credit_amount?: number
           debit_amount?: number
           description?: string | null
+          external_txn_id?: string
           id?: string
           ledger_id?: string
           matched_at?: string | null
           matched_by?: string | null
           matched_entry_id?: string | null
           reference?: string | null
+          source_format?: string
           txn_date?: string
         }
         Relationships: [
@@ -1945,6 +1951,69 @@ export type Database = {
           },
         ]
       }
+      einvoice_details: {
+        Row: {
+          ack_date: string | null
+          ack_number: string | null
+          company_id: string
+          created_at: string
+          created_by: string | null
+          generated_at: string | null
+          generated_json: Json | null
+          id: string
+          irn: string | null
+          signed_qr_payload: string | null
+          status: string
+          updated_at: string
+          voucher_id: string
+        }
+        Insert: {
+          ack_date?: string | null
+          ack_number?: string | null
+          company_id: string
+          created_at?: string
+          created_by?: string | null
+          generated_at?: string | null
+          generated_json?: Json | null
+          id?: string
+          irn?: string | null
+          signed_qr_payload?: string | null
+          status?: string
+          updated_at?: string
+          voucher_id: string
+        }
+        Update: {
+          ack_date?: string | null
+          ack_number?: string | null
+          company_id?: string
+          created_at?: string
+          created_by?: string | null
+          generated_at?: string | null
+          generated_json?: Json | null
+          id?: string
+          irn?: string | null
+          signed_qr_payload?: string | null
+          status?: string
+          updated_at?: string
+          voucher_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "einvoice_details_company_id_fkey"
+            columns: ["company_id"]
+            isOneToOne: false
+            referencedRelation: "companies"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "einvoice_details_voucher_id_company_id_fkey"
+            columns: ["voucher_id", "company_id"]
+            isOneToOne: false
+            referencedRelation: "vouchers"
+            referencedColumns: ["id", "company_id"]
+          },
+        ]
+      }
       employee_exit_settlements: {
         Row: {
           bonus_amount: number
@@ -2244,6 +2313,103 @@ export type Database = {
             isOneToOne: false
             referencedRelation: "companies"
             referencedColumns: ["id"]
+          },
+        ]
+      }
+      ewb_details: {
+        Row: {
+          approx_distance_km: number | null
+          company_id: string
+          created_at: string
+          created_by: string | null
+          ewb_generated_date: string | null
+          ewb_number: string | null
+          ewb_valid_until: string | null
+          id: string
+          ship_to_address: string | null
+          ship_to_gstin: string | null
+          ship_to_name: string | null
+          ship_to_pincode: string | null
+          ship_to_state_code: string | null
+          status: string
+          transport_doc_date: string | null
+          transport_doc_number: string | null
+          transport_mode: string
+          transporter_id: string | null
+          transporter_name: string | null
+          updated_at: string
+          vehicle_number: string | null
+          voucher_id: string
+        }
+        Insert: {
+          approx_distance_km?: number | null
+          company_id: string
+          created_at?: string
+          created_by?: string | null
+          ewb_generated_date?: string | null
+          ewb_number?: string | null
+          ewb_valid_until?: string | null
+          id?: string
+          ship_to_address?: string | null
+          ship_to_gstin?: string | null
+          ship_to_name?: string | null
+          ship_to_pincode?: string | null
+          ship_to_state_code?: string | null
+          status?: string
+          transport_doc_date?: string | null
+          transport_doc_number?: string | null
+          transport_mode?: string
+          transporter_id?: string | null
+          transporter_name?: string | null
+          updated_at?: string
+          vehicle_number?: string | null
+          voucher_id: string
+        }
+        Update: {
+          approx_distance_km?: number | null
+          company_id?: string
+          created_at?: string
+          created_by?: string | null
+          ewb_generated_date?: string | null
+          ewb_number?: string | null
+          ewb_valid_until?: string | null
+          id?: string
+          ship_to_address?: string | null
+          ship_to_gstin?: string | null
+          ship_to_name?: string | null
+          ship_to_pincode?: string | null
+          ship_to_state_code?: string | null
+          status?: string
+          transport_doc_date?: string | null
+          transport_doc_number?: string | null
+          transport_mode?: string
+          transporter_id?: string | null
+          transporter_name?: string | null
+          updated_at?: string
+          vehicle_number?: string | null
+          voucher_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "ewb_details_company_id_fkey"
+            columns: ["company_id"]
+            isOneToOne: false
+            referencedRelation: "companies"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "ewb_details_ship_to_state_code_fkey"
+            columns: ["ship_to_state_code"]
+            isOneToOne: false
+            referencedRelation: "ref_states"
+            referencedColumns: ["code"]
+          },
+          {
+            foreignKeyName: "ewb_details_voucher_id_company_id_fkey"
+            columns: ["voucher_id", "company_id"]
+            isOneToOne: false
+            referencedRelation: "vouchers"
+            referencedColumns: ["id", "company_id"]
           },
         ]
       }
@@ -2587,6 +2753,81 @@ export type Database = {
             isOneToOne: false
             referencedRelation: "ref_states"
             referencedColumns: ["code"]
+          },
+        ]
+      }
+      gst_tds_tcs_suffered: {
+        Row: {
+          cgst_amount: number
+          claimed_in_gstr3b: boolean
+          company_id: string
+          created_at: string
+          created_by: string | null
+          deductor_or_operator_gstin: string
+          deductor_or_operator_name: string
+          financial_year_label: string
+          gst_registration_id: string
+          id: string
+          igst_amount: number
+          notes: string | null
+          period_label: string
+          sgst_amount: number
+          source_type: string
+          taxable_value: number
+          updated_at: string
+        }
+        Insert: {
+          cgst_amount?: number
+          claimed_in_gstr3b?: boolean
+          company_id: string
+          created_at?: string
+          created_by?: string | null
+          deductor_or_operator_gstin: string
+          deductor_or_operator_name: string
+          financial_year_label: string
+          gst_registration_id: string
+          id?: string
+          igst_amount?: number
+          notes?: string | null
+          period_label: string
+          sgst_amount?: number
+          source_type: string
+          taxable_value?: number
+          updated_at?: string
+        }
+        Update: {
+          cgst_amount?: number
+          claimed_in_gstr3b?: boolean
+          company_id?: string
+          created_at?: string
+          created_by?: string | null
+          deductor_or_operator_gstin?: string
+          deductor_or_operator_name?: string
+          financial_year_label?: string
+          gst_registration_id?: string
+          id?: string
+          igst_amount?: number
+          notes?: string | null
+          period_label?: string
+          sgst_amount?: number
+          source_type?: string
+          taxable_value?: number
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "gst_tds_tcs_suffered_company_id_fkey"
+            columns: ["company_id"]
+            isOneToOne: false
+            referencedRelation: "companies"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "gst_tds_tcs_suffered_gst_registration_id_company_id_fkey"
+            columns: ["gst_registration_id", "company_id"]
+            isOneToOne: false
+            referencedRelation: "gst_registrations"
+            referencedColumns: ["id", "company_id"]
           },
         ]
       }
@@ -3166,6 +3407,7 @@ export type Database = {
           ldc_rate: number | null
           ldc_valid_from: string | null
           ldc_valid_to: string | null
+          ledger_role: string | null
           msme_category: string | null
           msme_payment_days: number | null
           name: string
@@ -3209,6 +3451,7 @@ export type Database = {
           ldc_rate?: number | null
           ldc_valid_from?: string | null
           ldc_valid_to?: string | null
+          ledger_role?: string | null
           msme_category?: string | null
           msme_payment_days?: number | null
           name: string
@@ -3252,6 +3495,7 @@ export type Database = {
           ldc_rate?: number | null
           ldc_valid_from?: string | null
           ldc_valid_to?: string | null
+          ledger_role?: string | null
           msme_category?: string | null
           msme_payment_days?: number | null
           name?: string
@@ -4221,6 +4465,27 @@ export type Database = {
         }
         Relationships: []
       }
+      ref_income_tax_slabs_old_regime: {
+        Row: {
+          from_rupees: number
+          rate_percent: number
+          sort_order: number
+          to_rupees: number
+        }
+        Insert: {
+          from_rupees: number
+          rate_percent: number
+          sort_order: number
+          to_rupees: number
+        }
+        Update: {
+          from_rupees?: number
+          rate_percent?: number
+          sort_order?: number
+          to_rupees?: number
+        }
+        Relationships: []
+      }
       ref_modules: {
         Row: {
           activates_when: Json | null
@@ -4531,6 +4796,120 @@ export type Database = {
           },
         ]
       }
+      signature_request_signers: {
+        Row: {
+          company_id: string
+          created_at: string
+          decline_reason: string | null
+          has_embedded_signature: boolean | null
+          id: string
+          request_id: string
+          sign_order: number
+          signature_check_note: string | null
+          signed_at: string | null
+          signed_document_id: string | null
+          signer_email: string
+          signer_name: string
+          status: string
+          updated_at: string
+        }
+        Insert: {
+          company_id: string
+          created_at?: string
+          decline_reason?: string | null
+          has_embedded_signature?: boolean | null
+          id?: string
+          request_id: string
+          sign_order: number
+          signature_check_note?: string | null
+          signed_at?: string | null
+          signed_document_id?: string | null
+          signer_email: string
+          signer_name: string
+          status?: string
+          updated_at?: string
+        }
+        Update: {
+          company_id?: string
+          created_at?: string
+          decline_reason?: string | null
+          has_embedded_signature?: boolean | null
+          id?: string
+          request_id?: string
+          sign_order?: number
+          signature_check_note?: string | null
+          signed_at?: string | null
+          signed_document_id?: string | null
+          signer_email?: string
+          signer_name?: string
+          status?: string
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "signature_request_signers_company_id_fkey"
+            columns: ["company_id"]
+            isOneToOne: false
+            referencedRelation: "companies"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "signature_request_signers_request_id_company_id_fkey"
+            columns: ["request_id", "company_id"]
+            isOneToOne: false
+            referencedRelation: "signature_requests"
+            referencedColumns: ["id", "company_id"]
+          },
+          {
+            foreignKeyName: "signature_request_signers_signed_document_id_company_id_fkey"
+            columns: ["signed_document_id", "company_id"]
+            isOneToOne: false
+            referencedRelation: "documents"
+            referencedColumns: ["id", "company_id"]
+          },
+        ]
+      }
+      signature_requests: {
+        Row: {
+          company_id: string
+          created_at: string
+          created_by: string | null
+          description: string | null
+          id: string
+          status: string
+          title: string
+          updated_at: string
+        }
+        Insert: {
+          company_id: string
+          created_at?: string
+          created_by?: string | null
+          description?: string | null
+          id?: string
+          status?: string
+          title: string
+          updated_at?: string
+        }
+        Update: {
+          company_id?: string
+          created_at?: string
+          created_by?: string | null
+          description?: string | null
+          id?: string
+          status?: string
+          title?: string
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "signature_requests_company_id_fkey"
+            columns: ["company_id"]
+            isOneToOne: false
+            referencedRelation: "companies"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       statutory_rules: {
         Row: {
           attrs: Json
@@ -4618,6 +4997,109 @@ export type Database = {
         }
         Relationships: []
       }
+      stock_verifications: {
+        Row: {
+          adjustment_voucher_id: string | null
+          average_rate: number
+          batch_id: string | null
+          book_quantity: number
+          branch_id: string
+          company_id: string
+          created_at: string
+          created_by: string | null
+          godown_id: string
+          id: string
+          item_id: string
+          notes: string | null
+          physical_quantity: number
+          updated_at: string
+          variance_quantity: number
+          variance_value: number
+          verification_date: string
+        }
+        Insert: {
+          adjustment_voucher_id?: string | null
+          average_rate?: number
+          batch_id?: string | null
+          book_quantity: number
+          branch_id: string
+          company_id: string
+          created_at?: string
+          created_by?: string | null
+          godown_id: string
+          id?: string
+          item_id: string
+          notes?: string | null
+          physical_quantity: number
+          updated_at?: string
+          variance_quantity?: number
+          variance_value?: number
+          verification_date: string
+        }
+        Update: {
+          adjustment_voucher_id?: string | null
+          average_rate?: number
+          batch_id?: string | null
+          book_quantity?: number
+          branch_id?: string
+          company_id?: string
+          created_at?: string
+          created_by?: string | null
+          godown_id?: string
+          id?: string
+          item_id?: string
+          notes?: string | null
+          physical_quantity?: number
+          updated_at?: string
+          variance_quantity?: number
+          variance_value?: number
+          verification_date?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "stock_verifications_adjustment_voucher_id_company_id_fkey"
+            columns: ["adjustment_voucher_id", "company_id"]
+            isOneToOne: false
+            referencedRelation: "vouchers"
+            referencedColumns: ["id", "company_id"]
+          },
+          {
+            foreignKeyName: "stock_verifications_batch_id_company_id_fkey"
+            columns: ["batch_id", "company_id"]
+            isOneToOne: false
+            referencedRelation: "item_batches"
+            referencedColumns: ["id", "company_id"]
+          },
+          {
+            foreignKeyName: "stock_verifications_branch_id_company_id_fkey"
+            columns: ["branch_id", "company_id"]
+            isOneToOne: false
+            referencedRelation: "branches"
+            referencedColumns: ["id", "company_id"]
+          },
+          {
+            foreignKeyName: "stock_verifications_company_id_fkey"
+            columns: ["company_id"]
+            isOneToOne: false
+            referencedRelation: "companies"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "stock_verifications_godown_id_company_id_fkey"
+            columns: ["godown_id", "company_id"]
+            isOneToOne: false
+            referencedRelation: "godowns"
+            referencedColumns: ["id", "company_id"]
+          },
+          {
+            foreignKeyName: "stock_verifications_item_id_company_id_fkey"
+            columns: ["item_id", "company_id"]
+            isOneToOne: false
+            referencedRelation: "items"
+            referencedColumns: ["id", "company_id"]
+          },
+        ]
+      }
       tax_ledger_map: {
         Row: {
           company_id: string
@@ -4682,6 +5164,8 @@ export type Database = {
           minor_head: string | null
           notes: string | null
           payment_date: string
+          period_end: string | null
+          period_start: string | null
           tax_type: string
           tds_section: string | null
           updated_at: string
@@ -4701,6 +5185,8 @@ export type Database = {
           minor_head?: string | null
           notes?: string | null
           payment_date: string
+          period_end?: string | null
+          period_start?: string | null
           tax_type: string
           tds_section?: string | null
           updated_at?: string
@@ -4720,6 +5206,8 @@ export type Database = {
           minor_head?: string | null
           notes?: string | null
           payment_date?: string
+          period_end?: string | null
+          period_start?: string | null
           tax_type?: string
           tds_section?: string | null
           updated_at?: string
@@ -5238,6 +5726,12 @@ export type Database = {
         Args: { p_company_id: string; p_ledger_id: string }
         Returns: number
       }
+      build_einvoice_json: { Args: { p_voucher_id: string }; Returns: Json }
+      build_ewb_json: { Args: { p_voucher_id: string }; Returns: Json }
+      cancel_signature_request: {
+        Args: { p_request_id: string }
+        Returns: undefined
+      }
       close_period: {
         Args: { p_company_id: string; p_lock_date: string }
         Returns: undefined
@@ -5439,6 +5933,10 @@ export type Database = {
           voucher_id: string
         }[]
       }
+      decline_signer: {
+        Args: { p_reason?: string; p_request_id: string; p_signer_id: string }
+        Returns: undefined
+      }
       delete_company: { Args: { p_company_id: string }; Returns: undefined }
       delete_voucher: {
         Args: { p_company_id: string; p_voucher_id: string }
@@ -5461,6 +5959,10 @@ export type Database = {
         Returns: string
       }
       ensure_manufacturing_clearing_ledger: {
+        Args: { p_company_id: string }
+        Returns: string
+      }
+      ensure_stock_verification_adjustment_ledger: {
         Args: { p_company_id: string }
         Returns: string
       }
@@ -5966,6 +6468,39 @@ export type Database = {
         }
         Returns: number
       }
+      get_einvoice_applicability: {
+        Args: { p_as_of?: string; p_company_id: string }
+        Returns: {
+          current_fy_label: string
+          current_fy_turnover_to_date: number
+          fy_breakdown: Json
+          highest_completed_fy_label: string
+          highest_completed_fy_turnover: number
+          is_applicable: boolean
+          note: string
+          threshold_amount: number
+          triggering_fy_label: string
+          triggering_fy_turnover: number
+        }[]
+      }
+      get_einvoice_status: {
+        Args: { p_company_id: string; p_from?: string; p_to?: string }
+        Returns: {
+          ack_date: string
+          einvoice_id: string
+          generated_at: string
+          irn: string
+          party_gstin: string
+          party_name: string
+          status: string
+          supply_type: string
+          total_amount: number
+          voucher_date: string
+          voucher_id: string
+          voucher_number: string
+          voucher_type: string
+        }[]
+      }
       get_esi_mc_data: {
         Args: { p_company_id: string; p_period_month: string }
         Returns: {
@@ -5978,6 +6513,35 @@ export type Database = {
           reason_code: number
           reason_label: string
           total_monthly_wages: number
+        }[]
+      }
+      get_ewb_requirement: {
+        Args: { p_voucher_id: string }
+        Returns: {
+          consignment_value: number
+          is_ewb_required: boolean
+          taxable_value: number
+          threshold_amount: number
+          total_gst_tax: number
+          voucher_id: string
+        }[]
+      }
+      get_ewb_status: {
+        Args: { p_company_id: string }
+        Returns: {
+          consignment_value: number
+          ewb_generated_date: string
+          ewb_id: string
+          ewb_number: string
+          ewb_valid_until: string
+          is_ewb_required: boolean
+          party_name: string
+          status: string
+          transport_mode: string
+          vehicle_number: string
+          voucher_date: string
+          voucher_id: string
+          voucher_number: string
         }[]
       }
       get_exim_realisation_status: {
@@ -6083,6 +6647,63 @@ export type Database = {
           value_numeric: number
           value_text: string
           value_type: string
+        }[]
+      }
+      get_form16_partb: {
+        Args: {
+          p_company_id: string
+          p_employee_id: string
+          p_financial_year_label: string
+        }
+        Returns: {
+          basic_total: number
+          dearness_allowance_total: number
+          declaration_date: string
+          declaration_exists: boolean
+          declared_regime: string
+          deduction_80c_allowed: number
+          deduction_80c_claimed: number
+          deduction_80d_allowed: number
+          deduction_80d_claimed: number
+          employee_id: string
+          employee_name: string
+          financial_year_label: string
+          form_label: string
+          gross_salary: number
+          home_loan_interest_24b_allowed: number
+          home_loan_interest_24b_claimed: number
+          hra_exemption_claimed: number
+          hra_total: number
+          is_fy_complete: boolean
+          months_with_payroll_data: number
+          net_tax_payable: number
+          new_cess: number
+          new_income_chargeable_salary: number
+          new_net_tax_payable: number
+          new_rebate_87a: number
+          new_surcharge: number
+          new_tax_before_rebate: number
+          new_taxable_income: number
+          old_cess: number
+          old_chapter_via_deductions: number
+          old_gross_total_income: number
+          old_income_chargeable_salary: number
+          old_net_tax_payable: number
+          old_rebate_87a: number
+          old_surcharge: number
+          old_tax_before_rebate: number
+          old_taxable_income: number
+          other_allowance_total: number
+          pan: string
+          period_from: string
+          period_to: string
+          perquisites_value: number
+          previous_employer_income: number
+          previous_employer_tds_deducted: number
+          professional_tax_total: number
+          regime_used: string
+          special_allowance_total: number
+          tds_deposited_per_payroll_projection: number
         }[]
       }
       get_general_sec43b_dues: {
@@ -6268,6 +6889,27 @@ export type Database = {
           row_kind: string
           step: number
           tax_head: string
+        }[]
+      }
+      get_gst_tds_tcs_suffered_summary: {
+        Args: {
+          p_company_id: string
+          p_financial_year_label?: string
+          p_gst_registration_id?: string
+        }
+        Returns: {
+          cgst_total: number
+          claimed_count: number
+          deductor_or_operator_gstin: string
+          deductor_or_operator_name: string
+          entry_count: number
+          igst_total: number
+          sgst_total: number
+          source_type: string
+          taxable_value_total: number
+          total_credit: number
+          unclaimed_count: number
+          unclaimed_credit: number
         }[]
       }
       get_gstr1_hsn_summary: {
@@ -6465,6 +7107,36 @@ export type Database = {
           d2_ineligible_16_4_and_pos: number
           exempt_turnover_ratio: number
           note: string
+        }[]
+      }
+      get_gstr3b_table5_1: {
+        Args: {
+          p_company_id: string
+          p_gst_registration_id: string
+          p_period_end: string
+          p_period_start: string
+        }
+        Returns: {
+          cash_tax_payable: number
+          days_late: number
+          due_date: string
+          filing_frequency: string
+          interest_amount: number
+          interest_rate_percent: number
+          is_nil_return_proxy: boolean
+          is_provisional: boolean
+          late_fee_amount: number
+          late_fee_cap: number
+          late_fee_rate_per_day: number
+          matched_payment_count: number
+          matched_payment_total: number
+          note: string
+          qrmp_category: string
+          return_period_end: string
+          return_period_start: string
+          settlement_date: string
+          tax_head: string
+          turnover_preceding_fy: number
         }[]
       }
       get_gstr3b_table6_1: {
@@ -6875,6 +7547,14 @@ export type Database = {
           to_email: string
         }[]
       }
+      get_pending_notification_summary: {
+        Args: never
+        Returns: {
+          company_id: string
+          company_name: string
+          pending_count: number
+        }[]
+      }
       get_pf_ecr_data: {
         Args: { p_company_id: string; p_period_month: string }
         Returns: {
@@ -6904,6 +7584,7 @@ export type Database = {
           amount: number
           group_name: string
           ledger_name: string
+          ledger_role: string
           nature: string
           section: string
         }[]
@@ -6927,6 +7608,7 @@ export type Database = {
         Args: { p_company_id: string; p_fy_end: string; p_fy_start: string }
         Returns: {
           closing_quantity: number
+          excess_quantity: number
           hsn_sac: string
           is_principal_item: boolean
           item_id: string
@@ -6934,7 +7616,9 @@ export type Database = {
           opening_quantity: number
           purchases_quantity: number
           sales_quantity: number
+          shortage_quantity: number
           uom: string
+          verified_as_at: string
         }[]
       }
       get_related_party_note: {
@@ -7080,6 +7764,43 @@ export type Database = {
           total_minimum_bonus: number
         }[]
       }
+      get_stock_ageing: {
+        Args: { p_as_at?: string; p_company_id: string; p_godown_id?: string }
+        Returns: {
+          average_rate: number
+          closing_quantity: number
+          item_id: string
+          item_name: string
+          qty_0_30: number
+          qty_181_365: number
+          qty_31_60: number
+          qty_61_90: number
+          qty_91_180: number
+          qty_over_365: number
+          uom: string
+          val_0_30: number
+          val_181_365: number
+          val_31_60: number
+          val_61_90: number
+          val_91_180: number
+          val_over_365: number
+        }[]
+      }
+      get_stock_fifo_layers: {
+        Args: { p_as_at?: string; p_company_id: string; p_godown_id?: string }
+        Returns: {
+          hsn_sac: string
+          item_id: string
+          item_name: string
+          layer_date: string
+          layer_source: string
+          layer_value: number
+          original_quantity: number
+          quantity_remaining: number
+          unit_cost: number
+          uom: string
+        }[]
+      }
       get_stock_summary: {
         Args: { p_as_at?: string; p_company_id: string; p_godown_id?: string }
         Returns: {
@@ -7092,6 +7813,44 @@ export type Database = {
           quantity_in: number
           quantity_out: number
           uom: string
+        }[]
+      }
+      get_stock_summary_fifo: {
+        Args: { p_as_at?: string; p_company_id: string; p_godown_id?: string }
+        Returns: {
+          average_rate: number
+          closing_quantity: number
+          closing_value: number
+          hsn_sac: string
+          item_id: string
+          item_name: string
+          quantity_in: number
+          quantity_out: number
+          unpriced_quantity: number
+          uom: string
+        }[]
+      }
+      get_stock_verifications: {
+        Args: { p_company_id: string; p_from_date?: string; p_to_date?: string }
+        Returns: {
+          adjustment_voucher_id: string
+          adjustment_voucher_number: string
+          average_rate: number
+          batch_id: string
+          batch_no: string
+          book_quantity: number
+          created_at: string
+          godown_id: string
+          godown_name: string
+          item_id: string
+          item_name: string
+          notes: string
+          physical_quantity: number
+          uom: string
+          variance_quantity: number
+          variance_value: number
+          verification_date: string
+          verification_id: string
         }[]
       }
       get_tax_audit_applicability: {
@@ -7484,6 +8243,37 @@ export type Database = {
         }
         Returns: string
       }
+      record_signed_document: {
+        Args: {
+          p_document_id: string
+          p_has_embedded_signature?: boolean
+          p_request_id: string
+          p_signature_check_note?: string
+          p_signer_id: string
+        }
+        Returns: undefined
+      }
+      record_stock_verification: {
+        Args: {
+          p_batch_id?: string
+          p_branch_id: string
+          p_company_id: string
+          p_godown_id: string
+          p_item_id: string
+          p_notes?: string
+          p_physical_quantity: number
+          p_verification_date: string
+        }
+        Returns: {
+          adjustment_voucher_id: string
+          average_rate: number
+          book_quantity: number
+          physical_quantity: number
+          variance_quantity: number
+          variance_value: number
+          verification_id: string
+        }[]
+      }
       reopen_period: {
         Args: { p_company_id: string; p_new_lock_date?: string }
         Returns: undefined
@@ -7503,6 +8293,10 @@ export type Database = {
       }
       revoke_api_key: {
         Args: { p_company_id: string; p_key_id: string }
+        Returns: undefined
+      }
+      send_signature_request: {
+        Args: { p_request_id: string }
         Returns: undefined
       }
       set_budget_lines: {

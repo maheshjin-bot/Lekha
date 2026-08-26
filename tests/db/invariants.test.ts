@@ -4266,6 +4266,186 @@ describeDb(`recurring vouchers (${hasDb ? "live" : noDbReason})`, () => {
 });
 
 // ---------------------------------------------------------------------------
+// Tier 4 batch 9 + batch 10 (0163-0230): AGM calendar wiring, bank feed
+// adapters, stock verification/ageing, cross-company notification dispatch,
+// e-signature workflow, GST TDS/TCS suffered, FIFO stock valuation, e-way
+// bill capture, Form 16 Part B, Schedule III expense sub-classification,
+// GSTR-3B Table 5.1, e-invoice IRN capture. ITR JSON builder ships no SQL
+// (pure TS over existing RPCs) so it has no describeDb block here.
+// ---------------------------------------------------------------------------
+describeDb(`tier 4 batch 9/10 new functions (${hasDb ? "live" : noDbReason})`, () => {
+  it("no new function from this wave is reachable by anon or PUBLIC", async () => {
+    const rows = await sql(`
+      select routine_name, grantee from information_schema.routine_privileges
+       where routine_name in (
+         'get_stock_fifo_layers', 'get_stock_summary_fifo', 'get_form16_partb',
+         'get_gst_tds_tcs_suffered_summary', 'get_pending_notification_summary',
+         'get_ewb_requirement', 'get_ewb_status', 'build_ewb_json',
+         'get_einvoice_applicability', 'build_einvoice_json', 'get_einvoice_status',
+         'get_gstr3b_table5_1', 'record_stock_verification', 'get_stock_verifications',
+         'get_stock_ageing', 'send_signature_request', 'cancel_signature_request',
+         'decline_signer', 'record_signed_document'
+       ) and grantee in ('PUBLIC', 'anon')
+    `);
+    expect(rows, `a batch 9/10 function reachable by a role it shouldn't be:\n${offenders(rows)}`).toEqual([]);
+  });
+});
+
+describeDb(`AGM calendar wiring (${hasDb ? "live" : noDbReason})`, () => {
+  it("AOC-4/MGT-7 due dates derive from a real recorded AGM's meeting_date (+30/+60 days), not the 30-Sep assumption", async () => {
+    const rows = await sql(`
+      select m.company_id, m.meeting_date,
+             (select due_date from get_compliance_calendar(m.company_id, '2000-01-01', '2099-12-31') cc
+               where cc.label like 'AOC-4%' and cc.detail like '%AGM held%'
+                 and cc.due_date = m.meeting_date + 30) as aoc4_match,
+             (select due_date from get_compliance_calendar(m.company_id, '2000-01-01', '2099-12-31') cc
+               where cc.label like 'MGT-7%' and cc.detail like '%AGM held%'
+                 and cc.due_date = m.meeting_date + 60) as mgt7_match
+        from meetings m
+       where m.meeting_type = 'agm'
+    `);
+    for (const r of rows as Record<string, unknown>[]) {
+      expect(r.aoc4_match, `AOC-4 due date not found at meeting_date+30 for company ${r.company_id}`).not.toBeNull();
+      expect(r.mgt7_match, `MGT-7 due date not found at meeting_date+60 for company ${r.company_id}`).not.toBeNull();
+    }
+  });
+});
+
+describeDb(`bank feed format adapters (${hasDb ? "live" : noDbReason})`, () => {
+  it("bank_statement_lines has no duplicate (company_id, ledger_id, external_txn_id) — re-import stayed idempotent", async () => {
+    const rows = await sql(`
+      select company_id, ledger_id, external_txn_id, count(*) from bank_statement_lines
+       group by company_id, ledger_id, external_txn_id having count(*) > 1
+    `);
+    expect(rows, `duplicate bank statement lines slipped past the dedupe key:\n${offenders(rows)}`).toEqual([]);
+  });
+});
+
+describeDb(`stock verification and ageing (${hasDb ? "live" : noDbReason})`, () => {
+  it("every stock_verifications row's variance_quantity equals physical minus book quantity", async () => {
+    const rows = await sql(`
+      select id, book_quantity, physical_quantity, variance_quantity from stock_verifications
+       where variance_quantity <> (physical_quantity - book_quantity)
+    `);
+    expect(rows, `a stock verification's variance doesn't match physical-book:\n${offenders(rows)}`).toEqual([]);
+  });
+
+  it("every stock_verifications adjustment_voucher_id points at a real, existing voucher", async () => {
+    const rows = await sql(`
+      select v.id from stock_verifications v
+       where v.adjustment_voucher_id is not null
+         and not exists (select 1 from vouchers x where x.id = v.adjustment_voucher_id)
+    `);
+    expect(rows, `a stock verification references a voucher that doesn't exist:\n${offenders(rows)}`).toEqual([]);
+  });
+});
+
+describeDb(`e-signature request workflow (${hasDb ? "live" : noDbReason})`, () => {
+  it("no signature_requests row is 'completed' while any of its signers is not 'signed'", async () => {
+    const rows = await sql(`
+      select r.id from signature_requests r
+       where r.status = 'completed'
+         and exists (select 1 from signature_request_signers s where s.request_id = r.id and s.status <> 'signed')
+    `);
+    expect(rows, `a signature request is marked completed with an unsigned/declined signer:\n${offenders(rows)}`).toEqual([]);
+  });
+});
+
+describeDb(`GST TDS/TCS suffered (${hasDb ? "live" : noDbReason})`, () => {
+  it("gst_tds_tcs_suffered has no duplicate (gst_registration_id, source_type, deductor_or_operator_gstin, period_label)", async () => {
+    const rows = await sql(`
+      select gst_registration_id, source_type, deductor_or_operator_gstin, period_label, count(*)
+        from gst_tds_tcs_suffered
+       group by gst_registration_id, source_type, deductor_or_operator_gstin, period_label
+      having count(*) > 1
+    `);
+    expect(rows, `duplicate GST TDS/TCS suffered entries for the same statement line:\n${offenders(rows)}`).toEqual([]);
+  });
+
+  it("no row sets both CGST/SGST and IGST at once", async () => {
+    const rows = await sql(`
+      select id from gst_tds_tcs_suffered where (cgst_amount > 0 or sgst_amount > 0) and igst_amount > 0
+    `);
+    expect(rows, `a GST TDS/TCS suffered row mixes intra- and inter-state tax heads:\n${offenders(rows)}`).toEqual([]);
+  });
+});
+
+describeDb(`e-way bill data capture (${hasDb ? "live" : noDbReason})`, () => {
+  it("ewb_details is only ever attached to a sales voucher", async () => {
+    const rows = await sql(`
+      select e.id, v.voucher_type from ewb_details e join vouchers v on v.id = e.voucher_id
+       where v.voucher_type <> 'sales'
+    `);
+    expect(rows, `an ewb_details row is attached to a non-sales voucher:\n${offenders(rows)}`).toEqual([]);
+  });
+});
+
+describeDb(`e-invoice IRN data capture (${hasDb ? "live" : noDbReason})`, () => {
+  it("einvoice_details is only ever attached to a sales or credit_note voucher", async () => {
+    const rows = await sql(`
+      select e.id, v.voucher_type from einvoice_details e join vouchers v on v.id = e.voucher_id
+       where v.voucher_type not in ('sales', 'credit_note')
+    `);
+    expect(rows, `an einvoice_details row is attached to a voucher type it shouldn't be:\n${offenders(rows)}`).toEqual([]);
+  });
+});
+
+describeDb(`Form 16 Part B (${hasDb ? "live" : noDbReason})`, () => {
+  it("ref_income_tax_slabs_old_regime covers 0 to the top slab with no gaps or overlaps", async () => {
+    const rows = await sql(`
+      select a.sort_order, a.to_rupees, b.from_rupees, b.sort_order as next_sort
+        from ref_income_tax_slabs_old_regime a
+        join ref_income_tax_slabs_old_regime b on b.sort_order = (
+          select min(sort_order) from ref_income_tax_slabs_old_regime where sort_order > a.sort_order
+        )
+       where b.from_rupees <> a.to_rupees + 1
+    `);
+    expect(rows, `a gap or overlap exists between adjacent old-regime slab rows:\n${offenders(rows)}`).toEqual([]);
+  });
+});
+
+describeDb(`Schedule III expense sub-classification (${hasDb ? "live" : noDbReason})`, () => {
+  it("every direct/indirect expense account_group carries one of the 8 valid Schedule III ledger_role values", async () => {
+    const rows = await sql(`
+      select id, name, nature, ledger_role from account_groups
+       where nature in ('direct_expense', 'indirect_expense')
+         and ledger_role not in ('cost_of_materials', 'purchases_stock_in_trade', 'changes_in_inventories',
+           'employee_benefits', 'finance_costs', 'depreciation_amortisation', 'other_expenses', 'tax_expense')
+    `);
+    expect(rows, `an expense account_group has an invalid or missing ledger_role:\n${offenders(rows)}`).toEqual([]);
+  });
+
+  it("get_profit_and_loss's 8-bucket expense partition sums exactly to the whole direct+indirect expense total, per company", async () => {
+    const rows = await sql(`
+      select c.name,
+             round(sum(case when r.nature in ('direct_expense', 'indirect_expense') then r.amount else 0 end), 2) as whole_total,
+             round(sum(case when r.nature in ('direct_expense', 'indirect_expense')
+                             and r.ledger_role in ('cost_of_materials', 'purchases_stock_in_trade', 'changes_in_inventories',
+                               'employee_benefits', 'finance_costs', 'depreciation_amortisation', 'other_expenses', 'tax_expense')
+                        then r.amount else 0 end), 2) as bucketed_total
+        from companies c
+        cross join lateral get_profit_and_loss(c.id, '2000-01-01', '2030-12-31') r
+       group by c.id, c.name
+      having round(sum(case when r.nature in ('direct_expense', 'indirect_expense') then r.amount else 0 end), 2)
+          <> round(sum(case when r.nature in ('direct_expense', 'indirect_expense')
+                             and r.ledger_role in ('cost_of_materials', 'purchases_stock_in_trade', 'changes_in_inventories',
+                               'employee_benefits', 'finance_costs', 'depreciation_amortisation', 'other_expenses', 'tax_expense')
+                        then r.amount else 0 end), 2)
+    `);
+    expect(rows, `a company's expense ledger_role partition doesn't sum to its whole-nature total:\n${offenders(rows)}`).toEqual([]);
+  });
+});
+
+describeDb(`GSTR-3B Table 5.1 interest and late fee (${hasDb ? "live" : noDbReason})`, () => {
+  it("tax_payments never has period_end before period_start", async () => {
+    const rows = await sql(`
+      select id, period_start, period_end from tax_payments where period_start is not null and period_end < period_start
+    `);
+    expect(rows, `a tax_payments row's return-period range is backwards:\n${offenders(rows)}`).toEqual([]);
+  });
+});
+
+// ---------------------------------------------------------------------------
 // Needs fixtures. Seeded database only — never the live project.
 // ---------------------------------------------------------------------------
 describe.skip("post_gst_setoff, post_deferred_tax [needs seed]", () => {
