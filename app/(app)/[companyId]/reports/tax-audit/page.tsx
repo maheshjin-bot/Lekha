@@ -27,6 +27,27 @@ function taxYearBounds(): { from: string; to: string; label: string } {
   };
 }
 
+// get_quantitative_stock_details gained three columns in 0165
+// (shortage_quantity/excess_quantity/verified_as_at) — the generated
+// database.types.ts (owned by the integration pass' regeneration, not this
+// task) still only knows the pre-0165 nine-column shape, hence the local
+// type + "as unknown as" cast where it is read below, same pattern as
+// reports/gst-refunds.
+type StockDetailRow = {
+  item_id: string;
+  item_name: string;
+  hsn_sac: string | null;
+  uom: string;
+  opening_quantity: number;
+  purchases_quantity: number;
+  sales_quantity: number;
+  closing_quantity: number;
+  is_principal_item: boolean;
+  shortage_quantity: number | null;
+  excess_quantity: number | null;
+  verified_as_at: string | null;
+};
+
 const SEC43B_LABEL: Record<string, string> = {
   statutory_dues: "Tax, duty, cess or fee",
   employee_welfare_fund: "PF/superannuation/gratuity fund",
@@ -71,7 +92,7 @@ export default async function TaxAuditPage({
         p_fy_end: to,
       })
     : { data: null };
-  const stockDetails = stockRows ?? [];
+  const stockDetails = (stockRows ?? []) as unknown as StockDetailRow[];
 
   const { data: cashPaymentRows } = await supabase.rpc("get_sec40a3_cash_payments", {
     p_company_id: companyId,
@@ -210,11 +231,16 @@ export default async function TaxAuditPage({
               lumped into a raw increase/decrease. Principal items (over 10%
               of total purchase or sales value for the year) are marked;
               every item with any movement is still listed underneath.
-              Shortage/excess is not shown — LEKHA has no physical
-              stock-take feature to compare the book figure against.
+              Shortage/excess sums every physical stock verification (
+              <a href={`/${companyId}/stock-verification`} className="underline hover:text-ink">
+                Stock Verification
+              </a>
+              ) recorded for that item this year, across every godown/batch
+              count — shown as &ldquo;not verified&rdquo; for an item nobody
+              actually counted, never as a fabricated zero.
             </p>
           </div>
-          <table className="w-full min-w-[720px] text-sm">
+          <table className="w-full min-w-[900px] text-sm">
             <thead>
               <tr className="border-b border-border text-left">
                 <th className={th}>Item</th>
@@ -223,12 +249,15 @@ export default async function TaxAuditPage({
                 <th className={th + " text-right"}>Purchases</th>
                 <th className={th + " text-right"}>Sales</th>
                 <th className={th + " text-right"}>Closing</th>
+                <th className={th + " text-right"}>Shortage</th>
+                <th className={th + " text-right"}>Excess</th>
+                <th className={th}>Verified as at</th>
               </tr>
             </thead>
             <tbody>
               {stockDetails.length === 0 && (
                 <tr>
-                  <td colSpan={6} className="px-4 py-8 text-center text-ink-faint">
+                  <td colSpan={9} className="px-4 py-8 text-center text-ink-faint">
                     No stock movement this year.
                   </td>
                 </tr>
@@ -249,6 +278,17 @@ export default async function TaxAuditPage({
                   <td className={num}>{Number(s.sales_quantity).toLocaleString("en-IN")}</td>
                   <td className={num + " font-medium"}>
                     {Number(s.closing_quantity).toLocaleString("en-IN")}
+                  </td>
+                  <td className={num + (Number(s.shortage_quantity ?? 0) > 0 ? " text-error" : "")}>
+                    {s.shortage_quantity != null
+                      ? Number(s.shortage_quantity).toLocaleString("en-IN")
+                      : "—"}
+                  </td>
+                  <td className={num + (Number(s.excess_quantity ?? 0) > 0 ? " text-success" : "")}>
+                    {s.excess_quantity != null ? Number(s.excess_quantity).toLocaleString("en-IN") : "—"}
+                  </td>
+                  <td className={td + " text-xs text-ink-soft"}>
+                    {s.verified_as_at ?? <span className="text-ink-faint">Not verified</span>}
                   </td>
                 </tr>
               ))}
