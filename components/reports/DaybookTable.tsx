@@ -239,6 +239,15 @@ export function DaybookTable({
                       EXIM
                     </Link>
                   )}
+                  {(r.voucher_type === "sales" || r.voucher_type === "credit_note") && (
+                    <Link
+                      href={`/${companyId}/einvoice/${r.voucher_id}`}
+                      className="text-accent underline underline-offset-4"
+                      title="e-Invoice (IRN) JSON payload and IRN/QR recording — 0230 addendum"
+                    >
+                      e-Invoice
+                    </Link>
+                  )}
                   <DeleteVoucherButton companyId={companyId} voucherId={r.voucher_id} />
                 </div>
               </td>

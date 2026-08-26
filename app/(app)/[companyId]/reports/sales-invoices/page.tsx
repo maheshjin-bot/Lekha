@@ -15,6 +15,7 @@ export default async function SalesInvoicesPage({
       description="Every sales invoice in the period — view, edit or delete any one directly."
       lockedTypes={["sales"]}
       eximHubLink
+      einvoiceHubLink
       searchParams={{
         from: typeof sp.from === "string" ? sp.from : undefined,
         to: typeof sp.to === "string" ? sp.to : undefined,

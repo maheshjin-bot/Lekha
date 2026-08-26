@@ -18,6 +18,7 @@ export async function VoucherTypeList({
   lockedTypes,
   searchParams,
   eximHubLink,
+  einvoiceHubLink,
 }: {
   companyId: string;
   basePath: string;
@@ -31,6 +32,11 @@ export async function VoucherTypeList({
    * (credit/debit notes aren't sales/purchase vouchers, so EXIM details
    * can't attach to them). */
   eximHubLink?: boolean;
+  /** Additive link to the e-Invoice (IRN) hub (0230) — set only on Sales
+   * Invoices and Sales Returns, since e-invoicing only ever covers a sales
+   * invoice or a credit note THIS company issued (never a purchase/debit
+   * note, where this company is the recipient side, not the IRN holder). */
+  einvoiceHubLink?: boolean;
 }) {
   const supabase = await createClient();
 
@@ -58,6 +64,11 @@ export async function VoucherTypeList({
         {eximHubLink && (
           <Link href={`/${companyId}/exim`} className="text-accent underline underline-offset-4">
             EXIM shipments →
+          </Link>
+        )}
+        {einvoiceHubLink && (
+          <Link href={`/${companyId}/einvoice`} className="text-accent underline underline-offset-4">
+            e-Invoice (IRN) →
           </Link>
         )}
       </p>

@@ -14,6 +14,7 @@ export default async function SalesReturnsPage({
       title="Sales Returns"
       description="Credit notes issued against sales invoices in the period."
       lockedTypes={["credit_note"]}
+      einvoiceHubLink
       searchParams={{
         from: typeof sp.from === "string" ? sp.from : undefined,
         to: typeof sp.to === "string" ? sp.to : undefined,
