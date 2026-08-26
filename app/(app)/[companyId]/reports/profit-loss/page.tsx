@@ -4,7 +4,27 @@ import { formatINR } from "@/lib/utils/currency";
 import { defaultPeriod, comparativePeriod, periodRangeLabel } from "@/lib/utils/period";
 import { ReportShell, num, td, th } from "@/components/reports/ReportShell";
 
-type PLRow = { nature: string; group_name: string; ledger_name: string; amount: number };
+type PLRow = { nature: string; group_name: string; ledger_name: string; ledger_role: string; amount: number };
+
+// Schedule III Division I/II's Statement of Profit and Loss "Expenses"
+// break-up, in the Schedule's own order (confirmed live against Schedule
+// III's bare-act text — see migration 0210). ledger_role is
+// coalesce(ledger override, group default) from get_profit_and_loss, so
+// every direct_expense/indirect_expense row lands in exactly one of these
+// eight buckets — the eighth, tax_expense, is deliberately NOT one of the
+// seven Schedule III heads (rendered separately below, not in this array).
+const SCHEDULE_III_EXPENSE_HEADS: { role: string; label: string }[] = [
+  { role: "cost_of_materials", label: "Cost of Materials Consumed" },
+  { role: "purchases_stock_in_trade", label: "Purchases of Stock-in-Trade" },
+  {
+    role: "changes_in_inventories",
+    label: "Changes in Inventories of Finished Goods, Work-in-Progress and Stock-in-Trade",
+  },
+  { role: "employee_benefits", label: "Employee Benefits Expense" },
+  { role: "finance_costs", label: "Finance Costs" },
+  { role: "depreciation_amortisation", label: "Depreciation and Amortisation Expense" },
+  { role: "other_expenses", label: "Other Expenses" },
+];
 
 /** curr - comp as a signed percentage of |comp|, or null when there is
  * nothing to divide by — a brand-new line (comp undefined) or a comp that
@@ -170,8 +190,12 @@ export default async function ProfitLossPage({
       : Promise.resolve({ data: [] as PLRow[] }),
   ]);
 
-  const all: PLRow[] = rows ?? [];
-  const compAll: PLRow[] = compRows ?? [];
+  // `as PLRow[]`: ledger_role (migration 0210) is not yet reflected in
+  // types/database.types.ts, which this task does not own — regenerating it
+  // is the integration pass's job (same transient state 0089 left for
+  // get_balance_sheet's own ledger_role column until its own regen landed).
+  const all: PLRow[] = (rows ?? []) as PLRow[];
+  const compAll: PLRow[] = (compRows ?? []) as PLRow[];
   const sum = (source: PLRow[], natures: string[]) =>
     source.filter((r) => natures.includes(r.nature)).reduce((n, r) => n + Number(r.amount), 0);
 
@@ -201,6 +225,21 @@ export default async function ProfitLossPage({
   const compSection = (nature: string) => {
     const m = new Map<string, { group_name: string; amount: number }>();
     for (const r of compAll.filter((x) => x.nature === nature)) {
+      m.set(r.ledger_name, { group_name: r.group_name, amount: Number(r.amount) });
+    }
+    return m;
+  };
+
+  // Schedule III expense-head grouping (0210): flattens BOTH direct_expense
+  // and indirect_expense nature rows by ledger_role, since Schedule III
+  // itself has no Direct/Indirect distinction — that split is this app's
+  // own trading-account convention, not a Schedule III concept. Only
+  // expense-nature rows carry a Schedule III head; income rows are untouched
+  // (still grouped by nature above) and never matched by headSection.
+  const headSection = (role: string) => all.filter((r) => r.ledger_role === role);
+  const compHeadSection = (role: string) => {
+    const m = new Map<string, { group_name: string; amount: number }>();
+    for (const r of compAll.filter((x) => x.ledger_role === role)) {
       m.set(r.ledger_name, { group_name: r.group_name, amount: Number(r.amount) });
     }
     return m;
@@ -301,16 +340,30 @@ export default async function ProfitLossPage({
                   </td>
                 </tr>
               )}
+              {/* Schedule III's own seven-head "Expenses" break-up (0210),
+                  in the Schedule's own order — flattened across both
+                  direct_expense and indirect_expense nature, since Schedule
+                  III itself draws no Direct/Indirect line. */}
+              {SCHEDULE_III_EXPENSE_HEADS.map(({ role, label }) => (
+                <Block
+                  key={role}
+                  label={label}
+                  items={headSection(role)}
+                  compByLedger={compHeadSection(role)}
+                  hasComparative={hasComparative}
+                />
+              ))}
+              {/* tax_expense (0210): deliberately NOT one of the seven heads
+                  above — Schedule III shows tax as its own section below
+                  Profit before tax — but still totalled into Total Expenses
+                  below, since this schema nets Deferred Tax Expense into the
+                  indirect_expense nature (a pre-existing, out-of-scope
+                  decision; see 0210's header). Shown as its own captioned
+                  line rather than silently folded into Other Expenses. */}
               <Block
-                label="Direct Expenses"
-                items={section("direct_expense")}
-                compByLedger={compSection("direct_expense")}
-                hasComparative={hasComparative}
-              />
-              <Block
-                label="Indirect Expenses"
-                items={section("indirect_expense")}
-                compByLedger={compSection("indirect_expense")}
+                label="Tax Expense (shown separately — not one of the seven expense heads above)"
+                items={headSection("tax_expense")}
+                compByLedger={compHeadSection("tax_expense")}
                 hasComparative={hasComparative}
               />
               {(all.length > 0 || compAll.length > 0) && (
@@ -427,13 +480,19 @@ export default async function ProfitLossPage({
       )}
       {scheduleIII && (
         <p className="border-t border-border px-4 py-3 text-xs text-ink-faint">
-          This shows Schedule III&rsquo;s outer structure only. Expenses are
-          not sub-classified into Cost of materials consumed, Purchases of
-          stock-in-trade, Changes in inventories, Employee benefits expense,
-          Finance costs, Depreciation and amortisation expense, or Other
-          expenses — this schema only classifies Direct vs Indirect. Tax
-          expense and Profit for the year (after tax) are not shown here; see
-          the Income Tax report for a separate estimate.
+          Expenses above are classified by ledger group, defaulting to Cost
+          of Materials Consumed (Direct Expenses) and Other Expenses
+          (Indirect Expenses) unless a ledger has been moved into one of the
+          dedicated Schedule III sub-groups (Purchases of Stock-in-Trade,
+          Employee Benefits Expense, Finance Costs, Depreciation and
+          Amortisation Expense) — so a newly-posted ledger can land under a
+          broader head than its true nature until it is reclassified.
+          Schedule III also requires each head to cross-reference a
+          supporting note (e.g. an Employee Benefits break-up of salaries,
+          PF contribution, and staff welfare); this report shows head totals
+          only, not that note-level detail. Profit for the year (after tax)
+          is not shown here; see the Income Tax report for a separate
+          estimate.
         </p>
       )}
     </ReportShell>
