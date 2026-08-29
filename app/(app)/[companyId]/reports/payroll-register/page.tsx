@@ -38,6 +38,24 @@ function shiftMonth(ym: string, delta: number): string {
   return `${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, "0")}`;
 }
 
+/** get_salary_tds_estimate gained `regime_used` and a regime-aware
+ * computation in migration 0430 — types/database.types.ts has not been
+ * regenerated (it is a shared, off-limits file for this batch), so this is
+ * the same `as unknown as` escape hatch already used elsewhere in this
+ * codebase (reports/balance-sheet, reports/gst-refunds, etc.) for an RPC
+ * result the generated types don't know about yet. */
+type TdsEstimateRow = {
+  employee_id: string;
+  employee_name: string;
+  monthly_gross: number;
+  annual_projected_gross: number;
+  regime_used: "old" | "new";
+  standard_deduction: number;
+  taxable_salary_income: number;
+  annual_tax: number;
+  monthly_tds: number;
+};
+
 export default async function PayrollRegisterPage({
   params,
   searchParams,
@@ -94,7 +112,7 @@ export default async function PayrollRegisterPage({
   ]);
 
   const runs = rows ?? [];
-  const tdsEstimates = tdsRows ?? [];
+  const tdsEstimates = (tdsRows ?? []) as unknown as TdsEstimateRow[];
   const totalMonthlyTds = tdsEstimates.reduce((n, r) => n + Number(r.monthly_tds), 0);
   const totals = runs.reduce(
     (acc, r) => ({
@@ -261,23 +279,28 @@ export default async function PayrollRegisterPage({
         <p className="mt-0.5 text-xs text-ink-faint">
           This is the basis for the TDS column in the register above, which{" "}
           <strong className="font-medium text-ink">is</strong> deducted from net pay and posted to
-          TDS Payable (Salary). Annualised gross (this month × 12) less the ₹75,000 standard
-          deduction, taxed at new-regime slab rates (Sec 115BAC, which is the default regime — an
-          employee must opt out of it), with the same rebate/surcharge/cess logic as the Income tax
-          report. Deducting on this basis is what Sec 192 requires when no declaration has been
-          made, and not deducting at all is a Sec 201(1) default — but it remains an estimate: it
-          ignores HRA exemption, Chapter VI-A declarations (80C/80D/80CCD), other income the
-          employee has declared, and tax already withheld by a previous employer this year. For
-          anyone with real deductions it will over-withhold until this app can record their
-          declaration. Two guards are applied: the deduction is never more than the month can bear
-          after PF, ESI and PT, and it is not reduced for a mid-year joiner (the projection still
-          assumes twelve full months).
+          TDS Payable (Salary). Annualised gross (this month × 12) less the standard deduction, taxed
+          on each employee&rsquo;s <strong className="font-medium text-ink">own declared regime</strong>{" "}
+          (employee_tax_declarations — Sec 115BAC(1A), new regime by default under CBDT Circular
+          4/2023 absent a declaration): ₹75,000 standard deduction / new-regime slabs / rebate up to
+          ₹60,000 with marginal relief above ₹12,00,000, or ₹50,000 standard deduction / old-regime
+          slabs / rebate up to ₹12,500 with a hard cliff (no marginal relief in the law) above
+          ₹5,00,000 — surcharge and cess follow the same regime. Deducting on this basis is what Sec
+          192 requires when no declaration has been made, and not deducting at all is a Sec 201(1)
+          default — but it remains an estimate: it still ignores HRA exemption, Chapter VI-A
+          declarations (80C/80D/80CCD), other income the employee has declared, and tax already
+          withheld by a previous employer this year — that fuller computation is Form 16 Part B&rsquo;s
+          job, not this monthly one. For anyone with real deductions beyond the standard deduction it
+          will over-withhold until FY-end. Two guards are applied: the deduction is never more than
+          the month can bear after PF, ESI and PT, and it is not reduced for a mid-year joiner (the
+          projection still assumes twelve full months).
         </p>
       </div>
       <table className="w-full min-w-[720px] text-sm">
         <thead>
           <tr className="border-b border-border text-left">
             <th className={th}>Employee</th>
+            <th className={th}>Regime</th>
             <th className={th + " text-right"}>Annualised gross</th>
             <th className={th + " text-right"}>Taxable salary income</th>
             <th className={th + " text-right"}>Annual tax</th>
@@ -287,7 +310,7 @@ export default async function PayrollRegisterPage({
         <tbody>
           {tdsEstimates.length === 0 && (
             <tr>
-              <td colSpan={5} className="px-4 py-8 text-center text-ink-faint">
+              <td colSpan={6} className="px-4 py-8 text-center text-ink-faint">
                 No employee had an active salary structure this month.
               </td>
             </tr>
@@ -295,6 +318,16 @@ export default async function PayrollRegisterPage({
           {tdsEstimates.map((r) => (
             <tr key={r.employee_id} className="border-b border-border last:border-0">
               <td className={td}>{r.employee_name}</td>
+              <td className={td}>
+                <span
+                  className={
+                    "rounded px-1.5 py-0.5 text-xs " +
+                    (r.regime_used === "old" ? "bg-warning-soft text-warning" : "bg-surface-2 text-ink-faint")
+                  }
+                >
+                  {r.regime_used}
+                </span>
+              </td>
               <td className={num}>{formatINR(Number(r.annual_projected_gross), { showZero: true })}</td>
               <td className={num}>{formatINR(Number(r.taxable_salary_income), { showZero: true })}</td>
               <td className={num}>{formatINR(Number(r.annual_tax), { showZero: true })}</td>
@@ -303,7 +336,7 @@ export default async function PayrollRegisterPage({
           ))}
           {tdsEstimates.length > 0 && (
             <tr className="bg-bg font-semibold">
-              <td className={td} colSpan={4}>
+              <td className={td} colSpan={5}>
                 Total monthly TDS estimate
               </td>
               <td className={num}>{formatINR(totalMonthlyTds, { showZero: true })}</td>
