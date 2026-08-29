@@ -1,7 +1,7 @@
 import { notFound } from "next/navigation";
 import { headers, cookies } from "next/headers";
 import { createClient } from "@/lib/supabase/server";
-import { NavRail } from "@/components/nav/NavRail";
+import { AppShell } from "@/components/nav/AppShell";
 import { CompanyUnlockGate } from "@/components/companies/CompanyUnlockGate";
 
 export default async function CompanyLayout({
@@ -40,9 +40,8 @@ export default async function CompanyLayout({
   const activePath = (await headers()).get("x-pathname") ?? `/${companyId}`;
 
   return (
-    <div className="flex min-h-screen bg-bg">
-      <NavRail companyId={companyId} companyName={data.name} activePath={activePath} />
-      <div className="min-w-0 flex-1">{children}</div>
-    </div>
+    <AppShell companyId={companyId} companyName={data.name} activePath={activePath}>
+      {children}
+    </AppShell>
   );
 }

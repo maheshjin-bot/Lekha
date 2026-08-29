@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 import Link from "next/link";
-import { ChevronDown } from "lucide-react";
+import { ChevronDown, X } from "lucide-react";
 import { cn } from "@/lib/utils/cn";
 import { SignOutButton } from "@/components/auth/SignOutButton";
 
@@ -27,10 +27,22 @@ export function NavRail({
   companyId,
   companyName,
   activePath,
+  mobileOpen = false,
+  onMobileClose,
 }: {
   companyId: string;
   companyName: string;
   activePath: string;
+  /**
+   * Below `lg:` this rail is an off-canvas drawer, not a permanent sidebar —
+   * AppShell owns the open/closed boolean (it also renders the hamburger
+   * button that flips it) and passes it straight through. At `lg:` and up
+   * these two props are simply never touched: the rail's classes fall back
+   * to their always-visible, in-flow desktop shape regardless of their
+   * value, so nothing here needs a separate desktop code path.
+   */
+  mobileOpen?: boolean;
+  onMobileClose?: () => void;
 }) {
   const base = `/${companyId}`;
 
@@ -183,24 +195,68 @@ export function NavRail({
   });
 
   return (
-    <nav className="flex h-screen w-60 shrink-0 flex-col border-r border-border bg-surface print:hidden">
-      {/* Company switcher — pinned at the very top of the rail, above the menu.
-          For a firm juggling several GST-registered entities, changing
-          companies is a navigational act, not a settings screen. */}
-      <Link
-        href="/companies"
-        className="flex items-center gap-2.5 border-b border-border px-4 py-3.5 transition-colors hover:bg-surface-2"
-      >
-        <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-md bg-accent-soft font-mono text-[11px] font-semibold text-accent">
-          {initials(companyName)}
-        </span>
-        <span className="min-w-0 flex-1">
-          <span className="block truncate text-sm font-semibold text-ink">{companyName}</span>
-          <span className="block text-[11px] text-ink-faint">Switch company</span>
-        </span>
-      </Link>
+    <>
+      {/* Backdrop — below lg: only, and only while the drawer is open. A tap
+          anywhere outside the rail closes it, same as every other overlay in
+          this app. */}
+      {mobileOpen && (
+        <div
+          onClick={onMobileClose}
+          aria-hidden="true"
+          className="fixed inset-0 z-30 bg-ink/40 lg:hidden"
+        />
+      )}
 
-      <div className="flex-1 overflow-y-auto px-2.5 py-3">
+      {/* Below lg: fixed and off-canvas by default, shown as an overlay
+          drawer only while mobileOpen — a click on any link inside closes it
+          via the delegated handler below, the same "navigating away closes
+          the drawer" behaviour every mobile nav pattern uses. At lg: and up
+          this is the original always-visible, in-flow sidebar.
+          Plain hidden/flex display toggling on purpose, not a translate-x
+          slide-in: confirmed live, twice, with two different class shapes,
+          that Tailwind's translate-x-* utilities (backed by the registered
+          --tw-translate-x custom property) get stuck displaying whichever
+          value was first computed for this element and never re-resolve on
+          a later class swap, even well past the transition's own duration.
+          display has none of that custom-property machinery — hidden/flex
+          is the same pattern virtually every Tailwind responsive nav uses,
+          and it actually works. */}
+      <nav
+        onClick={(e) => {
+          if ((e.target as HTMLElement).closest("a")) onMobileClose?.();
+        }}
+        className={cn(
+          "fixed inset-y-0 left-0 z-40 h-screen w-60 shrink-0 flex-col border-r border-border bg-surface print:hidden lg:static lg:z-auto lg:flex",
+          mobileOpen ? "flex" : "hidden"
+        )}
+      >
+        {/* Company switcher — pinned at the very top of the rail, above the
+            menu. For a firm juggling several GST-registered entities,
+            changing companies is a navigational act, not a settings screen. */}
+        <div className="flex items-center border-b border-border">
+          <Link
+            href="/companies"
+            className="flex min-w-0 flex-1 items-center gap-2.5 px-4 py-3.5 transition-colors hover:bg-surface-2"
+          >
+            <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-md bg-accent-soft font-mono text-[11px] font-semibold text-accent">
+              {initials(companyName)}
+            </span>
+            <span className="min-w-0 flex-1">
+              <span className="block truncate text-sm font-semibold text-ink">{companyName}</span>
+              <span className="block text-[11px] text-ink-faint">Switch company</span>
+            </span>
+          </Link>
+          <button
+            type="button"
+            onClick={onMobileClose}
+            aria-label="Close menu"
+            className="mr-2 shrink-0 rounded-md p-1.5 text-ink-faint hover:bg-surface-2 hover:text-ink-soft lg:hidden"
+          >
+            <X size={18} />
+          </button>
+        </div>
+
+        <div className="flex-1 overflow-y-auto px-2.5 py-3">
         <NavLink href={base} label="Overview" active={isActive(activePath, base)} />
 
         {groups.map((group) => {
@@ -251,6 +307,7 @@ export function NavRail({
         <SignOutButton />
       </div>
     </nav>
+    </>
   );
 }
 

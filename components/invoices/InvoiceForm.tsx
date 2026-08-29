@@ -667,7 +667,163 @@ export function InvoiceForm({
         )}
       </div>
 
-      <div className="mt-6 overflow-x-auto rounded-lg border border-border bg-surface">
+      {/* Two renderings of the same `lines` state: stacked cards below
+          sm:, the original table from sm: up. Seven columns need
+          horizontal scroll to fit under ~640px, and the borderless
+          table-cell inputs are a poor touch target — the exact gap the
+          dossier's own audit (F-12) flagged as "desktop-only in practice". */}
+      <div className="mt-6 flex flex-col gap-3 sm:hidden">
+        {lines.map((line, i) => {
+          const item = allItems.find((x) => x.id === line.itemId);
+          const { gross, discount, net } = lineAmounts(line.quantity, line.rate, line.discountPercent);
+          return (
+            <div key={i} className="rounded-lg border border-border bg-surface p-3">
+              <div className="mb-2 flex items-center justify-between">
+                <span className="text-xs font-medium uppercase tracking-wide text-ink-faint">
+                  Line {i + 1}
+                </span>
+                {lines.length > 1 && (
+                  <button
+                    type="button"
+                    onClick={() => setLines((p) => p.filter((_, idx) => idx !== i))}
+                    className="rounded px-2 py-1 text-xs text-ink-faint transition-colors hover:bg-surface-2 hover:text-ink-soft"
+                  >
+                    Remove
+                  </button>
+                )}
+              </div>
+              <div className="flex flex-col gap-2.5">
+                <div className="flex items-end gap-1.5">
+                  <label className="flex flex-1 flex-col gap-1">
+                    <span className="text-xs text-ink-faint">Item</span>
+                    <select
+                      aria-label={`Item on line ${i + 1}`}
+                      value={line.itemId}
+                      onChange={(e) => update(i, { itemId: e.target.value })}
+                      className={field}
+                    >
+                      <option value="">Select an item…</option>
+                      {allItems.map((it) => (
+                        <option key={it.id} value={it.id}>
+                          {it.name}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                  <button
+                    type="button"
+                    onClick={() => setItemModalLine(i)}
+                    aria-label={`New item for line ${i + 1}`}
+                    className="shrink-0 rounded-lg border border-border-strong px-2.5 py-2 text-xs text-accent"
+                  >
+                    + New
+                  </button>
+                </div>
+                <div className="grid grid-cols-3 gap-2.5">
+                  <label className="flex flex-col gap-1">
+                    <span className="text-xs text-ink-faint">Qty {item ? `(${item.uom})` : ""}</span>
+                    <input
+                      inputMode="decimal"
+                      value={line.quantity}
+                      onChange={(e) => update(i, { quantity: e.target.value })}
+                      className={field + " text-right tabular-nums"}
+                    />
+                  </label>
+                  <label className="flex flex-col gap-1">
+                    <span className="text-xs text-ink-faint">Rate</span>
+                    <input
+                      inputMode="decimal"
+                      value={line.rate}
+                      onChange={(e) => update(i, { rate: e.target.value })}
+                      className={field + " text-right tabular-nums"}
+                    />
+                  </label>
+                  <label className="flex flex-col gap-1">
+                    <span className="text-xs text-ink-faint">Disc %</span>
+                    <input
+                      inputMode="decimal"
+                      value={line.discountPercent}
+                      placeholder="0"
+                      onChange={(e) => update(i, { discountPercent: e.target.value })}
+                      className={field + " text-right tabular-nums"}
+                    />
+                  </label>
+                </div>
+                <label className="flex flex-col gap-1">
+                  <span className="text-xs text-ink-faint">
+                    Description <span className="font-normal">optional</span>
+                  </span>
+                  <input
+                    value={line.description}
+                    onChange={(e) => update(i, { description: e.target.value })}
+                    className={field}
+                  />
+                </label>
+              </div>
+              <div className="mt-2.5 flex items-center justify-between border-t border-border pt-2 text-sm">
+                {gstOn && (
+                  <span className="text-xs text-ink-faint">
+                    GST {item ? `${item.gst_rate_percent}%` : "—"}
+                  </span>
+                )}
+                <span className="ml-auto tabular-nums font-mono font-medium">
+                  {formatINR(net)}
+                  {discount > 0 && (
+                    <span className="block text-right text-[11px] font-sans font-normal text-ink-faint">
+                      {formatINR(gross)} − {formatINR(discount)} disc.
+                    </span>
+                  )}
+                </span>
+              </div>
+            </div>
+          );
+        })}
+
+        <button
+          type="button"
+          onClick={() => setLines((p) => [...p, emptyLine()])}
+          className="self-start rounded px-2 py-1 text-xs text-accent underline underline-offset-4"
+        >
+          Add line
+        </button>
+
+        <div className="rounded-lg border border-border bg-bg p-3 text-sm">
+          <div className="flex justify-between tabular-nums font-mono">
+            <span className="text-ink-faint">Taxable value</span>
+            <span>{formatINR(taxable, { showZero: true })}</span>
+          </div>
+          {supplyType === "intra" && (tax.cgst > 0 || tax.sgst > 0) && (
+            <>
+              <div className="mt-1 flex justify-between tabular-nums font-mono text-xs text-ink-soft">
+                <span>CGST</span>
+                <span>{formatINR(tax.cgst)}</span>
+              </div>
+              <div className="mt-1 flex justify-between tabular-nums font-mono text-xs text-ink-soft">
+                <span>SGST</span>
+                <span>{formatINR(tax.sgst)}</span>
+              </div>
+            </>
+          )}
+          {supplyType === "inter" && tax.igst > 0 && (
+            <div className="mt-1 flex justify-between tabular-nums font-mono text-xs text-ink-soft">
+              <span>IGST</span>
+              <span>{formatINR(tax.igst)}</span>
+            </div>
+          )}
+          {tcs > 0 && (
+            <div className="mt-1 flex justify-between tabular-nums font-mono text-xs text-ink-soft">
+              <span>TCS</span>
+              <span>{formatINR(tcs)}</span>
+            </div>
+          )}
+          <div className="mt-2 flex justify-between border-t border-border-strong pt-2 tabular-nums font-mono font-semibold">
+            <span>Total</span>
+            <span>{formatINR(grandTotal, { showZero: true })}</span>
+          </div>
+        </div>
+      </div>
+
+      <div className="mt-6 hidden overflow-x-auto rounded-lg border border-border bg-surface sm:block">
         <table className="w-full min-w-[720px] text-sm">
           <thead>
             <tr className="border-b border-border text-left text-[11px] uppercase tracking-wide text-ink-faint">
@@ -868,7 +1024,7 @@ export function InvoiceForm({
       <button
         type="submit"
         disabled={busy || taxable <= 0}
-        className="mt-3 rounded-lg bg-accent px-4 py-2 text-sm font-semibold text-accent-ink transition-colors hover:opacity-90 disabled:opacity-50"
+        className="mt-3 w-full rounded-lg bg-accent px-4 py-2 text-sm font-semibold text-accent-ink transition-colors hover:opacity-90 disabled:opacity-50 sm:w-auto"
       >
         {busy ? "Saving…" : isEdit ? "Save changes" : `Save ${config.label.toLowerCase()}`}
       </button>

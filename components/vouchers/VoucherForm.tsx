@@ -441,35 +441,176 @@ export function VoucherForm({
         </label>
       </div>
 
-      <div className="mt-6 overflow-x-auto rounded-lg border border-border bg-surface">
-        <table className="w-full min-w-[640px] text-sm">
-          <thead>
-            <tr className="border-b border-border text-left text-[11px] uppercase tracking-wide text-ink-faint">
-              <th className="px-3 py-2.5 font-medium">Ledger</th>
-              <th className="w-24 px-3 py-2.5 font-medium">Dr / Cr</th>
-              <th className="w-40 px-3 py-2.5 text-right font-medium">Amount</th>
-              <th className="px-3 py-2.5 font-medium">Line narration</th>
-              <th className="w-10" />
-            </tr>
-          </thead>
-          <tbody>
-            {lines.map((line, i) => {
-              // Only the crediting side: booking a liability to a deductee —
-              // a journal or purchase voucher crediting them — is the point
-              // TDS is deducted, not a later payment clearing that liability.
-              // Skipped once already split, so the hint doesn't immediately
-              // reappear on the shrunk remainder and offer to split again.
-              const suggestion =
-                line.side === "cr" && !line.tdsSplit
-                  ? tdsSuggestion(
-                      allLedgers.find((l) => l.id === line.ledgerId),
-                      Number(line.amount),
-                      tdsSections,
-                      date
-                    )
-                  : null;
+      {/* Two renderings of the same `lines` state: a table from sm: up, and
+          stacked cards below it. A borderless table cell that relies on
+          precise pointer clicks is workable with a mouse but a poor touch
+          target, and the table itself needs horizontal scroll under ~640px
+          to fit five columns — the exact "desktop-only in practice" gap the
+          dossier's own audit (F-12) flagged. Both share suggestionFor() so
+          the TDS hint can never disagree between the two views. */}
+      {(() => {
+        // Only the crediting side: booking a liability to a deductee — a
+        // journal or purchase voucher crediting them — is the point TDS is
+        // deducted, not a later payment clearing that liability. Skipped once
+        // already split, so the hint doesn't immediately reappear on the
+        // shrunk remainder and offer to split again.
+        function suggestionFor(line: Line) {
+          return line.side === "cr" && !line.tdsSplit
+            ? tdsSuggestion(
+                allLedgers.find((l) => l.id === line.ledgerId),
+                Number(line.amount),
+                tdsSections,
+                date
+              )
+            : null;
+        }
 
-              return (
+        return (
+          <>
+            <div className="mt-6 flex flex-col gap-3 sm:hidden">
+              {lines.map((line, i) => {
+                const suggestion = suggestionFor(line);
+                return (
+                  <div key={i} className="rounded-lg border border-border bg-surface p-3">
+                    <div className="mb-2 flex items-center justify-between">
+                      <span className="text-xs font-medium uppercase tracking-wide text-ink-faint">
+                        Line {i + 1}
+                      </span>
+                      {lines.length > 2 && (
+                        <button
+                          type="button"
+                          onClick={() => removeLine(i)}
+                          className="rounded px-2 py-1 text-xs text-ink-faint transition-colors hover:bg-surface-2 hover:text-ink-soft"
+                        >
+                          Remove
+                        </button>
+                      )}
+                    </div>
+                    <div className="flex flex-col gap-2.5">
+                      <div className="flex items-end gap-1.5">
+                        <label className="flex flex-1 flex-col gap-1">
+                          <span className="text-xs text-ink-faint">Ledger</span>
+                          <select
+                            aria-label={`Ledger on line ${i + 1}`}
+                            value={line.ledgerId}
+                            onChange={(e) => update(i, { ledgerId: e.target.value })}
+                            className={field}
+                          >
+                            <option value="">Select a ledger…</option>
+                            {allLedgers.map((l) => (
+                              <option key={l.id} value={l.id}>
+                                {l.name}
+                              </option>
+                            ))}
+                          </select>
+                        </label>
+                        <button
+                          type="button"
+                          onClick={() => setLedgerModalLine(i)}
+                          aria-label={`New ledger for line ${i + 1}`}
+                          className="shrink-0 rounded-lg border border-border-strong px-2.5 py-2 text-xs text-accent"
+                        >
+                          + New
+                        </button>
+                      </div>
+                      <div className="grid grid-cols-2 gap-2.5">
+                        <label className="flex flex-col gap-1">
+                          <span className="text-xs text-ink-faint">Dr / Cr</span>
+                          <select
+                            value={line.side}
+                            onChange={(e) => update(i, { side: e.target.value as "dr" | "cr" })}
+                            className={field + " font-medium"}
+                          >
+                            <option value="dr">Dr</option>
+                            <option value="cr">Cr</option>
+                          </select>
+                        </label>
+                        <label className="flex flex-col gap-1">
+                          <span className="text-xs text-ink-faint">Amount</span>
+                          <input
+                            inputMode="decimal"
+                            value={line.amount}
+                            onChange={(e) => update(i, { amount: e.target.value })}
+                            onKeyDown={(e) => onAmountKeyDown(e, i)}
+                            className={field + " text-right tabular-nums font-mono"}
+                          />
+                        </label>
+                      </div>
+                      <label className="flex flex-col gap-1">
+                        <span className="text-xs text-ink-faint">
+                          Line narration <span className="font-normal">optional</span>
+                        </span>
+                        <input
+                          value={line.narration}
+                          onChange={(e) => update(i, { narration: e.target.value })}
+                          className={field}
+                        />
+                      </label>
+                    </div>
+                    {suggestion && (
+                      <p className="mt-2.5 rounded-md bg-warning-soft px-2.5 py-2 text-xs text-warning">
+                        Sec {suggestion.sectionCode}
+                        {suggestion.usingLdc ? " (LDC rate)" : ""} at {suggestion.rate}% →
+                        TDS {formatINR(suggestion.tdsAmount)}, net{" "}
+                        {formatINR(suggestion.netAmount)}. Doesn&rsquo;t check whether
+                        this deductee&rsquo;s threshold has been crossed — that&rsquo;s
+                        yours to confirm.{" "}
+                        <button
+                          type="button"
+                          onClick={() => splitLineForTds(i, suggestion)}
+                          className="ml-1 underline underline-offset-2 hover:text-warning"
+                        >
+                          Split line
+                        </button>
+                      </p>
+                    )}
+                  </div>
+                );
+              })}
+
+              <div className="flex items-center justify-between rounded-lg border border-border bg-bg px-3 py-2.5">
+                <button
+                  type="button"
+                  onClick={addLine}
+                  className="rounded px-2 py-1 text-xs text-accent underline underline-offset-4"
+                >
+                  Add line
+                </button>
+                <span
+                  className={
+                    "rounded px-2 py-1 text-xs font-medium " +
+                    (totals.balanced
+                      ? "bg-success-soft text-success"
+                      : "bg-warning-soft text-warning")
+                  }
+                >
+                  {totals.balanced
+                    ? "Balanced"
+                    : `Out by ${formatINR(Math.abs(totals.difference) / 100, { showZero: true })}`}
+                </span>
+              </div>
+              <div className="flex justify-between px-1 text-sm font-medium tabular-nums font-mono">
+                <span>{formatINR(totals.dr / 100, { showZero: true })} Dr</span>
+                <span>{formatINR(totals.cr / 100, { showZero: true })} Cr</span>
+              </div>
+            </div>
+
+            <div className="mt-6 hidden overflow-x-auto rounded-lg border border-border bg-surface sm:block">
+              <table className="w-full min-w-[640px] text-sm">
+                <thead>
+                  <tr className="border-b border-border text-left text-[11px] uppercase tracking-wide text-ink-faint">
+                    <th className="px-3 py-2.5 font-medium">Ledger</th>
+                    <th className="w-24 px-3 py-2.5 font-medium">Dr / Cr</th>
+                    <th className="w-40 px-3 py-2.5 text-right font-medium">Amount</th>
+                    <th className="px-3 py-2.5 font-medium">Line narration</th>
+                    <th className="w-10" />
+                  </tr>
+                </thead>
+                <tbody>
+                  {lines.map((line, i) => {
+                    const suggestion = suggestionFor(line);
+
+                    return (
                 <Fragment key={i}>
                   <tr className="border-b border-border">
                     <td className="px-3 py-2">
@@ -556,43 +697,46 @@ export function VoucherForm({
                       </td>
                     </tr>
                   )}
-                </Fragment>
-              );
-            })}
-          </tbody>
-          <tfoot>
-            <tr className="border-t border-border bg-bg text-sm font-medium">
-              <td className="px-3 py-2.5" colSpan={2}>
-                <button
-                  type="button"
-                  onClick={addLine}
-                  className="rounded px-2 py-1 text-xs text-accent underline underline-offset-4"
-                >
-                  Add line
-                </button>
-              </td>
-              <td className="px-3 py-2.5 text-right tabular-nums font-mono">
-                <div>{formatINR(totals.dr / 100, { showZero: true })} Dr</div>
-                <div>{formatINR(totals.cr / 100, { showZero: true })} Cr</div>
-              </td>
-              <td className="px-3 py-2.5" colSpan={2}>
-                <span
-                  className={
-                    "rounded px-2 py-1 text-xs font-medium " +
-                    (totals.balanced
-                      ? "bg-success-soft text-success"
-                      : "bg-warning-soft text-warning")
-                  }
-                >
-                  {totals.balanced
-                    ? "Balanced"
-                    : `Out by ${formatINR(Math.abs(totals.difference) / 100, { showZero: true })}`}
-                </span>
-              </td>
-            </tr>
-          </tfoot>
-        </table>
-      </div>
+                      </Fragment>
+                    );
+                  })}
+                </tbody>
+                <tfoot>
+                  <tr className="border-t border-border bg-bg text-sm font-medium">
+                    <td className="px-3 py-2.5" colSpan={2}>
+                      <button
+                        type="button"
+                        onClick={addLine}
+                        className="rounded px-2 py-1 text-xs text-accent underline underline-offset-4"
+                      >
+                        Add line
+                      </button>
+                    </td>
+                    <td className="px-3 py-2.5 text-right tabular-nums font-mono">
+                      <div>{formatINR(totals.dr / 100, { showZero: true })} Dr</div>
+                      <div>{formatINR(totals.cr / 100, { showZero: true })} Cr</div>
+                    </td>
+                    <td className="px-3 py-2.5" colSpan={2}>
+                      <span
+                        className={
+                          "rounded px-2 py-1 text-xs font-medium " +
+                          (totals.balanced
+                            ? "bg-success-soft text-success"
+                            : "bg-warning-soft text-warning")
+                        }
+                      >
+                        {totals.balanced
+                          ? "Balanced"
+                          : `Out by ${formatINR(Math.abs(totals.difference) / 100, { showZero: true })}`}
+                      </span>
+                    </td>
+                  </tr>
+                </tfoot>
+              </table>
+            </div>
+          </>
+        );
+      })()}
 
       <label className="mt-5 flex flex-col gap-1.5">
         <span className="text-sm font-medium">Narration</span>
@@ -623,7 +767,7 @@ export function VoucherForm({
       <button
         type="submit"
         disabled={busy || !totals.balanced}
-        className="mt-5 rounded-lg bg-accent px-4 py-2 text-sm font-semibold text-accent-ink transition-colors hover:opacity-90 disabled:opacity-50"
+        className="mt-5 w-full rounded-lg bg-accent px-4 py-2 text-sm font-semibold text-accent-ink transition-colors hover:opacity-90 disabled:opacity-50 sm:w-auto"
       >
         {busy ? "Saving…" : isEdit ? "Save changes" : "Save voucher"}
       </button>
