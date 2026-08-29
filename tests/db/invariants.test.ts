@@ -4670,6 +4670,67 @@ describeDb(`GSTR-1 Table 13 documents issued (${hasDb ? "live" : noDbReason})`, 
   });
 });
 
+describeDb(`party GSTIN consistency (${hasDb ? "live" : noDbReason})`, () => {
+  // 0735. A GSTIN is a composite key whose substrings duplicate two other
+  // columns on the same row: characters 1-2 are the state code, 3-12 the PAN.
+  // If they disagree, every place-of-supply and intra/inter determination
+  // downstream contradicts the number printed on the invoice.
+  it("no ledger's GSTIN disagrees with its own state code", async () => {
+    const rows = await sql(`
+      select id, name, gstin, state_code from ledgers
+       where gstin is not null and state_code is distinct from substr(gstin, 1, 2)
+    `);
+    expect(rows, `a ledger's GSTIN and state_code contradict each other:
+${offenders(rows)}`).toEqual([]);
+  });
+
+  it("no ledger's GSTIN disagrees with its own PAN", async () => {
+    const rows = await sql(`
+      select id, name, gstin, pan from ledgers
+       where gstin is not null and pan is not null and pan <> substr(gstin, 3, 10)
+    `);
+    expect(rows, `a ledger's GSTIN and PAN contradict each other:
+${offenders(rows)}`).toEqual([]);
+  });
+
+  // The compliance rule this exists for: a registered party without a GSTIN
+  // is indistinguishable from an unregistered one, so its invoices land in
+  // the B2C tables of GSTR-1 instead of B2B and build_einvoice_json refuses
+  // them outright (it raises when the party's gstin is null).
+  it("every party marked registered actually carries a GSTIN", async () => {
+    const rows = await sql(`
+      select id, name, gst_registration_type from ledgers
+       where gst_registration_type in
+             ('regular', 'composition', 'sez', 'sez_developer', 'uin', 'deemed_export')
+         and gstin is null
+    `);
+    expect(rows, `a registered party has no GSTIN — its invoices cannot be e-invoiced:
+${offenders(rows)}`).toEqual([]);
+  });
+
+  it("no party marked unregistered or overseas carries a GSTIN", async () => {
+    const rows = await sql(`
+      select id, name, gst_registration_type, gstin from ledgers
+       where gst_registration_type in ('unregistered', 'overseas') and gstin is not null
+    `);
+    expect(rows, `an unregistered or overseas party carries a GSTIN:
+${offenders(rows)}`).toEqual([]);
+  });
+
+  it("the four consistency constraints are still attached", async () => {
+    const rows = await sql(`
+      select unnest(array[
+        'ledgers_gstin_matches_state', 'ledgers_gstin_matches_pan',
+        'ledgers_registered_has_gstin', 'ledgers_unregistered_has_no_gstin'
+      ]) as expected
+      except
+      select conname from pg_constraint where conrelid = 'public.ledgers'::regclass
+    `);
+    expect(rows, `a GSTIN consistency constraint has been dropped:
+${offenders(rows)}`).toEqual([]);
+  });
+});
+
 // ---------------------------------------------------------------------------
 // Needs fixtures. Seeded database only — never the live project.
 // ---------------------------------------------------------------------------

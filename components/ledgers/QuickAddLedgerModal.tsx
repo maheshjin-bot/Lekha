@@ -31,6 +31,8 @@ export type QuickAddedLedger = {
   ledger_role: string;
   state_code: string | null;
   pan: string | null;
+  gstin: string | null;
+  gst_registration_type: string | null;
   opening_balance_amount: number;
   opening_balance_type: string;
 };
@@ -46,6 +48,34 @@ type StateOption = { code: string; name: string };
 
 // Mirrors app_private.is_valid_pan exactly, same as LedgerManager's copy.
 const PAN_PATTERN = /^[A-Z]{5}[0-9]{4}[A-Z]$/;
+
+// The shape half of app_private.is_valid_gstin. The check digit is the other
+// half and is deliberately NOT reimplemented here — the database owns that
+// arithmetic, and a second copy that drifted would reject numbers Postgres
+// accepts. This catches the typo; ledgers_gstin_check catches the rest.
+const GSTIN_PATTERN = /^[0-9]{2}[A-Z]{5}[0-9]{4}[A-Z][1-9A-Z]Z[0-9A-Z]$/;
+
+/**
+ * A GSTIN is a composite key: characters 1-2 are the state code and 3-12 are
+ * the PAN. Deriving both from it (rather than asking for them again) is what
+ * keeps this popup on the right side of ledgers_gstin_matches_state and
+ * ledgers_gstin_matches_pan (0735) without the preparer having to know those
+ * constraints exist.
+ */
+const stateFromGstin = (g: string) => (GSTIN_PATTERN.test(g) ? g.slice(0, 2) : "");
+const panFromGstin = (g: string) => (GSTIN_PATTERN.test(g) ? g.slice(2, 12) : "");
+
+/**
+ * The three statuses that matter at entry time. The full eight
+ * (composition, sez_developer, uin, deemed_export) live on the ledgers
+ * screen — they change how tax is computed but not whether a number is
+ * needed, which is the only question this popup has to settle.
+ */
+const GST_STATUSES = [
+  { value: "regular", label: "Registered", needsGstin: true },
+  { value: "unregistered", label: "Unregistered / consumer", needsGstin: false },
+  { value: "overseas", label: "Overseas (export)", needsGstin: false },
+] as const;
 
 /**
  * The group a role's ledgers conventionally live under, when the company has
@@ -100,6 +130,8 @@ export function QuickAddLedgerModal({
   const [openingType, setOpeningType] = useState<"debit" | "credit">("debit");
   const [pan, setPan] = useState("");
   const [stateCode, setStateCode] = useState("");
+  const [gstStatus, setGstStatus] = useState("");
+  const [gstin, setGstin] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -172,6 +204,16 @@ export function QuickAddLedgerModal({
       : defaultGroupId;
 
   const panLooksValid = pan.length === 0 || PAN_PATTERN.test(pan);
+
+  // GST status only matters for a trading party. A journal line hitting Bank
+  // Charges has no GST registration, and asking would be noise — so the whole
+  // block is hidden unless this popup was opened for a debtor or creditor.
+  const isParty = rolesKey
+    .split(",")
+    .some((r) => r === "debtor" || r === "creditor");
+  const gstStatusMeta = GST_STATUSES.find((g) => g.value === gstStatus);
+  const gstinRequired = !!gstStatusMeta?.needsGstin;
+  const gstinLooksValid = gstin.length === 0 || GSTIN_PATTERN.test(gstin);
   const selectedGroup = candidates.find((g) => g.id === groupId);
 
   function reset() {
@@ -181,6 +223,8 @@ export function QuickAddLedgerModal({
     setOpeningType("debit");
     setPan("");
     setStateCode("");
+    setGstStatus("");
+    setGstin("");
     setError(null);
   }
 
@@ -191,6 +235,17 @@ export function QuickAddLedgerModal({
     if (!groupId || !selectedGroup) return setError("Pick a group.");
     if (!panLooksValid)
       return setError("That doesn't match the PAN format (5 letters, 4 digits, 1 letter).");
+    // The rule the database will enforce anyway (ledgers_registered_has_gstin,
+    // 0735), stated here in the preparer's own terms rather than surfacing as
+    // a constraint name after a round trip.
+    if (gstinRequired && !gstin.trim())
+      return setError(
+        "A registered party needs its GSTIN — it is what puts the invoice in the B2B tables of GSTR-1 rather than B2C."
+      );
+    if (gstin.trim() && !GSTIN_PATTERN.test(gstin.trim()))
+      return setError(
+        "That doesn't look like a GSTIN (15 characters: 2-digit state, 10-character PAN, then 3 more)."
+      );
 
     setBusy(true);
     setError(null);
@@ -205,18 +260,24 @@ export function QuickAddLedgerModal({
         opening_balance_type: openingType,
         pan: pan.trim() || null,
         state_code: stateCode || null,
+        gstin: gstin.trim() || null,
+        gst_registration_type: gstStatus || null,
       })
       // Reading the row straight back is what makes the local merge possible:
       // the caller cannot select an id it has not been told about, and
       // router.refresh() alone is a race against the server re-fetch.
-      .select("id, name, group_id, state_code, pan, opening_balance_amount, opening_balance_type")
+      .select(
+        "id, name, group_id, state_code, pan, gstin, gst_registration_type, opening_balance_amount, opening_balance_type"
+      )
       .single();
 
     if (insertError || !data) {
       setError(
         insertError?.code === "23505"
           ? `This company already has a ledger called "${trimmed}".`
-          : insertError?.message ?? "The ledger could not be created."
+          : insertError?.message?.includes("ledgers_gstin_check")
+            ? "That GSTIN failed its check digit — re-read the last character from the certificate."
+            : insertError?.message ?? "The ledger could not be created."
       );
       setBusy(false);
       return;
@@ -230,6 +291,8 @@ export function QuickAddLedgerModal({
       ledger_role: selectedGroup.ledger_role ?? "other",
       state_code: data.state_code,
       pan: data.pan,
+      gstin: data.gstin,
+      gst_registration_type: data.gst_registration_type,
       opening_balance_amount: Number(data.opening_balance_amount),
       opening_balance_type: data.opening_balance_type,
     });
@@ -340,6 +403,74 @@ export function QuickAddLedgerModal({
             </select>
           </label>
         </div>
+
+        {isParty && (
+          <div className="grid gap-3 sm:grid-cols-2">
+            <label className="flex flex-col gap-1.5">
+              <span className="text-sm font-medium">GST status</span>
+              <select
+                value={gstStatus}
+                onChange={(e) => {
+                  const next = e.target.value;
+                  setGstStatus(next);
+                  // Clearing the number when the party stops being registered
+                  // is what keeps ledgers_unregistered_has_no_gstin (0735)
+                  // satisfiable without the preparer having to notice.
+                  const stillNeeds = GST_STATUSES.find(
+                    (g) => g.value === next
+                  )?.needsGstin;
+                  if (!stillNeeds) setGstin("");
+                }}
+                className={field}
+              >
+                <option value="">Not stated</option>
+                {GST_STATUSES.map((g) => (
+                  <option key={g.value} value={g.value}>
+                    {g.label}
+                  </option>
+                ))}
+              </select>
+            </label>
+
+            <label className="flex flex-col gap-1.5">
+              <span className="text-sm font-medium">
+                GSTIN{" "}
+                <span className="font-normal text-ink-faint">
+                  {gstinRequired ? "required" : "optional"}
+                </span>
+              </span>
+              <input
+                value={gstin}
+                onChange={(e) => {
+                  const next = e.target.value.toUpperCase().slice(0, 15);
+                  setGstin(next);
+                  // State and PAN are literally inside the GSTIN, so fill them
+                  // from it rather than asking twice and risking a mismatch the
+                  // database would then refuse.
+                  const st = stateFromGstin(next);
+                  if (st) setStateCode(st);
+                  const pn = panFromGstin(next);
+                  if (pn) setPan(pn);
+                }}
+                maxLength={15}
+                placeholder="07AAAAA0000A1Z5"
+                className={field + " font-mono uppercase"}
+              />
+              {gstin.length > 0 && !gstinLooksValid ? (
+                <span className="text-xs text-warning">
+                  A GSTIN is 15 characters: 2-digit state, 10-character PAN,
+                  then 3 more.
+                </span>
+              ) : (
+                <span className="text-xs text-ink-faint">
+                  {gstinRequired
+                    ? "Required for a registered party — it is what puts this invoice in GSTR-1 B2B rather than B2C."
+                    : "Fills in state and PAN automatically."}
+                </span>
+              )}
+            </label>
+          </div>
+        )}
 
         <div className="grid gap-3 sm:grid-cols-2">
           <label className="flex flex-col gap-1.5">

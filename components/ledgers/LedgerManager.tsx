@@ -41,6 +41,21 @@ const UDYAM_PATTERN = /^UDYAM-[A-Z]{2}-[0-9]{2}-[0-9]{7}$/;
 // Mirrors app_private.is_valid_pan exactly.
 const PAN_PATTERN = /^[A-Z]{5}[0-9]{4}[A-Z]$/;
 
+// The shape half of app_private.is_valid_gstin. The check digit stays the
+// database's job — a drifting second copy would reject numbers it accepts.
+const GSTIN_PATTERN = /^[0-9]{2}[A-Z]{5}[0-9]{4}[A-Z][1-9A-Z]Z[0-9A-Z]$/;
+
+// Registration types that mean "this party holds a GSTIN", mirroring
+// ledgers_registered_has_gstin (0735).
+const GST_TYPES_NEEDING_GSTIN = [
+  "regular",
+  "composition",
+  "sez",
+  "sez_developer",
+  "uin",
+  "deemed_export",
+];
+
 // Short labels for the sec43b_category check-constraint values.
 const SEC43B_LABEL: Record<string, string> = {
   statutory_dues: "Tax/duty/cess/fee",
@@ -138,6 +153,7 @@ export function LedgerManager({
   const [isLoanOrDeposit, setIsLoanOrDeposit] = useState(false);
   const [sec43bCategory, setSec43bCategory] = useState("");
   const [gstRegType, setGstRegType] = useState("");
+  const [gstin, setGstin] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -146,6 +162,11 @@ export function LedgerManager({
     tdsSections.find((s) => s.section_code === code)?.rate_percent;
   const udyamLooksValid = udyam.length === 0 || UDYAM_PATTERN.test(udyam);
   const panLooksValid = pan.length === 0 || PAN_PATTERN.test(pan);
+  const gstinLooksValid = gstin.length === 0 || GSTIN_PATTERN.test(gstin);
+  // "" here means "Regular / not set" in this screen's own dropdown, which is
+  // stored as null and stays permissive — so only an explicit registered type
+  // demands a number.
+  const gstinRequired = GST_TYPES_NEEDING_GSTIN.includes(gstRegType);
 
   async function onSubmit(e: React.FormEvent) {
     e.preventDefault();
@@ -170,6 +191,12 @@ export function LedgerManager({
       is_loan_or_deposit: isLoanOrDeposit,
       sec43b_category: sec43bCategory || null,
       gst_registration_type: gstRegType || null,
+      gstin: gstin.trim() || null,
+      // ledgers_gstin_matches_state (0735) requires state_code to be the
+      // GSTIN's own first two characters. This screen has never had a State
+      // control, so the number is the only place it can come from — deriving
+      // it here is what stops a GSTIN entered on this screen being refused.
+      ...(gstin.trim() ? { state_code: gstin.trim().slice(0, 2) } : {}),
     });
 
     if (error) {
@@ -653,7 +680,13 @@ export function LedgerManager({
                 <span className="text-sm font-medium">GST registration type</span>
                 <select
                   value={gstRegType}
-                  onChange={(e) => setGstRegType(e.target.value)}
+                  onChange={(e) => {
+                    const next = e.target.value;
+                    setGstRegType(next);
+                    // Keeps ledgers_unregistered_has_no_gstin (0735)
+                    // satisfiable without the preparer having to know it.
+                    if (next === "unregistered" || next === "overseas") setGstin("");
+                  }}
                   className={field}
                 >
                   <option value="">Regular / not set</option>
@@ -664,6 +697,45 @@ export function LedgerManager({
                   ))}
                 </select>
               </label>
+              {gstRegType !== "unregistered" && gstRegType !== "overseas" && (
+                <label className="mt-3 flex flex-col gap-1.5">
+                  <span className="text-sm font-medium">
+                    GSTIN{" "}
+                    <span className="font-normal text-ink-faint">
+                      {gstinRequired ? "required" : "optional"}
+                    </span>
+                  </span>
+                  <input
+                    value={gstin}
+                    onChange={(e) => {
+                      const next = e.target.value.toUpperCase().slice(0, 15);
+                      setGstin(next);
+                      // State and PAN are substrings of the GSTIN; filling
+                      // them from it is what satisfies
+                      // ledgers_gstin_matches_state / _matches_pan (0735)
+                      // rather than asking twice and risking a refusal.
+                      if (GSTIN_PATTERN.test(next)) setPan(next.slice(2, 12));
+                    }}
+                    maxLength={15}
+                    placeholder="07AAAAA0000A1Z5"
+                    className={field + " font-mono uppercase"}
+                  />
+                  {gstin.length > 0 && !gstinLooksValid ? (
+                    <span className="text-xs text-warning">
+                      A GSTIN is 15 characters: 2-digit state, 10-character
+                      PAN, then 3 more.
+                    </span>
+                  ) : (
+                    <span className="text-xs text-ink-faint">
+                      Fills in state and PAN automatically. Without it a
+                      registered party&rsquo;s invoices land in the B2C tables
+                      of GSTR-1 instead of B2B, and an e-invoice cannot be
+                      generated at all.
+                    </span>
+                  )}
+                </label>
+              )}
+
               <span className="mt-1 block text-xs text-ink-faint">
                 Only needed for a party that isn&rsquo;t an ordinary
                 registered/unregistered domestic buyer or seller. A sale to
