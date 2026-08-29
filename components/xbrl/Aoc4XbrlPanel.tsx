@@ -321,6 +321,12 @@ export function Aoc4XbrlPanel({
           </div>
           {plPreview && (
             <div className="text-sm">
+              <p className="mb-2 text-xs text-ink-faint">
+                Expenses below are tagged individually across Schedule III&rsquo;s seven expense heads
+                (whichever were actually posted to) plus Tax Expense, not as one lump figure — see the
+                warning banner above for why the tag names are still unverified. Total Expenses is an
+                independently computed cross-check of those facts, not a separate source of truth.
+              </p>
               <table className="w-full text-sm">
                 <tbody>
                   {plPreview.facts.map((f) => (
@@ -331,7 +337,7 @@ export function Aoc4XbrlPanel({
                     <td className="py-1 text-right font-mono">{formatINR(plPreview.totalIncome, { showZero: true })}</td>
                   </tr>
                   <tr>
-                    <td className="py-1 text-ink-soft">Total Expenses</td>
+                    <td className="py-1 text-ink-soft">Total Expenses (cross-check sum)</td>
                     <td className="py-1 text-right font-mono text-ink-soft">
                       {formatINR(plPreview.totalExpenses, { showZero: true })}
                     </td>

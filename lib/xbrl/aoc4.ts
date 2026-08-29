@@ -140,23 +140,43 @@
  *   given falls under Current Assets regardless of its real term); current
  *   investments (the 'investment' ledger_role is only ever seeded under
  *   Fixed Assets — non-current — by 0089); other non-current assets.
- * - Schedule III's mandatory seven-way P&L expense split (cost of materials
- *   consumed, purchases of stock-in-trade, changes in inventories, employee
- *   benefit expense, finance costs, depreciation and amortisation, other
- *   expenses). get_profit_and_loss gives this app only a two-way trading-
- *   account split (direct/indirect expense) — a real, pre-existing
- *   simplification this app's own profit-loss report page already commits
- *   to (schedule_iii mode there renders "Direct Expenses"/"Indirect
- *   Expenses", not the seven Schedule III captions either). Only the
- *   AGGREGATE Total Expenses figure is tagged here; the seven sub-lines are
- *   omitted rather than apportioned by guesswork.
+ * - UPDATE, 26 Aug 2026 (updated in place rather than left stale, now that
+ *   the gap it names is closed — see this feature's own build report):
+ *   Schedule III's seven-way P&L expense split IS now wired, via
+ *   get_profit_and_loss's ledger_role column (migration 0210, confirmed
+ *   live and stable before this task started — partition sums exactly to
+ *   the whole nature-total for every company). Each of cost_of_materials,
+ *   purchases_stock_in_trade, changes_in_inventories, employee_benefits,
+ *   finance_costs, depreciation_amortisation and other_expenses is tagged
+ *   as its own in-gaap fact below (mapProfitAndLossFacts / EXPENSE_HEAD_
+ *   BUCKET) — the same UNVERIFIED-element-name discipline as every other
+ *   fact in this module, NOT a claim that these seven tag names are any
+ *   more confirmed against the live taxonomy than the balance-sheet ones
+ *   already were. Total Expenses is still tagged too, but only as an
+ *   INDEPENDENTLY computed sum over every direct_expense/indirect_expense
+ *   row (never read off any one fact) — a genuine arithmetic cross-check
+ *   against the seven-plus-tax_expense facts, not the only expense figure
+ *   in the document any more. Schedule III's own note-level sub-break-up
+ *   WITHIN a head (e.g. an Employee Benefits note splitting salaries/PF/
+ *   ESOP/staff welfare) is still not represented — this schema and
+ *   get_profit_and_loss report the HEAD TOTAL only, one level up from that,
+ *   the same limitation 0210's own migration header already named for the
+ *   profit-loss report page.
  * - Tax expense as its own line, distinct from Profit before tax / Profit
- *   for the period. Any income-tax provision a company actually posts is an
- *   ordinary indirect_expense ledger in this schema, indistinguishable from
- *   any other — so this schema cannot tell "profit before tax" apart from
- *   "profit for the period." Only one bottom-line figure is tagged
- *   (ProfitLossForPeriod); "profit before tax" and a separate tax-expense
- *   fact are both omitted rather than fabricated as zero.
+ *   for the period. PARTIALLY closed by the same 0210 upgrade: a ledger
+ *   explicitly carrying ledger_role='tax_expense' (today, only the system-
+ *   managed "Deferred Tax Expense" ledger ever gets this override — see
+ *   0210) is now tagged as its own in-gaap:TaxExpense fact, kept separate
+ *   from the seven expense heads, matching the profit-loss report page's
+ *   own "shown separately — not one of the seven" treatment verbatim. What
+ *   remains unfixed: any OTHER income-tax provision a company posts as an
+ *   ordinary, un-overridden indirect_expense ledger (e.g. a manually
+ *   created "Provision for Income Tax" ledger with no ledger_role override)
+ *   is still indistinguishable from any other other_expenses posting, so
+ *   this schema still cannot reliably tell "profit before tax" apart from
+ *   "profit for the period" in general — only one bottom-line figure
+ *   (ProfitLossForPeriod) is tagged; a separate "Profit before tax" fact
+ *   remains omitted rather than fabricated from an incomplete tax figure.
  * - Registered-office address, authorised share capital, AGM date, auditor
  *   details — none of these live anywhere in this schema; the AOC-4 e-form's
  *   own "general information" fields beyond CIN/name/incorporation date are
@@ -183,6 +203,15 @@ export type PlFactRow = {
   nature: string; // direct_income | direct_expense | indirect_income | indirect_expense
   group_name: string;
   ledger_name: string;
+  // Added by migration 0210: coalesce(ledger override, group default). For
+  // expense-nature rows this is one of Schedule III's seven Statement of
+  // P&L expense heads or 'tax_expense' (not one of the seven — see module
+  // header); for income-nature rows it is always 'income' and unused below.
+  // `| null` for the same defensive reason BsFactRow's ledger_role is
+  // nullable — get_profit_and_loss's live definition never actually returns
+  // null (coalesce always resolves to the group's own non-null default),
+  // but nothing in this module's own types should assume that stays true.
+  ledger_role: string | null;
   amount: number | string;
 };
 
@@ -338,26 +367,93 @@ export function mapBalanceSheetFacts(rows: BsFactRow[], retainedProfit: number):
 }
 
 // ----------------------------------------------------------------------------
-// Profit & Loss mapping. LEKHA's own schedule_iii P&L rendering (profit-
-// loss/page.tsx) already relabels direct_income/indirect_income/direct_
-// expense/indirect_expense as "Revenue from Operations"/"Other Income"/
-// "Direct Expenses"/"Indirect Expenses" — reused verbatim for the first two;
-// the two expense natures are combined into one Total Expenses fact rather
-// than kept as "Direct"/"Indirect Expenses" facts, because neither of those
-// two labels is an actual Schedule III P&L caption (Schedule III wants seven
-// different sub-lines this schema cannot produce — see module header) and
-// tagging "Direct Expenses" against a real in-gaap element would overstate
-// this module's own confidence in a mapping that does not exist.
+// Profit & Loss mapping. Income: unchanged by this task — direct_income/
+// indirect_income relabelled as "Revenue from Operations"/"Other Income",
+// reusing profit-loss/page.tsx's own established labels verbatim.
+//
+// Expenses (this task's own change, 26 Aug 2026): direct_expense/indirect_
+// expense rows are no longer combined into one lump "Total Expenses" fact.
+// get_profit_and_loss now returns ledger_role per row (migration 0210,
+// confirmed live and stable — checked before starting this task), landing
+// every expense-nature row in exactly one of Schedule III's seven heads or
+// the separate tax_expense bucket — the SAME eight-way split profit-loss/
+// page.tsx's own schedule_iii view already renders (its SCHEDULE_III_
+// EXPENSE_HEADS array), reused here rather than re-invented. Each head that
+// actually has something posted becomes its own in-gaap fact
+// (EXPENSE_HEAD_BUCKET below), same best-effort/UNVERIFIED element-name
+// discipline as every other fact in this module: Schedule III's own caption
+// text, PascalCased, not a confirmed real in-gaap local name. A head with
+// nothing posted this period is omitted from `facts`, not zero-padded —
+// matching how OtherIncome was already omitted here before this task when
+// nothing was posted to it.
+//
+// totalExpenses is an INDEPENDENT running sum over every direct_expense/
+// indirect_expense row, not read off any single fact — a genuine
+// arithmetic cross-check that the per-head-plus-tax_expense facts add up to
+// the same figure profit-loss/page.tsx's own Total Expenses line shows.
+// buildProfitAndLossInstance tags it as its own in-gaap:TotalExpenses fact
+// in the instance document, alongside the per-head facts, not instead of
+// them.
 // ----------------------------------------------------------------------------
+const EXPENSE_HEAD_BUCKET: Record<string, { element: string; label: string }> = {
+  cost_of_materials: { element: "in-gaap:CostOfMaterialsConsumed", label: "Cost of Materials Consumed" },
+  purchases_stock_in_trade: { element: "in-gaap:PurchasesOfStockInTrade", label: "Purchases of Stock-in-Trade" },
+  changes_in_inventories: {
+    element: "in-gaap:ChangesInInventoriesOfFinishedGoodsWorkInProgressAndStockInTrade",
+    label: "Changes in Inventories of Finished Goods, Work-in-Progress and Stock-in-Trade",
+  },
+  employee_benefits: { element: "in-gaap:EmployeeBenefitExpense", label: "Employee Benefits Expense" },
+  finance_costs: { element: "in-gaap:FinanceCosts", label: "Finance Costs" },
+  depreciation_amortisation: {
+    element: "in-gaap:DepreciationAndAmortisationExpense",
+    label: "Depreciation and Amortisation Expense",
+  },
+  other_expenses: { element: "in-gaap:OtherExpenses", label: "Other Expenses" },
+};
+// Defensive fallback for an expense-nature row whose ledger_role this dict
+// does not recognise. None exists live today — checked via a cross-company
+// query (public.ledgers/account_groups joined to voucher_entries, grouped by
+// coalesce(ledger_role, group ledger_role)) before writing this — but an
+// unrecognised value must still land SOMEWHERE inside Total Expenses, or the
+// cross-check total silently stops matching the report page's own figure.
+// Same reasoning CURRENT_ASSET_DEFAULT/CURRENT_LIABILITY_DEFAULT already use
+// above for the balance-sheet side.
+const EXPENSE_HEAD_DEFAULT = EXPENSE_HEAD_BUCKET.other_expenses;
+
+// tax_expense (0210) is deliberately kept OUT of EXPENSE_HEAD_BUCKET and
+// checked first, below — it is not one of Schedule III's seven expense
+// heads (Schedule III shows tax as its own section below Profit before tax)
+// but this schema nets it into the indirect_expense NATURE regardless
+// (0210's own scope boundary, not reopened by this task), so it still has
+// to land somewhere inside totalExpenses. Label matches profit-loss/
+// page.tsx's own "(shown separately — not one of the seven expense heads
+// above)" framing verbatim.
+const TAX_EXPENSE_BUCKET = {
+  element: "in-gaap:TaxExpense",
+  label: "Tax Expense (shown separately — not one of the seven Schedule III expense heads; see module header)",
+};
+
 export type ProfitAndLossMapping = {
+  /** Revenue from Operations, Other Income (if posted), each Schedule III
+   * expense head that was actually posted to, and Tax Expense (if posted) —
+   * one fact per bucket, omitted rather than zero-padded when nothing was
+   * posted to it. Does NOT include a Total Expenses entry — that is
+   * `totalExpenses` below, an independent cross-check sum tagged separately
+   * at instance-assembly time (buildProfitAndLossInstance), not folded into
+   * this array. */
   facts: Aoc4Fact[];
   totalIncome: number;
+  /** Independently summed over every direct_expense/indirect_expense row —
+   * never read off any single fact in `facts` — so it is a genuine
+   * arithmetic cross-check against the per-head facts, not a restatement of
+   * one of them. */
   totalExpenses: number;
   profitForPeriod: number;
 };
 
 export function mapProfitAndLossFacts(rows: PlFactRow[]): ProfitAndLossMapping {
   const facts = new Map<string, Aoc4Fact>();
+  let totalExpenses = 0;
   for (const r of rows) {
     const amount = Number(r.amount) || 0;
     if (r.nature === "direct_income") {
@@ -365,16 +461,16 @@ export function mapProfitAndLossFacts(rows: PlFactRow[]): ProfitAndLossMapping {
     } else if (r.nature === "indirect_income") {
       addFact(facts, { element: "in-gaap:OtherIncome", label: "Other Income" }, amount);
     } else if (r.nature === "direct_expense" || r.nature === "indirect_expense") {
-      addFact(
-        facts,
-        { element: "in-gaap:TotalExpenses", label: "Total Expenses (aggregate — see module header gap note)" },
-        amount
-      );
+      totalExpenses += amount;
+      const bucket =
+        r.ledger_role === "tax_expense"
+          ? TAX_EXPENSE_BUCKET
+          : EXPENSE_HEAD_BUCKET[r.ledger_role ?? ""] ?? EXPENSE_HEAD_DEFAULT;
+      addFact(facts, bucket, amount);
     }
   }
   const totalIncome =
     (facts.get("in-gaap:RevenueFromOperations")?.amount ?? 0) + (facts.get("in-gaap:OtherIncome")?.amount ?? 0);
-  const totalExpenses = facts.get("in-gaap:TotalExpenses")?.amount ?? 0;
   return {
     facts: Array.from(facts.values()),
     totalIncome,
@@ -528,7 +624,18 @@ export function buildProfitAndLossInstance(params: {
   facts.push(factXml({ element: "in-gaap:TotalRevenue", scheduleIIICaption: "Total Revenue (I+II)", amount: mapping.totalIncome }, curCtx.contextId));
   facts.push(
     factXml(
-      { element: "in-gaap:ProfitLossForPeriod", scheduleIIICaption: "Profit/Loss for the Period (bottom line — see module header on why Profit before tax/Tax expense are not separately tagged)", amount: mapping.profitForPeriod },
+      {
+        element: "in-gaap:TotalExpenses",
+        scheduleIIICaption:
+          "Total Expenses (II) — independently computed sum, cross-checked against the per-head facts above, not their only source (see module header)",
+        amount: mapping.totalExpenses,
+      },
+      curCtx.contextId
+    )
+  );
+  facts.push(
+    factXml(
+      { element: "in-gaap:ProfitLossForPeriod", scheduleIIICaption: "Profit/Loss for the Period (bottom line — see module header on why a separate Profit before tax fact is not tagged)", amount: mapping.profitForPeriod },
       curCtx.contextId
     )
   );
@@ -538,6 +645,16 @@ export function buildProfitAndLossInstance(params: {
     contexts.push(contextXml(cin, compCtx));
     for (const f of comparativeMapping.facts) facts.push(factXml(f, compCtx.contextId));
     facts.push(factXml({ element: "in-gaap:TotalRevenue", scheduleIIICaption: "Total Revenue (I+II)", amount: comparativeMapping.totalIncome }, compCtx.contextId));
+    facts.push(
+      factXml(
+        {
+          element: "in-gaap:TotalExpenses",
+          scheduleIIICaption: "Total Expenses (II) — independently computed sum, cross-checked against the per-head facts above",
+          amount: comparativeMapping.totalExpenses,
+        },
+        compCtx.contextId
+      )
+    );
     facts.push(
       factXml(
         { element: "in-gaap:ProfitLossForPeriod", scheduleIIICaption: "Profit/Loss for the Period", amount: comparativeMapping.profitForPeriod },
