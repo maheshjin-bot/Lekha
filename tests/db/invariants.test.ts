@@ -4584,6 +4584,93 @@ describeDb(`e-signature external signer link (${hasDb ? "live" : noDbReason})`, 
 });
 
 // ---------------------------------------------------------------------------
+// Voucher numbering modes and series (0725), and the GSTR-1 Table 13 fix the
+// series work forced (0730). The quick-add popups that shipped alongside
+// these are pure UI over existing RLS and add no SQL, so they have no block.
+// ---------------------------------------------------------------------------
+describeDb(`voucher numbering modes and series (${hasDb ? "live" : noDbReason})`, () => {
+  it("no numbering function is reachable by anon or PUBLIC", async () => {
+    const rows = await sql(`
+      select routine_name, grantee from information_schema.routine_privileges
+       where routine_name in (
+         'get_voucher_numbering_settings', 'set_voucher_numbering_mode',
+         'create_voucher_number_series', 'update_voucher_number_series',
+         'set_voucher_number_series_active', 'get_gstr1_table13',
+         'create_voucher', 'create_invoice'
+       ) and grantee in ('PUBLIC', 'anon')
+    `);
+    expect(rows, `a numbering function reachable by a role it shouldn't be:\n${offenders(rows)}`).toEqual([]);
+  });
+
+  it("every counter row carries a series and a resolved prefix — the 0725 backfill left nothing behind", async () => {
+    const rows = await sql(`
+      select company_id, voucher_type, branch_id, financial_year_label
+        from voucher_number_sequences
+       where series_id is null or resolved_prefix is null or resolved_prefix = ''
+    `);
+    expect(rows, `a counter row has no series or no resolved prefix:\n${offenders(rows)}`).toEqual([]);
+  });
+
+  it("every voucher type that has any series has exactly one active default", async () => {
+    const rows = await sql(`
+      select company_id, voucher_type,
+             count(*) filter (where is_default and is_active) as active_defaults
+        from voucher_number_series
+       group by company_id, voucher_type
+      having count(*) filter (where is_default and is_active) <> 1
+    `);
+    expect(
+      rows,
+      `a voucher type has no active default series (numbering would fail) or more than one:\n${offenders(rows)}`
+    ).toEqual([]);
+  });
+
+  it("no two live vouchers share a number within the same company, type and financial year", async () => {
+    const rows = await sql(`
+      select company_id, voucher_type, financial_year_label, voucher_number, count(*)
+        from vouchers where not is_deleted
+       group by company_id, voucher_type, financial_year_label, voucher_number
+      having count(*) > 1
+    `);
+    expect(rows, `a voucher number is used twice in one financial year:\n${offenders(rows)}`).toEqual([]);
+  });
+
+  it("every issued voucher number uses only the characters CGST Rule 46(b) allows", async () => {
+    const rows = await sql(`
+      select id, voucher_number from vouchers where voucher_number !~ '^[A-Za-z0-9/-]+$'
+    `);
+    expect(rows, `a voucher number contains a character Rule 46(b) does not allow:\n${offenders(rows)}`).toEqual([]);
+  });
+});
+
+describeDb(`GSTR-1 Table 13 documents issued (${hasDb ? "live" : noDbReason})`, () => {
+  // The regression that migration 0730 exists for. When 0725 made
+  // voucher_number_sequences one-row-per-series, Table 13 kept aggregating
+  // its documents by (branch, voucher_type) only and attached that same
+  // aggregate to every series row — reporting 44 sales invoices where 22
+  // existed, on real data, in a table that gets filed.
+  it("Table 13's per-series totals sum to the real count of documents issued in the period, per company", async () => {
+    const rows = await sql(`
+      with per_company as (
+        select c.id, c.name,
+               (select coalesce(sum(t.total_issued), 0)
+                  from get_gstr1_table13(c.id, '2026-04-01', '2027-03-31') t) as table13_total,
+               (select count(*) from vouchers v
+                 where v.company_id = c.id
+                   and v.voucher_type in ('sales', 'credit_note', 'job_work_out')
+                   and v.voucher_date between '2026-04-01' and '2027-03-31') as real_total
+          from companies c
+      )
+      select name, table13_total, real_total from per_company where table13_total <> real_total
+    `);
+    expect(
+      rows,
+      `Table 13 double-counts or drops documents — it must report each issued document exactly once:\n${offenders(rows)}`
+    ).toEqual([]);
+  });
+});
+
+// ---------------------------------------------------------------------------
 // Needs fixtures. Seeded database only — never the live project.
 // ---------------------------------------------------------------------------
 describe.skip("post_gst_setoff, post_deferred_tax [needs seed]", () => {

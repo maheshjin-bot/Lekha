@@ -168,6 +168,7 @@ export function NavRail({
     { href: `${base}/settings`, label: "Settings" },
     { href: `${base}/settings/team`, label: "Team" },
     { href: `${base}/settings/employer-registrations`, label: "Employer registrations" },
+    { href: `${base}/settings/numbering`, label: "Voucher numbering" },
     { href: `${base}/settings/print-template`, label: "Print template" },
     { href: `${base}/settings/backup`, label: "Backup / export" },
     { href: `${base}/settings/api-keys`, label: "API keys" },

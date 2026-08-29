@@ -10,7 +10,7 @@ export type Database = {
   // Allows to automatically instantiate createClient with right options
   // instead of createClient<Database, { PostgrestVersion: 'XX' }>(URL, KEY)
   __InternalSupabase: {
-    PostgrestVersion: "14.17"
+    PostgrestVersion: "14.5"
   }
   public: {
     Tables: {
@@ -6015,6 +6015,8 @@ export type Database = {
           next_number: number
           padding: number
           prefix: string
+          resolved_prefix: string
+          series_id: string
           voucher_type: string
         }
         Insert: {
@@ -6024,6 +6026,8 @@ export type Database = {
           next_number?: number
           padding?: number
           prefix: string
+          resolved_prefix: string
+          series_id: string
           voucher_type: string
         }
         Update: {
@@ -6033,6 +6037,8 @@ export type Database = {
           next_number?: number
           padding?: number
           prefix?: string
+          resolved_prefix?: string
+          series_id?: string
           voucher_type?: string
         }
         Relationships: [
@@ -6045,6 +6051,98 @@ export type Database = {
           },
           {
             foreignKeyName: "voucher_number_sequences_company_id_fkey"
+            columns: ["company_id"]
+            isOneToOne: false
+            referencedRelation: "companies"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "voucher_number_sequences_series_fk"
+            columns: ["series_id", "company_id"]
+            isOneToOne: false
+            referencedRelation: "voucher_number_series"
+            referencedColumns: ["id", "company_id"]
+          },
+        ]
+      }
+      voucher_number_series: {
+        Row: {
+          company_id: string
+          created_at: string
+          created_by: string | null
+          id: string
+          is_active: boolean
+          is_default: boolean
+          name: string
+          padding: number
+          prefix: string
+          updated_at: string
+          voucher_type: string
+        }
+        Insert: {
+          company_id: string
+          created_at?: string
+          created_by?: string | null
+          id?: string
+          is_active?: boolean
+          is_default?: boolean
+          name: string
+          padding?: number
+          prefix: string
+          updated_at?: string
+          voucher_type: string
+        }
+        Update: {
+          company_id?: string
+          created_at?: string
+          created_by?: string | null
+          id?: string
+          is_active?: boolean
+          is_default?: boolean
+          name?: string
+          padding?: number
+          prefix?: string
+          updated_at?: string
+          voucher_type?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "voucher_number_series_company_id_fkey"
+            columns: ["company_id"]
+            isOneToOne: false
+            referencedRelation: "companies"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      voucher_numbering_settings: {
+        Row: {
+          company_id: string
+          created_at: string
+          mode: string
+          updated_at: string
+          updated_by: string | null
+          voucher_type: string
+        }
+        Insert: {
+          company_id: string
+          created_at?: string
+          mode?: string
+          updated_at?: string
+          updated_by?: string | null
+          voucher_type: string
+        }
+        Update: {
+          company_id?: string
+          created_at?: string
+          mode?: string
+          updated_at?: string
+          updated_by?: string | null
+          voucher_type?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "voucher_numbering_settings_company_id_fkey"
             columns: ["company_id"]
             isOneToOne: false
             referencedRelation: "companies"
@@ -6364,6 +6462,7 @@ export type Database = {
           p_godown_id: string
           p_items: Json
           p_narration?: string
+          p_number_series_id?: string
           p_party_ledger_id: string
           p_place_of_supply?: string
           p_rate_source?: string
@@ -6372,6 +6471,7 @@ export type Database = {
           p_trading_ledger_id: string
           p_txn_currency?: string
           p_voucher_date: string
+          p_voucher_number?: string
           p_voucher_type: string
         }
         Returns: string
@@ -6485,12 +6585,25 @@ export type Database = {
           p_exchange_rate?: number
           p_lines: Json
           p_narration?: string
+          p_number_series_id?: string
           p_party_ledger_id?: string
           p_rate_source?: string
           p_reference_date?: string
           p_reference_number?: string
           p_txn_currency?: string
           p_voucher_date: string
+          p_voucher_number?: string
+          p_voucher_type: string
+        }
+        Returns: string
+      }
+      create_voucher_number_series: {
+        Args: {
+          p_company_id: string
+          p_is_default?: boolean
+          p_name: string
+          p_padding?: number
+          p_prefix: string
           p_voucher_type: string
         }
         Returns: string
@@ -7652,6 +7765,7 @@ export type Database = {
           serial_from: number
           serial_span: number
           serial_to: number
+          series_name: string
           series_prefix: string
           total_issued: number
           voucher_type: string
@@ -8806,6 +8920,28 @@ export type Database = {
           voucher_number: string
         }[]
       }
+      get_voucher_numbering_settings: {
+        Args: { p_branch_id?: string; p_company_id: string; p_on_date?: string }
+        Returns: {
+          allows_manual: boolean
+          branch_code: string
+          branch_id: string
+          financial_year_label: string
+          is_active: boolean
+          is_default: boolean
+          mode: string
+          next_number: number
+          padding: number
+          prefix: string
+          preview_length: number
+          preview_number: string
+          rule46b_ok: boolean
+          series_id: string
+          series_name: string
+          type_label: string
+          voucher_type: string
+        }[]
+      }
       import_gstr2b_lines: {
         Args: {
           p_company_id: string
@@ -9130,6 +9266,18 @@ export type Database = {
         Args: { p_is_active: boolean; p_template_id: string }
         Returns: undefined
       }
+      set_voucher_number_series_active: {
+        Args: {
+          p_company_id: string
+          p_is_active: boolean
+          p_series_id: string
+        }
+        Returns: undefined
+      }
+      set_voucher_numbering_mode: {
+        Args: { p_company_id: string; p_mode: string; p_voucher_type: string }
+        Returns: undefined
+      }
       unmark_service_advance_adjusted: {
         Args: { p_advance_id: string; p_company_id: string }
         Returns: undefined
@@ -9175,6 +9323,17 @@ export type Database = {
           p_voucher_id: string
         }
         Returns: string
+      }
+      update_voucher_number_series: {
+        Args: {
+          p_company_id: string
+          p_is_default?: boolean
+          p_name?: string
+          p_padding?: number
+          p_prefix?: string
+          p_series_id: string
+        }
+        Returns: undefined
       }
       upsert_item_batch: {
         Args: {
