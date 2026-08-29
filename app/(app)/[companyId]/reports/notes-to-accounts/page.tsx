@@ -55,6 +55,18 @@ const VOUCHER_TYPE_LABEL: Record<string, string> = {
 const RECEIVABLE_BUCKET_ORDER = ["Not due", "Less than 6 months", "6 months - 1 year", "1-2 years", "2-3 years", "More than 3 years"];
 const PAYABLE_BUCKET_ORDER = ["Not due", "Less than 1 year", "1-2 years", "2-3 years", "More than 3 years"];
 
+// Matches get_notes_employee_benefits_breakup's bucket_order 1-5 (0360) —
+// fixed so all five buckets render even when a company has nothing posted
+// in one of them yet, the same "shell of known labels, SQL supplies only
+// the actuals" split the ageing tables above already use.
+const EMPLOYEE_BENEFIT_BUCKET_ORDER = [
+  "Salaries and wages",
+  "Contribution to provident and other funds (incl. ESI)",
+  "Gratuity expense",
+  "Statutory bonus",
+  "Staff welfare / other",
+];
+
 type ContingentRow = {
   source: string;
   category: string;
@@ -83,6 +95,15 @@ type AgeingRow = {
   amount: number;
 };
 
+type EmployeeBenefitRow = {
+  bucket_order: number;
+  bucket_label: string;
+  source_basis: string;
+  ledger_id: string;
+  ledger_name: string;
+  amount: number;
+};
+
 export default async function NotesToAccountsPage({
   params,
   searchParams,
@@ -105,6 +126,7 @@ export default async function NotesToAccountsPage({
     { data: relatedPartyData },
     { data: receivableAgeing },
     { data: payableAgeing },
+    { data: employeeBenefitsData },
   ] = await Promise.all([
     supabase.rpc("get_contingent_liabilities_note", { p_company_id: companyId, p_as_at: asAt }),
     supabase.rpc("get_related_party_note", {
@@ -114,12 +136,22 @@ export default async function NotesToAccountsPage({
     }),
     supabase.rpc("get_ageing_schedule", { p_company_id: companyId, p_as_at: asAt, p_party_type: "receivable" }),
     supabase.rpc("get_ageing_schedule", { p_company_id: companyId, p_as_at: asAt, p_party_type: "payable" }),
+    // get_notes_employee_benefits_breakup (0360) is not yet in the generated
+    // database.types.ts (off-limits to this task, owned by the integration
+    // pass' regeneration) — same `as unknown as` escape hatch already used
+    // by reports/gst-refunds, reports/balance-sheet, reports/pt-liability.
+    supabase.rpc("get_notes_employee_benefits_breakup", {
+      p_company_id: companyId,
+      p_period_start: period.from,
+      p_period_end: period.to,
+    }),
   ]);
 
   const contingent = (contingentData ?? []) as ContingentRow[];
   const relatedParty = (relatedPartyData ?? []) as RelatedPartyRow[];
   const receivable = (receivableAgeing ?? []) as AgeingRow[];
   const payable = (payableAgeing ?? []) as AgeingRow[];
+  const employeeBenefits = (employeeBenefitsData ?? []) as unknown as EmployeeBenefitRow[];
 
   // --- Contingent liabilities: group by category, Schedule III's own order ---
   const contingentByCategory = new Map<string, ContingentRow[]>();
@@ -159,6 +191,15 @@ export default async function NotesToAccountsPage({
   }
   const receivablePivot = pivotAgeing(receivable, RECEIVABLE_BUCKET_ORDER);
   const payablePivot = pivotAgeing(payable, PAYABLE_BUCKET_ORDER);
+
+  // --- Employee benefits expense: group by the SQL's own bucket_label ---
+  const employeeBenefitsByBucket = new Map<string, EmployeeBenefitRow[]>();
+  for (const r of employeeBenefits) {
+    const bucket = employeeBenefitsByBucket.get(r.bucket_label);
+    if (bucket) bucket.push(r);
+    else employeeBenefitsByBucket.set(r.bucket_label, [r]);
+  }
+  const employeeBenefitsTotal = employeeBenefits.reduce((n, r) => n + Number(r.amount), 0);
 
   return (
     <ReportShell title="Notes to accounts" period={`As at ${formatAsAt(asAt)}`}>
@@ -328,7 +369,82 @@ export default async function NotesToAccountsPage({
       </table>
 
       {/* -------------------------------------------------------------- */}
-      {/* Section 3 — Ageing schedule                                    */}
+      {/* Section 3 — Employee benefits expense sub-break-up             */}
+      {/* -------------------------------------------------------------- */}
+      <div className="border-t border-b border-border px-4 py-3">
+        <h2 className="text-sm font-semibold text-ink">Employee benefits expense</h2>
+        <p className="mt-0.5 text-xs text-ink-faint">
+          Schedule III Part II, General Instructions — the aggregate Employee Benefits Expense head
+          (Profit &amp; Loss), {periodRangeLabel(period.from, period.to)}, broken up by note. Salaries and
+          wages / Contribution to provident and other funds are sourced from the payroll ledgers this app
+          itself posts; Gratuity and Statutory bonus are name-matched only — neither the gratuity nor the
+          bonus computation posts a voucher, so either shows Rs 0 unless a ledger has been manually created
+          and named accordingly. ESOP/ESPP is not tracked (no share-based-payment feature exists) and
+          would fall into Staff welfare / other if ever ledgered. Sums to the Employee Benefits Expense
+          total on the Statement of Profit and Loss for the same period.
+        </p>
+      </div>
+      <table className="w-full min-w-[700px] text-sm">
+        <thead>
+          <tr className="border-b border-border text-left">
+            <th className={th}>Particulars</th>
+            <th className={th + " text-right"}>Amount</th>
+          </tr>
+        </thead>
+        <tbody>
+          {employeeBenefits.length === 0 && (
+            <tr>
+              <td colSpan={2} className="px-4 py-8 text-center text-ink-faint">
+                No employee benefits expense posted for {periodRangeLabel(period.from, period.to)}.
+              </td>
+            </tr>
+          )}
+          {EMPLOYEE_BENEFIT_BUCKET_ORDER.map((label) => {
+            const rows = employeeBenefitsByBucket.get(label) ?? [];
+            const bucketTotal = rows.reduce((n, r) => n + Number(r.amount), 0);
+            if (rows.length === 0) {
+              return (
+                <tr key={label} className="border-b border-border last:border-0">
+                  <td className={td}>{label}</td>
+                  <td className={num + " text-ink-faint"}>{formatINR(0, { showZero: true })}</td>
+                </tr>
+              );
+            }
+            return (
+              <Fragment key={label}>
+                <tr className="border-b border-border bg-bg">
+                  <td colSpan={2} className="px-4 py-1.5 text-xs font-semibold uppercase tracking-wide text-ink-soft">
+                    {label}
+                  </td>
+                </tr>
+                {rows.map((r) => (
+                  <tr key={r.ledger_id} className="border-b border-border last:border-0">
+                    <td className={td + " pl-8 text-ink-soft"}>{r.ledger_name}</td>
+                    <td className={num}>{formatINR(Number(r.amount))}</td>
+                  </tr>
+                ))}
+                {rows.length > 1 && (
+                  <tr className="border-b border-border last:border-0">
+                    <td className={td + " pl-8 font-medium"}>Total — {label}</td>
+                    <td className={num + " font-medium"}>{formatINR(bucketTotal)}</td>
+                  </tr>
+                )}
+              </Fragment>
+            );
+          })}
+        </tbody>
+        {employeeBenefits.length > 0 && (
+          <tfoot>
+            <tr className="border-t-2 border-border-strong bg-bg font-semibold">
+              <td className="px-4 py-2.5">Total employee benefits expense</td>
+              <td className={num}>{formatINR(employeeBenefitsTotal, { showZero: true })}</td>
+            </tr>
+          </tfoot>
+        )}
+      </table>
+
+      {/* -------------------------------------------------------------- */}
+      {/* Section 4 — Ageing schedule                                    */}
       {/* -------------------------------------------------------------- */}
       <div className="border-t border-b border-border px-4 py-3">
         <h2 className="text-sm font-semibold text-ink">Trade receivables ageing</h2>
