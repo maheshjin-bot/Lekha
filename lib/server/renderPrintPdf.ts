@@ -123,8 +123,17 @@ export async function renderUrlToPdf(url: string, cookieHeader: string): Promise
     // (already used to hide the on-screen Print/Download buttons) apply
     // here for free — the same CSS a person printing from their own browser
     // would trigger.
+    // preferCSSPageSize makes the page's OWN `@page { size: ... }` rule win.
+    // That matters because the print page emits one from
+    // companies.print_paper_size (migration 0800): without this flag
+    // Puppeteer's `format` silently overrides the CSS, so a company set to
+    // Letter would get a Letter sheet when a person pressed Print in their
+    // browser and an A4 one from the Download PDF button — the same document
+    // on two different papers depending on which button was used. `format`
+    // stays as the fallback for any page that emits no @page rule at all.
     const pdf = await page.pdf({
       format: "A4",
+      preferCSSPageSize: true,
       printBackground: true,
       margin: { top: "12mm", bottom: "12mm", left: "10mm", right: "10mm" },
     });

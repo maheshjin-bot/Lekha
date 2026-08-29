@@ -181,7 +181,7 @@ export function NavRail({
     { href: `${base}/settings/team`, label: "Team" },
     { href: `${base}/settings/employer-registrations`, label: "Employer registrations" },
     { href: `${base}/settings/numbering`, label: "Voucher numbering" },
-    { href: `${base}/settings/print-template`, label: "Print template" },
+    { href: `${base}/settings/print-template`, label: "Invoice design" },
     { href: `${base}/settings/backup`, label: "Backup / export" },
     { href: `${base}/settings/api-keys`, label: "API keys" },
     // Not under /[companyId]: a second factor belongs to the person, not to a

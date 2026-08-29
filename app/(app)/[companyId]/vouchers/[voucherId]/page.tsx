@@ -1,7 +1,7 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { createClient } from "@/lib/supabase/server";
-import { VoucherDocument } from "@/components/vouchers/VoucherDocument";
+import { VoucherDetailView } from "@/components/vouchers/VoucherDetailView";
 import { isInvoiceType } from "@/lib/utils/voucher";
 
 export default async function VoucherDetailPage({
@@ -79,7 +79,7 @@ export default async function VoucherDetailPage({
         ← Daybook
       </Link>
 
-      <VoucherDocument
+      <VoucherDetailView
         companyId={companyId}
         voucherId={voucherId}
         voucherNumber={voucher.voucher_number}

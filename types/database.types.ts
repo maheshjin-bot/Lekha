@@ -1267,7 +1267,21 @@ export type Database = {
           password_hash: string | null
           password_protected: boolean | null
           pf_establishment_code: string | null
+          print_accent_color: string | null
+          print_bank_account_name: string | null
+          print_bank_account_number: string | null
+          print_bank_branch: string | null
+          print_bank_ifsc: string | null
+          print_bank_name: string | null
+          print_composition_declaration: boolean
+          print_copy_labels: string
+          print_declaration_text: string | null
           print_footer_note: string | null
+          print_paper_size: string
+          print_sales_title: string
+          print_show_upi_qr: boolean
+          print_signatory_designation: string | null
+          print_signatory_name: string | null
           print_terms_and_conditions: string | null
           shops_establishment_reg: string | null
           stock_margin_percent: number
@@ -1307,7 +1321,21 @@ export type Database = {
           password_hash?: string | null
           password_protected?: boolean | null
           pf_establishment_code?: string | null
+          print_accent_color?: string | null
+          print_bank_account_name?: string | null
+          print_bank_account_number?: string | null
+          print_bank_branch?: string | null
+          print_bank_ifsc?: string | null
+          print_bank_name?: string | null
+          print_composition_declaration?: boolean
+          print_copy_labels?: string
+          print_declaration_text?: string | null
           print_footer_note?: string | null
+          print_paper_size?: string
+          print_sales_title?: string
+          print_show_upi_qr?: boolean
+          print_signatory_designation?: string | null
+          print_signatory_name?: string | null
           print_terms_and_conditions?: string | null
           shops_establishment_reg?: string | null
           stock_margin_percent?: number
@@ -1347,7 +1375,21 @@ export type Database = {
           password_hash?: string | null
           password_protected?: boolean | null
           pf_establishment_code?: string | null
+          print_accent_color?: string | null
+          print_bank_account_name?: string | null
+          print_bank_account_number?: string | null
+          print_bank_branch?: string | null
+          print_bank_ifsc?: string | null
+          print_bank_name?: string | null
+          print_composition_declaration?: boolean
+          print_copy_labels?: string
+          print_declaration_text?: string | null
           print_footer_note?: string | null
+          print_paper_size?: string
+          print_sales_title?: string
+          print_show_upi_qr?: boolean
+          print_signatory_designation?: string | null
+          print_signatory_name?: string | null
           print_terms_and_conditions?: string | null
           shops_establishment_reg?: string | null
           stock_margin_percent?: number
@@ -2626,11 +2668,6 @@ export type Database = {
           ewb_number: string | null
           ewb_valid_until: string | null
           id: string
-          ship_to_address: string | null
-          ship_to_gstin: string | null
-          ship_to_name: string | null
-          ship_to_pincode: string | null
-          ship_to_state_code: string | null
           status: string
           transport_doc_date: string | null
           transport_doc_number: string | null
@@ -2650,11 +2687,6 @@ export type Database = {
           ewb_number?: string | null
           ewb_valid_until?: string | null
           id?: string
-          ship_to_address?: string | null
-          ship_to_gstin?: string | null
-          ship_to_name?: string | null
-          ship_to_pincode?: string | null
-          ship_to_state_code?: string | null
           status?: string
           transport_doc_date?: string | null
           transport_doc_number?: string | null
@@ -2674,11 +2706,6 @@ export type Database = {
           ewb_number?: string | null
           ewb_valid_until?: string | null
           id?: string
-          ship_to_address?: string | null
-          ship_to_gstin?: string | null
-          ship_to_name?: string | null
-          ship_to_pincode?: string | null
-          ship_to_state_code?: string | null
           status?: string
           transport_doc_date?: string | null
           transport_doc_number?: string | null
@@ -2696,13 +2723,6 @@ export type Database = {
             isOneToOne: false
             referencedRelation: "companies"
             referencedColumns: ["id"]
-          },
-          {
-            foreignKeyName: "ewb_details_ship_to_state_code_fkey"
-            columns: ["ship_to_state_code"]
-            isOneToOne: false
-            referencedRelation: "ref_states"
-            referencedColumns: ["code"]
           },
           {
             foreignKeyName: "ewb_details_voucher_id_company_id_fkey"
@@ -6147,6 +6167,83 @@ export type Database = {
             isOneToOne: false
             referencedRelation: "companies"
             referencedColumns: ["id"]
+          },
+        ]
+      }
+      voucher_ship_to: {
+        Row: {
+          company_id: string
+          created_at: string
+          created_by: string | null
+          id: string
+          ship_to_address: string
+          ship_to_city: string | null
+          ship_to_gstin: string | null
+          ship_to_ledger_id: string | null
+          ship_to_name: string
+          ship_to_pincode: string | null
+          ship_to_state_code: string
+          updated_at: string
+          voucher_id: string
+        }
+        Insert: {
+          company_id: string
+          created_at?: string
+          created_by?: string | null
+          id?: string
+          ship_to_address: string
+          ship_to_city?: string | null
+          ship_to_gstin?: string | null
+          ship_to_ledger_id?: string | null
+          ship_to_name: string
+          ship_to_pincode?: string | null
+          ship_to_state_code: string
+          updated_at?: string
+          voucher_id: string
+        }
+        Update: {
+          company_id?: string
+          created_at?: string
+          created_by?: string | null
+          id?: string
+          ship_to_address?: string
+          ship_to_city?: string | null
+          ship_to_gstin?: string | null
+          ship_to_ledger_id?: string | null
+          ship_to_name?: string
+          ship_to_pincode?: string | null
+          ship_to_state_code?: string
+          updated_at?: string
+          voucher_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "voucher_ship_to_company_id_fkey"
+            columns: ["company_id"]
+            isOneToOne: false
+            referencedRelation: "companies"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "voucher_ship_to_ship_to_ledger_id_company_id_fkey"
+            columns: ["ship_to_ledger_id", "company_id"]
+            isOneToOne: false
+            referencedRelation: "ledgers"
+            referencedColumns: ["id", "company_id"]
+          },
+          {
+            foreignKeyName: "voucher_ship_to_ship_to_state_code_fkey"
+            columns: ["ship_to_state_code"]
+            isOneToOne: false
+            referencedRelation: "ref_states"
+            referencedColumns: ["code"]
+          },
+          {
+            foreignKeyName: "voucher_ship_to_voucher_id_company_id_fkey"
+            columns: ["voucher_id", "company_id"]
+            isOneToOne: false
+            referencedRelation: "vouchers"
+            referencedColumns: ["id", "company_id"]
           },
         ]
       }
