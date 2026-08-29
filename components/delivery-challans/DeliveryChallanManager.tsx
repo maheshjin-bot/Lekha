@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { toast } from "sonner";
 import { createClient } from "@/lib/supabase/client";
@@ -436,6 +437,12 @@ export function DeliveryChallanManager({
                         {[c.vehicle_number, c.transporter_name].filter(Boolean).join(" · ")}
                       </div>
                     )}
+                    <Link
+                      href={`/${companyId}/eway-bill/challan/${c.challan_id}`}
+                      className="text-xs text-accent underline underline-offset-4"
+                    >
+                      e-Way Bill
+                    </Link>
                   </td>
                   <td className={td}>{PURPOSE_LABEL[c.purpose]}</td>
                   <td className={td}>{c.party_display}</td>

@@ -45,6 +45,20 @@ export default async function EwayBillVoucherPage({
 
   const { data: states } = await supabase.from("ref_states").select("code, name").order("name");
 
+  // Multi-vehicle Part-B history (0500) — oldest first, only meaningful once
+  // a capture row exists to hang updates off. ewb_vehicle_updates is brand
+  // new (migration 0500) — not yet in the generated database types (owned
+  // by the integration pass), hence the disabled rule below, same
+  // convention as EinvoiceDetailForm.tsx's einvoice_details.
+  const { data: vehicleHistory } = existing
+    ? await supabase
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any -- see above
+        .from("ewb_vehicle_updates" as any)
+        .select("id, vehicle_number, reason_code, reason, updated_at")
+        .eq("ewb_detail_id", existing.id)
+        .order("updated_at", { ascending: true })
+    : { data: [] };
+
   const eligible = voucher.voucher_type === "sales";
 
   return (
@@ -80,6 +94,7 @@ export default async function EwayBillVoucherPage({
           isEwbRequired={requirement?.is_ewb_required ?? false}
           existing={existing as never}
           states={states ?? []}
+          vehicleHistory={(vehicleHistory ?? []) as never}
         />
       )}
     </main>

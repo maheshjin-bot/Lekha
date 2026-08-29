@@ -29,6 +29,21 @@ type Row = {
   status: string;
 };
 
+type ChallanRow = {
+  challan_id: string;
+  challan_number: string;
+  challan_date: string;
+  purpose: string;
+  party_display: string | null;
+  consignment_value: number;
+  is_ewb_required: boolean;
+  ewb_id: string | null;
+  transport_mode: string | null;
+  vehicle_number: string | null;
+  ewb_number: string | null;
+  status: string;
+};
+
 /**
  * The hub: every sales voucher over the ₹50,000 Rule 138 consignment-value
  * threshold (get_ewb_requirement, 0190), plus any voucher someone already
@@ -46,8 +61,20 @@ export default async function EwayBillHubPage({
     p_company_id: companyId,
   });
 
+  // get_delivery_challan_ewb_status is brand new (migration 0500) — not yet
+  // in the generated database types (owned by the integration pass), hence
+  // the disabled rule below, same convention as EinvoiceDetailForm.tsx's
+  // einvoice_details.
+  const { data: challanRows, error: challanError } = await supabase.rpc(
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any -- see above
+    "get_delivery_challan_ewb_status" as any,
+    { p_company_id: companyId }
+  );
+
   const list = (rows ?? []) as Row[];
+  const challanList = (challanRows ?? []) as ChallanRow[];
   const pendingCount = list.filter((r) => r.status === "pending").length;
+  const pendingChallanCount = challanList.filter((r) => r.status === "pending").length;
 
   return (
     <main className="mx-auto max-w-6xl px-6 py-10">
@@ -59,11 +86,18 @@ export default async function EwayBillHubPage({
           and a place to record the real e-Way Bill number once you have it. This app does not call the NIC
           e-Way Bill API itself — that needs GSP credentials or direct NIC enrolment this app does not have.
         </p>
-        {pendingCount > 0 && (
-          <p className="mt-3">
-            <Badge tone="bad">
-              {pendingCount} invoice{pendingCount === 1 ? "" : "s"} over threshold with nothing captured yet
-            </Badge>
+        {(pendingCount > 0 || pendingChallanCount > 0) && (
+          <p className="mt-3 flex flex-wrap gap-2">
+            {pendingCount > 0 && (
+              <Badge tone="bad">
+                {pendingCount} invoice{pendingCount === 1 ? "" : "s"} over threshold with nothing captured yet
+              </Badge>
+            )}
+            {pendingChallanCount > 0 && (
+              <Badge tone="bad">
+                {pendingChallanCount} delivery challan{pendingChallanCount === 1 ? "" : "s"} over threshold with nothing captured yet
+              </Badge>
+            )}
           </p>
         )}
       </header>
@@ -121,11 +155,77 @@ export default async function EwayBillHubPage({
         </TableContainer>
       )}
 
+      <h2 className="mb-3 mt-10 font-display text-lg font-semibold tracking-tight text-ink">
+        Delivery challans
+      </h2>
+      <p className="mb-4 max-w-2xl text-sm text-ink-soft">
+        Rule 138 also covers movement without a tax invoice — goods sent on approval, SKD/CKD, branch
+        transfer, exhibition or repair. Same ₹50,000-or-state-threshold check, same offline JSON builder.
+      </p>
+
+      {challanError && (
+        <p className="mb-4 rounded-lg bg-error-soft px-3 py-2 text-sm text-error">{challanError.message}</p>
+      )}
+
+      {challanList.length === 0 ? (
+        <EmptyState>No delivery challan has crossed its e-Way Bill threshold yet.</EmptyState>
+      ) : (
+        <TableContainer>
+          <table className="w-full min-w-[900px] text-sm">
+            <thead>
+              <tr>
+                <th className={th}>Challan</th>
+                <th className={th}>Party / destination</th>
+                <th className={th}>Consignment value</th>
+                <th className={th}>Vehicle</th>
+                <th className={th}>EWB number</th>
+                <th className={th}>Status</th>
+              </tr>
+            </thead>
+            <tbody>
+              {challanList.map((r) => {
+                const badge = STATUS_BADGE[r.status] ?? { label: r.status, tone: "neutral" as const };
+                return (
+                  <tr key={r.challan_id}>
+                    <td className={td}>
+                      <Link
+                        href={`/${companyId}/eway-bill/challan/${r.challan_id}`}
+                        className="text-accent underline underline-offset-4"
+                      >
+                        {r.challan_number}
+                      </Link>
+                      <div className="text-xs text-ink-faint">
+                        {r.challan_date} · {r.purpose.replace(/_/g, " ")}
+                      </div>
+                    </td>
+                    <td className={td}>{r.party_display ?? <span className="text-ink-faint">—</span>}</td>
+                    <td className={num}>{formatINR(Number(r.consignment_value))}</td>
+                    <td className={td}>
+                      {r.vehicle_number ?? <span className="text-ink-faint">—</span>}
+                      {r.transport_mode && <div className="text-xs text-ink-faint capitalize">{r.transport_mode}</div>}
+                    </td>
+                    <td className={td + " font-mono text-xs"}>
+                      {r.ewb_number ?? <span className="font-sans text-ink-faint">—</span>}
+                    </td>
+                    <td className={td}>
+                      <Badge tone={badge.tone}>{badge.label}</Badge>
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </TableContainer>
+      )}
+
       <p className="mt-6 max-w-2xl text-xs text-ink-faint">
-        Flagged against the national ₹50,000 floor only (CGST Rule 138(1), Explanation 2 — consignment value
-        includes GST but excludes TCS and, on a mixed invoice, the value of any exempt/nil-rated line). Some
-        states set a higher intra-state threshold this list does not model, so a row here may show as required
-        slightly earlier than your state strictly demands — deliberately conservative, never the reverse.
+        Flagged against the national ₹50,000 floor, or a confirmed state-specific intra-state threshold
+        where one is on record (CGST Rule 138(1) first proviso — Tamil Nadu, Delhi, Bihar, Punjab,
+        Jharkhand and Maharashtra currently show ₹1,00,000; every other state falls back to the ₹50,000
+        floor). Consignment value follows Explanation 2 — includes GST but excludes TCS and, on a mixed
+        invoice, the value of any exempt/nil-rated line. A state whose own threshold is not yet on record
+        here is flagged against the floor, which can show a row as required slightly earlier than that
+        state strictly demands — deliberately conservative, never the reverse.
       </p>
     </main>
   );
