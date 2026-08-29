@@ -1,7 +1,7 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { createClient } from "@/lib/supabase/server";
-import { InvoiceForm, type ExistingInvoice } from "@/components/invoices/InvoiceForm";
+import { InvoiceForm, type ExistingInvoice, type ShipTo } from "@/components/invoices/InvoiceForm";
 import { TRADING_ROLES } from "@/lib/invoices/trading-roles";
 
 const INVOICE_TYPES = ["sales", "purchase", "credit_note", "debit_note"];
@@ -44,7 +44,9 @@ export default async function EditInvoicePage({
       .order("name"),
     supabase
       .from("ledgers")
-      .select("id, name, state_code, pan, account_groups(ledger_role)")
+      .select(
+        "id, name, state_code, pan, address, city, pincode, gstin, account_groups(ledger_role)"
+      )
       .eq("company_id", companyId)
       .eq("is_active", true)
       .order("name"),
@@ -87,6 +89,42 @@ export default async function EditInvoicePage({
       .eq("price_lists.is_default", true),
   ]);
 
+  // The invoice's delivery address, when it has one (public.voucher_ship_to,
+  // migration 0805). Fetched after the Promise.all rather than inside it only
+  // because voucher_ship_to is brand new and types/database.types.ts — owned
+  // by the integration pass — does not know it yet, so it needs the escape
+  // hatch below and cannot be destructured with the typed queries. Same
+  // convention as components/einvoice/EinvoiceDetailForm.tsx.
+  const { data: shipToRow } = await supabase
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any -- see above
+    .from("voucher_ship_to" as any)
+    .select(
+      "ship_to_ledger_id, ship_to_name, ship_to_address, ship_to_city, ship_to_state_code, ship_to_pincode, ship_to_gstin"
+    )
+    .eq("voucher_id", voucherId)
+    .eq("company_id", companyId)
+    .maybeSingle<{
+      ship_to_ledger_id: string | null;
+      ship_to_name: string;
+      ship_to_address: string;
+      ship_to_city: string | null;
+      ship_to_state_code: string;
+      ship_to_pincode: string | null;
+      ship_to_gstin: string | null;
+    }>();
+
+  const shipTo: ShipTo | null = shipToRow
+    ? {
+        ledgerId: shipToRow.ship_to_ledger_id ?? "",
+        name: shipToRow.ship_to_name,
+        address: shipToRow.ship_to_address,
+        city: shipToRow.ship_to_city ?? "",
+        stateCode: shipToRow.ship_to_state_code,
+        pincode: shipToRow.ship_to_pincode ?? "",
+        gstin: shipToRow.ship_to_gstin ?? "",
+      }
+    : null;
+
   const priceListItems = (priceListItemsRaw ?? []).map((p) => ({
     item_id: p.item_id,
     price: Number(p.price),
@@ -99,6 +137,12 @@ export default async function EditInvoicePage({
     ledger_role: l.account_groups?.ledger_role ?? "other",
     state_code: l.state_code,
     pan: l.pan,
+    // Only the ship-to disclosure reads these (migration 0805) — a delivery
+    // address is prefilled from a party already on file.
+    address: l.address,
+    city: l.city,
+    pincode: l.pincode,
+    gstin: l.gstin,
   }));
 
   const flatBranches = (branches ?? []).map((b) => ({
@@ -146,6 +190,7 @@ export default async function EditInvoicePage({
       discountPercent: Number(vi.discount_percent) > 0 ? String(vi.discount_percent) : "",
       description: vi.description ?? "",
     })),
+    shipTo,
   };
 
   return (

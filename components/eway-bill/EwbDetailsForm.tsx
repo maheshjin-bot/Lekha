@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { toast } from "sonner";
 import { createClient } from "@/lib/supabase/client";
@@ -12,11 +13,6 @@ import { formatINR } from "@/lib/utils/currency";
 
 type Existing = {
   id: string;
-  ship_to_name: string | null;
-  ship_to_address: string | null;
-  ship_to_gstin: string | null;
-  ship_to_state_code: string | null;
-  ship_to_pincode: string | null;
   transporter_id: string | null;
   transporter_name: string | null;
   vehicle_number: string | null;
@@ -28,6 +24,23 @@ type Existing = {
   ewb_generated_date: string | null;
   ewb_valid_until: string | null;
   status: "not_generated" | "generated" | "cancelled";
+} | null;
+
+/**
+ * The invoice's own delivery address (public.voucher_ship_to, migration
+ * 0805). READ here, never written: the ship-to used to be five nullable
+ * columns on ewb_details, which meant one sales voucher could carry a
+ * different delivery address on its printed invoice than in its EWB-01
+ * payload. 0805 moved it to one invoice-level row, so this screen shows what
+ * the invoice says and sends the preparer to the invoice to change it.
+ */
+type ShipTo = {
+  ship_to_name: string;
+  ship_to_address: string;
+  ship_to_city: string | null;
+  ship_to_state_code: string;
+  ship_to_pincode: string | null;
+  ship_to_gstin: string | null;
 } | null;
 
 type VehicleUpdate = {
@@ -66,6 +79,7 @@ export function EwbDetailsForm({
   thresholdAmount,
   isEwbRequired,
   existing,
+  shipTo,
   states,
   vehicleHistory,
 }: {
@@ -75,16 +89,11 @@ export function EwbDetailsForm({
   thresholdAmount: number;
   isEwbRequired: boolean;
   existing: Existing;
+  shipTo: ShipTo;
   states: { code: string; name: string }[];
   vehicleHistory: VehicleUpdate[];
 }) {
   const router = useRouter();
-
-  const [shipToName, setShipToName] = useState(existing?.ship_to_name ?? "");
-  const [shipToAddress, setShipToAddress] = useState(existing?.ship_to_address ?? "");
-  const [shipToGstin, setShipToGstin] = useState(existing?.ship_to_gstin ?? "");
-  const [shipToStateCode, setShipToStateCode] = useState(existing?.ship_to_state_code ?? "");
-  const [shipToPincode, setShipToPincode] = useState(existing?.ship_to_pincode ?? "");
 
   const [transporterId, setTransporterId] = useState(existing?.transporter_id ?? "");
   const [transporterName, setTransporterName] = useState(existing?.transporter_name ?? "");
@@ -149,11 +158,6 @@ export function EwbDetailsForm({
     const row = {
       company_id: companyId,
       voucher_id: voucherId,
-      ship_to_name: shipToName.trim() || null,
-      ship_to_address: shipToAddress.trim() || null,
-      ship_to_gstin: shipToGstin.trim() || null,
-      ship_to_state_code: shipToStateCode || null,
-      ship_to_pincode: shipToPincode.trim() || null,
       transporter_id: transporterId.trim() || null,
       transporter_name: transporterName.trim() || null,
       vehicle_number: vehicleNumber.trim() || null,
@@ -236,56 +240,62 @@ export function EwbDetailsForm({
       </div>
 
       <form onSubmit={submit} className="flex flex-col gap-6 rounded-[14px] border border-border bg-surface p-5 shadow-card">
+        {/* Read-only. The delivery address is an INVOICE fact (CGST Rule
+            46(o) — "address of delivery where the same is different from the
+            place of supply") and since 0805 it is stored once, on the
+            invoice, so a printed invoice and its EWB-01 payload cannot
+            disagree about where the goods went. Entered on the invoice, shown
+            here. */}
         <div>
-          <h2 className="text-sm font-semibold text-ink">Ship-to</h2>
-          <p className="mt-1 text-xs text-ink-faint">
-            Leave blank if goods go where the bill goes — the JSON then uses the party&rsquo;s own address and
-            marks a Regular transaction. Fill in only when the delivery address genuinely differs (a
-            &ldquo;Bill To &ndash; Ship To&rdquo; movement), which is a distinct EWB-01 transaction type, not
-            just a label.
-          </p>
-          <div className="mt-3 grid gap-3 sm:grid-cols-2">
-            <label className="flex flex-col gap-1.5">
-              <Label>Ship-to name</Label>
-              <Input value={shipToName} onChange={(e) => setShipToName(e.target.value)} placeholder="Optional" />
-            </label>
-            <label className="flex flex-col gap-1.5">
-              <Label>Ship-to GSTIN</Label>
-              <Input
-                value={shipToGstin}
-                onChange={(e) => setShipToGstin(e.target.value.toUpperCase())}
-                placeholder="Optional — only if the ship-to site has its own GSTIN"
-                maxLength={15}
-                className="font-mono uppercase"
-              />
-            </label>
+          <div className="flex flex-wrap items-baseline justify-between gap-2">
+            <h2 className="text-sm font-semibold text-ink">Ship-to</h2>
+            <Link
+              href={`/${companyId}/invoices/${voucherId}/edit`}
+              className="text-xs text-accent underline underline-offset-4"
+            >
+              {shipTo ? "Change on the invoice" : "Add one on the invoice"}
+            </Link>
           </div>
-          <label className="mt-3 flex flex-col gap-1.5">
-            <Label>Ship-to address</Label>
-            <Input value={shipToAddress} onChange={(e) => setShipToAddress(e.target.value)} placeholder="Optional" />
-          </label>
-          <div className="mt-3 grid gap-3 sm:grid-cols-2">
-            <label className="flex flex-col gap-1.5">
-              <Label>Ship-to state</Label>
-              <Select value={shipToStateCode} onChange={(e) => setShipToStateCode(e.target.value)}>
-                <option value="">Same as party</option>
-                {states.map((s) => (
-                  <option key={s.code} value={s.code}>
-                    {s.name}
-                  </option>
-                ))}
-              </Select>
-            </label>
-            <label className="flex flex-col gap-1.5">
-              <Label>Ship-to PIN code</Label>
-              <Input
-                value={shipToPincode}
-                onChange={(e) => setShipToPincode(e.target.value)}
-                placeholder="6 digits"
-                maxLength={6}
-              />
-            </label>
-          </div>
+          {shipTo ? (
+            <>
+              <p className="mt-1 text-xs text-ink-faint">
+                Taken from the invoice — the same address it prints. This is a &ldquo;Bill To &ndash;
+                Ship To&rdquo; movement, EWB-01 transaction type 2.
+              </p>
+              <div className="mt-3 rounded-lg border border-border bg-bg px-4 py-3 text-sm text-ink">
+                <div className="font-medium">{shipTo.ship_to_name}</div>
+                <div className="mt-0.5 whitespace-pre-line text-ink-soft">{shipTo.ship_to_address}</div>
+                <div className="mt-0.5 text-ink-soft">
+                  {[
+                    shipTo.ship_to_city,
+                    states.find((st) => st.code === shipTo.ship_to_state_code)?.name ??
+                      shipTo.ship_to_state_code,
+                    shipTo.ship_to_pincode,
+                  ]
+                    .filter(Boolean)
+                    .join(" · ")}
+                </div>
+                {shipTo.ship_to_gstin && (
+                  <div className="mt-1 font-mono text-xs text-ink-faint">
+                    GSTIN {shipTo.ship_to_gstin}
+                  </div>
+                )}
+              </div>
+              <p className="mt-2 text-xs text-ink-faint">
+                The tax head does not follow this address. Under Sec 10(1)(b) IGST Act the place of
+                supply of a bill-to/ship-to supply is the principal place of business of the party
+                directing the delivery, so it stays with the billed party; this state feeds
+                actToStateCode and the Rule 138 threshold only.
+              </p>
+            </>
+          ) : (
+            <p className="mt-1 text-xs text-ink-faint">
+              No separate delivery address on this invoice, so the goods go where the bill goes: the
+              payload uses the party&rsquo;s own address and marks a Regular transaction. Record one on
+              the invoice when the delivery address genuinely differs &mdash; that is a distinct EWB-01
+              transaction type, not just a label.
+            </p>
+          )}
         </div>
 
         <div className="border-t border-border pt-4">

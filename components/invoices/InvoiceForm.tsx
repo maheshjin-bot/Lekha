@@ -2,6 +2,7 @@
 
 import { useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
+import { toast } from "sonner";
 import { createClient } from "@/lib/supabase/client";
 import { formatINR, sumPaise, toPaise } from "@/lib/utils/currency";
 import {
@@ -32,7 +33,20 @@ type Item = {
   gst_rate_percent: number;
   default_tcs_section: string | null;
 };
-type Ledger = { id: string; name: string; ledger_role: string; state_code: string | null; pan: string | null };
+type Ledger = {
+  id: string;
+  name: string;
+  ledger_role: string;
+  state_code: string | null;
+  pan: string | null;
+  // Read only by the ship-to disclosure, to prefill a delivery address from a
+  // party already on file. Never read for the bill-to side, which prints from
+  // the party ledger itself.
+  address?: string | null;
+  city?: string | null;
+  pincode?: string | null;
+  gstin?: string | null;
+};
 type Branch = { id: string; code: string; name: string; registeredState: string | null };
 type Godown = { id: string; code: string; name: string };
 type StateOption = { code: string; name: string };
@@ -77,6 +91,35 @@ function lineAmounts(quantity: string, rate: string, discountPercent: string) {
 }
 
 /**
+ * The invoice's delivery address, when it differs from the billing address —
+ * public.voucher_ship_to (migration 0805), one row per voucher.
+ *
+ * It is NOT a tax input. Under Sec 10(1)(b) IGST Act the place of supply of a
+ * bill-to/ship-to supply is the principal place of business of the third
+ * person directing the delivery — the party the invoice is billed to — so
+ * nothing here touches placeOfSupply, and the form says so on screen.
+ */
+export type ShipTo = {
+  ledgerId: string;
+  name: string;
+  address: string;
+  city: string;
+  stateCode: string;
+  pincode: string;
+  gstin: string;
+};
+
+const emptyShipTo = (): ShipTo => ({
+  ledgerId: "",
+  name: "",
+  address: "",
+  city: "",
+  stateCode: "",
+  pincode: "",
+  gstin: "",
+});
+
+/**
  * An existing invoice being edited. voucherType and branchId are read but
  * not editable once numbered — same reason VoucherForm's ExistingVoucher
  * treats them the same way: the voucher number's prefix already encodes the
@@ -96,6 +139,8 @@ export type ExistingInvoice = {
   reference: string;
   narration: string;
   lines: Line[];
+  /** The voucher_ship_to row on file, or null when goods go where the bill goes. */
+  shipTo: ShipTo | null;
 };
 
 function todayLocal(): string {
@@ -202,6 +247,15 @@ export function InvoiceForm({
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
+  // Ship-to (migration 0805). Collapsed by default and gated behind one
+  // checkbox: the overwhelming majority of invoices deliver to the billing
+  // address, and five more always-visible fields would tax every preparer to
+  // serve the minority. The checkbox is also the delete affordance — clearing
+  // it on an invoice that has a delivery address on file removes the row.
+  const [shipToOn, setShipToOn] = useState(Boolean(existing?.shipTo));
+  const [shipTo, setShipTo] = useState<ShipTo>(existing?.shipTo ?? emptyShipTo());
+  const setShip = (patch: Partial<ShipTo>) => setShipTo((p) => ({ ...p, ...patch }));
+
   // Numbering (0725). Only ever consulted on a NEW invoice: an issued number
   // is fixed, so the edit screen passes no policy and renders no control.
   const [manualNumber, setManualNumber] = useState("");
@@ -263,6 +317,37 @@ export function InvoiceForm({
     const party = allLedgers.find((l) => l.id === newPartyId);
     if (party?.state_code) setPlaceOfSupply(party.state_code);
   }
+
+  // Copying a party's address into the ship-to takes a SNAPSHOT — the fields
+  // stay editable afterwards and are what actually get stored and printed.
+  // The ledger id is kept alongside only as provenance, because a master's
+  // address may legitimately change long after an invoice was issued and the
+  // issued invoice must keep showing what was on it. Same reasoning as the
+  // 0805 migration's ship_to_ledger_id comment.
+  function copyShipToFromLedger(ledgerId: string) {
+    if (!ledgerId) return setShip({ ledgerId: "" });
+    const l = allLedgers.find((x) => x.id === ledgerId);
+    if (!l) return setShip({ ledgerId: "" });
+    setShip({
+      ledgerId,
+      name: l.name,
+      address: l.address ?? "",
+      city: l.city ?? "",
+      stateCode: l.state_code ?? "",
+      pincode: l.pincode ?? "",
+      gstin: l.gstin ?? "",
+    });
+  }
+
+  // Every ledger that actually has an address or a state to copy. Not limited
+  // to the party dropdown's own role filter: a customer's other site, a
+  // sister concern's warehouse or a job worker are all legitimate consignees,
+  // and none of them is necessarily a debtor.
+  const shipToLedgerOptions = allLedgers.filter((l) => l.address || l.state_code);
+
+  const partyState = allLedgers.find((l) => l.id === partyId)?.state_code ?? null;
+  const shipToIsElsewhere =
+    shipToOn && shipTo.stateCode !== "" && partyState !== null && shipTo.stateCode !== partyState;
 
   const supplyType =
     gstOn && branch?.registeredState && placeOfSupply
@@ -433,6 +518,24 @@ export function InvoiceForm({
       const problem = validateManualNumber(manualNumber);
       if (problem) return setError(problem);
     }
+    // Checked here rather than left to the database, because the ship-to is
+    // written AFTER the invoice has already been posted and numbered — a
+    // round-trip failure at that point cannot be undone by re-submitting.
+    // These are the table's own NOT NULLs and its gstin/state CHECK (0805),
+    // stated as sentences.
+    if (shipToOn) {
+      if (!shipTo.name.trim()) return setError("Give the delivery address a name, or untick “Deliver to a different address”.");
+      if (!shipTo.address.trim()) return setError("Enter the delivery address, or untick “Deliver to a different address”.");
+      if (!shipTo.stateCode) return setError("Select the delivery address's state — a GST invoice must name it (Rule 46).");
+      const g = shipTo.gstin.trim().toUpperCase();
+      if (g && g.length !== 15) return setError("A delivery GSTIN is 15 characters, or leave it blank.");
+      if (g && g.slice(0, 2) !== shipTo.stateCode) {
+        return setError("The delivery GSTIN starts with a different state code than the state selected beside it.");
+      }
+      if (shipTo.pincode.trim() && !/^[1-9][0-9]{5}$/.test(shipTo.pincode.trim())) {
+        return setError("A delivery PIN code is six digits and cannot start with 0, or leave it blank.");
+      }
+    }
 
     setBusy(true);
     const items_payload = filled.map((l) => ({
@@ -485,7 +588,52 @@ export function InvoiceForm({
       return;
     }
 
-    router.push(`/${companyId}/vouchers/${existing ? existing.id : data}`);
+    // The ship-to is a separate row keyed on the voucher, so it can only be
+    // written once the voucher exists — which on a new invoice means after
+    // create_invoice has already numbered and posted it. A failure here is
+    // therefore reported rather than treated as a failed save: the invoice is
+    // real, and re-submitting the form would raise a second one.
+    const voucherId = existing ? existing.id : (data as unknown as string);
+    // voucher_ship_to is brand new (migration 0805) and types/database.types.ts
+    // — owned by the integration pass — does not know it yet. Same convention
+    // as components/einvoice/EinvoiceDetailForm.tsx.
+    const shipToErr = shipToOn
+      ? (
+          await createClient()
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any -- see above
+            .from("voucher_ship_to" as any)
+            .upsert(
+              {
+                company_id: companyId,
+                voucher_id: voucherId,
+                ship_to_ledger_id: shipTo.ledgerId || null,
+                ship_to_name: shipTo.name.trim(),
+                ship_to_address: shipTo.address.trim(),
+                ship_to_city: shipTo.city.trim() || null,
+                ship_to_state_code: shipTo.stateCode,
+                ship_to_pincode: shipTo.pincode.trim() || null,
+                ship_to_gstin: shipTo.gstin.trim().toUpperCase() || null,
+              },
+              { onConflict: "voucher_id" }
+            )
+        ).error
+      : existing?.shipTo
+        ? (
+            await createClient()
+              // eslint-disable-next-line @typescript-eslint/no-explicit-any -- see above
+              .from("voucher_ship_to" as any)
+              .delete()
+              .eq("voucher_id", voucherId)
+          ).error
+        : null;
+
+    if (shipToErr) {
+      toast.error(
+        `The invoice was saved, but its delivery address was not: ${shipToErr.message}. Open the invoice and edit it to try again.`
+      );
+    }
+
+    router.push(`/${companyId}/vouchers/${voucherId}`);
     router.refresh();
   }
 
@@ -666,6 +814,154 @@ export function InvoiceForm({
           </label>
         )}
       </div>
+
+      {/* Bill-to / ship-to (migration 0805). A disclosure, not five more
+          fields: almost every invoice delivers to the billing address, and
+          the ones that do not are the exception the preparer opens this for.
+          The checkbox is the whole switch — ticking it reveals the address,
+          unticking it on a saved invoice deletes the one on file. */}
+      <section className="mt-6 rounded-lg border border-border bg-surface p-4">
+        <label className="flex items-start gap-2.5">
+          <input
+            type="checkbox"
+            checked={shipToOn}
+            onChange={(e) => setShipToOn(e.target.checked)}
+            className="mt-0.5 h-4 w-4 accent-[var(--color-accent)]"
+          />
+          <span>
+            <span className="text-sm font-medium text-ink">Deliver to a different address</span>
+            <span className="mt-0.5 block text-xs text-ink-faint">
+              Bill-to / ship-to. Printed as the address of delivery, which a tax invoice must
+              show when it differs from the place of supply (CGST Rule 46).
+            </span>
+          </span>
+        </label>
+
+        {shipToOn && (
+          <div className="mt-4 grid gap-4 sm:grid-cols-3">
+            <label className="flex flex-col gap-1.5 sm:col-span-3">
+              <span className="text-sm font-medium">
+                Copy from a party <span className="font-normal text-ink-faint">optional</span>
+              </span>
+              <select
+                value={shipTo.ledgerId}
+                onChange={(e) => copyShipToFromLedger(e.target.value)}
+                className={field}
+              >
+                <option value="">Type it in below…</option>
+                {shipToLedgerOptions.map((l) => (
+                  <option key={l.id} value={l.id}>
+                    {l.name}
+                  </option>
+                ))}
+              </select>
+              <span className="text-xs text-ink-faint">
+                Fills the fields below once. They stay editable, and what you leave here is what
+                gets stored — a later change to that party&rsquo;s address will not rewrite this
+                invoice.
+              </span>
+            </label>
+
+            <label className="flex flex-col gap-1.5 sm:col-span-2">
+              <span className="text-sm font-medium">Deliver to</span>
+              <input
+                required
+                value={shipTo.name}
+                onChange={(e) => setShip({ name: e.target.value })}
+                placeholder="Consignee name"
+                className={field}
+              />
+            </label>
+
+            <label className="flex flex-col gap-1.5">
+              <span className="text-sm font-medium">
+                GSTIN <span className="font-normal text-ink-faint">optional</span>
+              </span>
+              <input
+                value={shipTo.gstin}
+                onChange={(e) => setShip({ gstin: e.target.value.toUpperCase() })}
+                maxLength={15}
+                placeholder="Of the delivery site"
+                className={field + " font-mono"}
+              />
+            </label>
+
+            <label className="flex flex-col gap-1.5 sm:col-span-3">
+              <span className="text-sm font-medium">Address of delivery</span>
+              <textarea
+                required
+                rows={2}
+                value={shipTo.address}
+                onChange={(e) => setShip({ address: e.target.value })}
+                placeholder="Street, area, landmark"
+                className={field}
+              />
+            </label>
+
+            <label className="flex flex-col gap-1.5">
+              <span className="text-sm font-medium">
+                City <span className="font-normal text-ink-faint">optional</span>
+              </span>
+              <input
+                value={shipTo.city}
+                onChange={(e) => setShip({ city: e.target.value })}
+                className={field}
+              />
+            </label>
+
+            <label className="flex flex-col gap-1.5">
+              <span className="text-sm font-medium">State</span>
+              <select
+                required
+                value={shipTo.stateCode}
+                onChange={(e) => setShip({ stateCode: e.target.value })}
+                className={field}
+              >
+                <option value="">Select…</option>
+                {states.map((s) => (
+                  <option key={s.code} value={s.code}>
+                    {s.name}
+                  </option>
+                ))}
+              </select>
+            </label>
+
+            <label className="flex flex-col gap-1.5">
+              <span className="text-sm font-medium">
+                PIN code <span className="font-normal text-ink-faint">optional</span>
+              </span>
+              <input
+                value={shipTo.pincode}
+                onChange={(e) => setShip({ pincode: e.target.value })}
+                inputMode="numeric"
+                maxLength={6}
+                className={field + " font-mono"}
+              />
+            </label>
+
+            {/* The one thing a preparer is most likely to get wrong, said
+                where the mistake would be made. Sec 10(1)(b) IGST Act deems
+                the third person directing the delivery to have received the
+                goods, so the place of supply is THEIR principal place of
+                business — the bill-to party — not wherever the lorry stops.
+                Following the ship-to instead would swap CGST+SGST for IGST or
+                the reverse. */}
+            {shipToIsElsewhere && (
+              <p className="rounded-lg border border-border-strong bg-bg px-3 py-2.5 text-xs text-ink-soft sm:col-span-3">
+                The goods leave the state the invoice is billed in, and the tax does not follow
+                them. Place of supply stays with{" "}
+                <span className="font-medium text-ink">
+                  {allLedgers.find((l) => l.id === partyId)?.name ?? "the billed party"}
+                </span>{" "}
+                — Sec 10(1)(b) IGST Act deems the party directing the delivery to have received
+                the goods, so their own state decides CGST+SGST or IGST. The delivery address
+                here is printed on the invoice and used for the e-Way Bill; it changes neither
+                the tax head nor the place of supply.
+              </p>
+            )}
+          </div>
+        )}
+      </section>
 
       {/* Two renderings of the same `lines` state: stacked cards below
           sm:, the original table from sm: up. Seven columns need

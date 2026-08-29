@@ -41,7 +41,9 @@ export default async function NewInvoicePage({
       .order("name"),
     supabase
       .from("ledgers")
-      .select("id, name, state_code, pan, account_groups(ledger_role)")
+      .select(
+        "id, name, state_code, pan, address, city, pincode, gstin, account_groups(ledger_role)"
+      )
       .eq("company_id", companyId)
       .eq("is_active", true)
       .order("name"),
@@ -92,6 +94,12 @@ export default async function NewInvoicePage({
     ledger_role: l.account_groups?.ledger_role ?? "other",
     state_code: l.state_code,
     pan: l.pan,
+    // Only the ship-to disclosure reads these (migration 0805) — a delivery
+    // address is prefilled from a party already on file.
+    address: l.address,
+    city: l.city,
+    pincode: l.pincode,
+    gstin: l.gstin,
   }));
 
   const flatBranches = (branches ?? []).map((b) => ({

@@ -38,10 +38,35 @@ export default async function EwayBillVoucherPage({
   const { data: existing } = await supabase
     .from("ewb_details")
     .select(
-      "id, ship_to_name, ship_to_address, ship_to_gstin, ship_to_state_code, ship_to_pincode, transporter_id, transporter_name, vehicle_number, transport_mode, transport_doc_number, transport_doc_date, approx_distance_km, ewb_number, ewb_generated_date, ewb_valid_until, status"
+      "id, transporter_id, transporter_name, vehicle_number, transport_mode, transport_doc_number, transport_doc_date, approx_distance_km, ewb_number, ewb_generated_date, ewb_valid_until, status"
     )
     .eq("voucher_id", voucherId)
     .maybeSingle();
+
+  // The ship-to no longer lives on ewb_details. Migration 0805 moved it to
+  // public.voucher_ship_to — an invoice-level fact (CGST Rule 46(o)) that
+  // exists whether or not the consignment needs an e-Way Bill — precisely so
+  // that the printed invoice and this payload cannot state two different
+  // delivery addresses. This screen now READS it; it is entered on the
+  // invoice. voucher_ship_to is not in the generated database types (owned by
+  // the integration pass), hence the disabled rule, same convention as
+  // ewb_vehicle_updates below.
+  const { data: shipTo } = await supabase
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any -- see above
+    .from("voucher_ship_to" as any)
+    .select(
+      "ship_to_name, ship_to_address, ship_to_city, ship_to_state_code, ship_to_pincode, ship_to_gstin"
+    )
+    .eq("voucher_id", voucherId)
+    .eq("company_id", companyId)
+    .maybeSingle<{
+      ship_to_name: string;
+      ship_to_address: string;
+      ship_to_city: string | null;
+      ship_to_state_code: string;
+      ship_to_pincode: string | null;
+      ship_to_gstin: string | null;
+    }>();
 
   const { data: states } = await supabase.from("ref_states").select("code, name").order("name");
 
@@ -93,6 +118,7 @@ export default async function EwayBillVoucherPage({
           thresholdAmount={requirement ? Number(requirement.threshold_amount) : 50000}
           isEwbRequired={requirement?.is_ewb_required ?? false}
           existing={existing as never}
+          shipTo={shipTo ?? null}
           states={states ?? []}
           vehicleHistory={(vehicleHistory ?? []) as never}
         />
