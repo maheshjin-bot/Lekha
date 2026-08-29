@@ -139,7 +139,12 @@ type Table13Row = {
   nature_of_document: string;
   branch_id: string;
   branch_code: string;
-  series_prefix: string;
+  // 0730: one row per numbering series. series_name distinguishes two series
+  // of the same voucher type; series_prefix is display-ready (trailing slash
+  // trimmed, FY already inside it) and is null on the synthetic
+  // "Manually numbered or retired series" row.
+  series_name: string;
+  series_prefix: string | null;
   financial_year_label: string;
   serial_from: number | null;
   serial_to: number | null;
@@ -670,10 +675,16 @@ function Table13Table({ rows }: { rows: Table13Row[] }) {
             );
           }
           return seriesRows.map((r, i) => (
-            <tr key={`${cat.nature_of_document}-${r.branch_id}`} className="border-b border-border last:border-0">
+            // 0730: a branch can now carry several series per voucher type,
+            // so branch_id alone is no longer a unique key.
+            <tr
+              key={`${cat.nature_of_document}-${r.branch_id}-${r.series_name}`}
+              className="border-b border-border last:border-0"
+            >
               <td className={td}>{i === 0 ? cat.nature_of_document : <span className="text-ink-faint">↳</span>}</td>
               <td className={td + " font-mono text-xs"}>
-                {r.series_prefix}/{r.financial_year_label}
+                {r.series_prefix ?? <span className="font-sans text-ink-faint">No series</span>}
+                <div className="font-sans text-[11px] text-ink-faint">{r.series_name}</div>
               </td>
               <td className={num}>{r.serial_from ?? "—"}</td>
               <td className={num}>
