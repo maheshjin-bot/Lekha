@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { toast } from "sonner";
 import { createClient } from "@/lib/supabase/client";
@@ -387,6 +388,14 @@ function RequestCard({
           )}
         </div>
         <div className="flex shrink-0 items-center gap-2">
+          {(request.status === "sent" || request.status === "completed") && (
+            <Link
+              href={`/${companyId}/signature-requests/${request.id}/links`}
+              className="rounded-lg border border-border-strong px-3 py-1.5 text-xs font-semibold text-ink-soft hover:bg-surface-2"
+            >
+              Signer links
+            </Link>
+          )}
           {request.status === "draft" && (
             <button
               type="button"
