@@ -4,6 +4,16 @@ import { Fragment, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
 import { formatINR, sumPaise, toPaise } from "@/lib/utils/currency";
+import {
+  QuickAddLedgerModal,
+  type QuickAddedLedger,
+} from "@/components/ledgers/QuickAddLedgerModal";
+import { VoucherNumberField } from "@/components/numbering/VoucherNumberField";
+import {
+  friendlyNumberingError,
+  validateManualNumber,
+  type VoucherNumberingByBranch,
+} from "@/lib/numbering/voucher-numbering";
 
 type Ledger = {
   id: string;
@@ -59,6 +69,21 @@ export type ExistingVoucher = {
   branchId: string;
   lines: Line[];
 };
+
+/**
+ * Server-fetched ledgers first, then anything quick-added in this session the
+ * server has not caught up with yet, then sorted by name the way the page's
+ * own query ordered them. Keyed on id so that once router.refresh() lands and
+ * the same row arrives from both sides, the server's copy — the authoritative
+ * one, carrying the TDS columns the insert's narrow select never read back —
+ * is the one that survives.
+ */
+function mergeById<T extends { id: string; name: string }>(server: T[], added: T[]): T[] {
+  const known = new Set(server.map((r) => r.id));
+  return [...server, ...added.filter((a) => !known.has(a.id))].sort((a, b) =>
+    a.name.localeCompare(b.name)
+  );
+}
 
 /** Today as a local wall-clock date — not toISOString(), which is UTC. */
 function todayLocal(): string {
@@ -118,6 +143,7 @@ export function VoucherForm({
   branches,
   tdsSections = [],
   tdsPayableLedgerId = null,
+  numbering = {},
   existing,
 }: {
   companyId: string;
@@ -125,6 +151,14 @@ export function VoucherForm({
   branches: Branch[];
   tdsSections?: TdsSection[];
   tdsPayableLedgerId?: string | null;
+  /**
+   * The company's numbering policy per branch and voucher type (migration
+   * 0725), fetched by the page exactly as ledgers and branches are. Absent on
+   * the edit screen, and an empty object everywhere else means "automatic" —
+   * which is both the safe default and the true default for every company
+   * that has not deliberately changed it.
+   */
+  numbering?: VoucherNumberingByBranch;
   existing?: ExistingVoucher;
 }) {
   const router = useRouter();
@@ -139,6 +173,44 @@ export function VoucherForm({
   );
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  // Numbering (0725). Only ever consulted on a NEW voucher: an issued number
+  // is fixed, so the edit screen passes no policy and renders no control.
+  const [manualNumber, setManualNumber] = useState("");
+  const [seriesId, setSeriesId] = useState<string | null>(null);
+  const policy = isEdit ? undefined : numbering[branchId]?.[voucherType];
+  const seriesOptions = policy?.mode === "series" ? policy.series : [];
+  // Resolved rather than stored, so changing the voucher type or the branch
+  // cannot leave a series selected that belongs to the type you just left.
+  // An id that is no longer on offer falls back to the default series.
+  const effectiveSeriesId = seriesOptions.some((s) => s.id === seriesId)
+    ? seriesId
+    : (seriesOptions.find((s) => s.isDefault)?.id ?? seriesOptions[0]?.id ?? null);
+
+  // Quick-added ledgers, held locally until the server catches up — this form
+  // receives its ledgers as server-fetched props, so a popup cannot select
+  // what it just created until the row is in a list this render can see.
+  const [addedLedgers, setAddedLedgers] = useState<Ledger[]>([]);
+  const [ledgerModalLine, setLedgerModalLine] = useState<number | null>(null);
+  const allLedgers = useMemo(() => mergeById(ledgers, addedLedgers), [ledgers, addedLedgers]);
+
+  // A quick-added ledger is never a TDS deductee (the popup does not offer
+  // that field), so the section-and-rate columns the hint reads are absent by
+  // construction rather than by omission — no split will be suggested against
+  // it until it has been given a section on the full ledgers screen, and the
+  // refresh below replaces this row with the server's own copy anyway.
+  function onLedgerCreated(lineIndex: number, created: QuickAddedLedger) {
+    setAddedLedgers((prev) => [
+      ...prev,
+      { id: created.id, name: created.name, group_name: created.group_name },
+    ]);
+    setLines((prev) =>
+      prev.map((l, idx) =>
+        idx === lineIndex ? { ...l, ledgerId: created.id, tdsSplit: false } : l
+      )
+    );
+    router.refresh();
+  }
 
   // Totals in integer paise. Comparing rupee floats is how a voucher that
   // looks balanced on screen gets rejected by the database.
@@ -217,6 +289,15 @@ export function VoucherForm({
       setError("Debit and credit totals must match before this can be saved.");
       return;
     }
+    // Same rule app_private.assert_rule46b_number applies, checked here so the
+    // preparer reads a sentence instead of waiting for a round trip to fail.
+    if (policy?.mode === "manual") {
+      const problem = validateManualNumber(manualNumber);
+      if (problem) {
+        setError(problem);
+        return;
+      }
+    }
 
     setBusy(true);
     const supabase = createClient();
@@ -248,10 +329,20 @@ export function VoucherForm({
           p_lines: payload,
           p_narration: narration.trim() || undefined,
           p_reference_number: reference.trim() || undefined,
+          // Exactly one of these, and only when the mode calls for it.
+          // next_voucher_number REFUSES a series it was not asked for in
+          // automatic mode, and resolve_manual_voucher_number refuses a typed
+          // number outside manual mode — both deliberately, so that a UI bug
+          // cannot quietly fork a company's GST series. undefined is dropped
+          // from the request body by supabase-js and falls through to the SQL
+          // default, which is how every other optional argument here works.
+          p_voucher_number: policy?.mode === "manual" ? manualNumber.trim() : undefined,
+          p_number_series_id:
+            policy?.mode === "series" ? (effectiveSeriesId ?? undefined) : undefined,
         });
 
     if (error) {
-      setError(error.message);
+      setError(friendlyNumberingError(error.message));
       setBusy(false);
       return;
     }
@@ -314,6 +405,29 @@ export function VoucherForm({
           </select>
         </label>
 
+        {/* Nothing at all in automatic mode — see VoucherNumberField. */}
+        <VoucherNumberField
+          policy={policy}
+          manualNumber={manualNumber}
+          onManualNumberChange={setManualNumber}
+          seriesId={effectiveSeriesId}
+          onSeriesIdChange={setSeriesId}
+        />
+
+        {/* Read-only on purpose. The number is allocated once, at the moment
+            the voucher is posted, and may already be printed on a document
+            sent to the other party; update_voucher takes no number argument
+            at all, so there is nothing here for an input to send. */}
+        {isEdit && (
+          <div className="flex flex-col gap-1.5">
+            <span className="text-sm font-medium">Number</span>
+            <span className="rounded-lg border border-border bg-bg px-3 py-2 text-sm font-mono text-ink-soft">
+              {existing!.voucherNumber}
+            </span>
+            <span className="text-xs text-ink-faint">Fixed once issued.</span>
+          </div>
+        )}
+
         <label className="flex flex-col gap-1.5">
           <span className="text-sm font-medium">
             Reference <span className="font-normal text-ink-faint">optional</span>
@@ -348,7 +462,7 @@ export function VoucherForm({
               const suggestion =
                 line.side === "cr" && !line.tdsSplit
                   ? tdsSuggestion(
-                      ledgers.find((l) => l.id === line.ledgerId),
+                      allLedgers.find((l) => l.id === line.ledgerId),
                       Number(line.amount),
                       tdsSections,
                       date
@@ -359,18 +473,30 @@ export function VoucherForm({
                 <Fragment key={i}>
                   <tr className="border-b border-border">
                     <td className="px-3 py-2">
-                      <select
-                        value={line.ledgerId}
-                        onChange={(e) => update(i, { ledgerId: e.target.value })}
-                        className="w-full rounded border border-transparent bg-transparent px-2 py-1.5 outline-none focus-visible:border-accent focus-visible:ring-2 focus-visible:ring-accent/30"
-                      >
-                        <option value="">Select a ledger…</option>
-                        {ledgers.map((l) => (
-                          <option key={l.id} value={l.id}>
-                            {l.name}
-                          </option>
-                        ))}
-                      </select>
+                      <div className="flex items-center gap-1">
+                        <select
+                          aria-label={`Ledger on line ${i + 1}`}
+                          value={line.ledgerId}
+                          onChange={(e) => update(i, { ledgerId: e.target.value })}
+                          className="w-full rounded border border-transparent bg-transparent px-2 py-1.5 outline-none focus-visible:border-accent focus-visible:ring-2 focus-visible:ring-accent/30"
+                        >
+                          <option value="">Select a ledger…</option>
+                          {allLedgers.map((l) => (
+                            <option key={l.id} value={l.id}>
+                              {l.name}
+                            </option>
+                          ))}
+                        </select>
+                        <button
+                          type="button"
+                          onClick={() => setLedgerModalLine(i)}
+                          aria-label={`New ledger for line ${i + 1}`}
+                          title="Create a ledger without leaving this voucher"
+                          className="shrink-0 rounded px-1.5 py-1 text-xs text-accent underline underline-offset-4"
+                        >
+                          + New
+                        </button>
+                      </div>
                     </td>
                     <td className="px-3 py-2">
                       <select
@@ -501,6 +627,19 @@ export function VoucherForm({
       >
         {busy ? "Saving…" : isEdit ? "Save changes" : "Save voucher"}
       </button>
+
+      {/* No role restriction: a journal line may legitimately hit any ledger
+          in the company, so every group is offered. */}
+      <QuickAddLedgerModal
+        open={ledgerModalLine !== null}
+        onClose={() => setLedgerModalLine(null)}
+        companyId={companyId}
+        title="New ledger"
+        description="Enough to post against. TDS, MSME, related-party and the rest live on the ledgers screen."
+        onCreated={(created) => {
+          if (ledgerModalLine !== null) onLedgerCreated(ledgerModalLine, created);
+        }}
+      />
     </form>
   );
 }

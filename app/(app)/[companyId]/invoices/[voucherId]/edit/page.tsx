@@ -2,6 +2,7 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 import { createClient } from "@/lib/supabase/server";
 import { InvoiceForm, type ExistingInvoice } from "@/components/invoices/InvoiceForm";
+import { TRADING_ROLES } from "@/lib/invoices/trading-roles";
 
 const INVOICE_TYPES = ["sales", "purchase", "credit_note", "debit_note"];
 
@@ -110,9 +111,19 @@ export default async function EditInvoicePage({
   const gstOn = (modules ?? []).some((m) => m.code === "gst" && m.active);
   const tcsOn = (modules ?? []).some((m) => m.code === "tcs" && m.active);
 
+  // The same role list InvoiceForm's own dropdown filters on, so the two
+  // cannot disagree. It used to be a local ["income", "expense"] — and
+  // migration 0210 replaced 'expense' with Schedule III's own expense
+  // sub-classifications without keeping it, so no group in the database
+  // carries that role any more (confirmed live: 0 of 569). Every real purchase
+  // entry sits under cost_of_materials. The effect was that opening any
+  // purchase bill or debit note for editing found no trading ledger, blanked a
+  // `required` select and made the preparer re-pick it from memory — with a
+  // wrong pick silently re-posting the whole bill to a different expense head
+  // on save.
   const tradingId =
     (tradingEntry ?? []).find((e) =>
-      ["income", "expense"].includes(e.ledgers?.account_groups?.ledger_role ?? "")
+      TRADING_ROLES.includes(e.ledgers?.account_groups?.ledger_role ?? "")
     )?.ledger_id ?? "";
 
   const existing: ExistingInvoice = {

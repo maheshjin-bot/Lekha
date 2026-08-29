@@ -4,6 +4,24 @@ import { useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
 import { formatINR, sumPaise, toPaise } from "@/lib/utils/currency";
+import {
+  QuickAddLedgerModal,
+  type QuickAddedLedger,
+} from "@/components/ledgers/QuickAddLedgerModal";
+import {
+  QuickAddItemModal,
+  type QuickAddedItem,
+} from "@/components/items/QuickAddItemModal";
+import { VoucherNumberField } from "@/components/numbering/VoucherNumberField";
+import {
+  PURCHASE_TRADING_ROLES,
+  SALE_TRADING_ROLES,
+} from "@/lib/invoices/trading-roles";
+import {
+  friendlyNumberingError,
+  validateManualNumber,
+  type VoucherNumberingByBranch,
+} from "@/lib/numbering/voucher-numbering";
 
 type Item = {
   id: string;
@@ -35,6 +53,11 @@ const TYPES = [
   { value: "credit_note", label: "Credit note", party: "Customer", trading: "Sales ledger", roles: ["debtor", "cash_bank"] },
   { value: "debit_note", label: "Debit note", party: "Supplier", trading: "Purchase ledger", roles: ["creditor", "cash_bank"] },
 ] as const;
+
+// The trading-ledger role lists live in lib/invoices/trading-roles.ts, not
+// here: the edit page needs the same lists to recover a saved invoice's
+// trading ledger, and a server component cannot import a value out of a
+// "use client" module — it receives a client reference, not the array.
 
 type Line = { itemId: string; quantity: string; rate: string; discountPercent: string; description: string };
 const emptyLine = (): Line => ({ itemId: "", quantity: "1", rate: "", discountPercent: "", description: "" });
@@ -81,6 +104,52 @@ function todayLocal(): string {
   return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`;
 }
 
+/**
+ * Server-fetched rows first, then anything quick-added in this session that
+ * the server has not caught up with yet, then sorted the same way the server
+ * ordered its own query (by name).
+ *
+ * The dedup is the point: this form's props come from a server component, and
+ * a quick-add ends with router.refresh(), so a moment later the same row
+ * arrives from BOTH sides. Keyed on id, the server's copy wins — it is the
+ * authoritative one, and it carries any column the insert's narrow
+ * `.select(...)` did not read back. Sorting rather than appending means the
+ * new row does not jump position when the refresh lands.
+ */
+function mergeById<T extends { id: string; name: string }>(server: T[], added: T[]): T[] {
+  const known = new Set(server.map((r) => r.id));
+  return [...server, ...added.filter((a) => !known.has(a.id))].sort((a, b) =>
+    a.name.localeCompare(b.name)
+  );
+}
+
+/** The popup's row, narrowed to what this form actually reads off a ledger. */
+function toLedger(l: QuickAddedLedger): Ledger {
+  return {
+    id: l.id,
+    name: l.name,
+    // From the ledger's GROUP, exactly as the page's own flatLedgers mapping
+    // derives it — never from ledgers.ledger_role, which is a Schedule III
+    // presentation override and is not what the party dropdown filters on.
+    ledger_role: l.ledger_role,
+    state_code: l.state_code,
+    pan: l.pan,
+  };
+}
+
+/** The popup's row, narrowed to what this form actually reads off an item. */
+function toItem(i: QuickAddedItem): Item {
+  return {
+    id: i.id,
+    name: i.name,
+    uom: i.uom,
+    sale_rate: i.sale_rate,
+    purchase_rate: i.purchase_rate,
+    gst_rate_percent: i.gst_rate_percent,
+    default_tcs_section: i.default_tcs_section,
+  };
+}
+
 export function InvoiceForm({
   companyId,
   items,
@@ -92,6 +161,7 @@ export function InvoiceForm({
   tcsSections,
   states,
   priceListItems = [],
+  numbering = {},
   existing,
 }: {
   companyId: string;
@@ -104,6 +174,14 @@ export function InvoiceForm({
   tcsSections: TcsSection[];
   states: StateOption[];
   priceListItems?: PriceListEntry[];
+  /**
+   * The company's numbering policy per branch and voucher type (migration
+   * 0725), fetched by the page exactly as items, ledgers, branches and
+   * godowns are. Absent on the edit screen; an empty object means automatic,
+   * which is both the safe fallback and the true state of every company that
+   * has not deliberately changed it.
+   */
+  numbering?: VoucherNumberingByBranch;
   existing?: ExistingInvoice;
 }) {
   const router = useRouter();
@@ -124,14 +202,51 @@ export function InvoiceForm({
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
+  // Numbering (0725). Only ever consulted on a NEW invoice: an issued number
+  // is fixed, so the edit screen passes no policy and renders no control.
+  const [manualNumber, setManualNumber] = useState("");
+  const [seriesId, setSeriesId] = useState<string | null>(null);
+  const policy = isEdit ? undefined : numbering[branchId]?.[voucherType];
+  const seriesOptions = policy?.mode === "series" ? policy.series : [];
+  // Resolved rather than stored, so switching between a sales invoice and a
+  // credit note — or between branches — can never leave a series selected
+  // that belongs to the type you just left. An id no longer on offer falls
+  // back to that type's default series.
+  const effectiveSeriesId = seriesOptions.some((s) => s.id === seriesId)
+    ? seriesId
+    : (seriesOptions.find((s) => s.isDefault)?.id ?? seriesOptions[0]?.id ?? null);
+
+  // Quick-added masters, held locally until the server catches up. Without
+  // this the popup could not select what it just created: props arrive from a
+  // server component, and router.refresh() is a round trip — selecting an id
+  // that is not in the list yet would silently reset the select to blank.
+  const [addedLedgers, setAddedLedgers] = useState<Ledger[]>([]);
+  const [addedItems, setAddedItems] = useState<Item[]>([]);
+  const [partyModalOpen, setPartyModalOpen] = useState(false);
+  const [tradingModalOpen, setTradingModalOpen] = useState(false);
+  const [itemModalLine, setItemModalLine] = useState<number | null>(null);
+
+  const allLedgers = useMemo(() => mergeById(ledgers, addedLedgers), [ledgers, addedLedgers]);
+  const allItems = useMemo(() => mergeById(items, addedItems), [items, addedItems]);
+
   const config = TYPES.find((t) => t.value === voucherType)!;
   const isSale = voucherType === "sales" || voucherType === "credit_note";
 
   // The party side hard-filters by ledger role — a sale cannot be billed to a
   // supplier. The trading side stays open, since a business may post to any
   // of several income or expense ledgers.
-  const partyLedgers = ledgers.filter((l) => (config.roles as readonly string[]).includes(l.ledger_role));
-  const tradingLedgers = ledgers.filter((l) => l.ledger_role === (isSale ? "income" : "expense"));
+  const tradingRoles: readonly string[] = isSale ? SALE_TRADING_ROLES : PURCHASE_TRADING_ROLES;
+  const partyLedgers = allLedgers.filter((l) => (config.roles as readonly string[]).includes(l.ledger_role));
+  const tradingLedgers = allLedgers.filter((l) => tradingRoles.includes(l.ledger_role));
+
+  // Which role a quick-added party has to be created under, taken from the
+  // TYPES row above rather than restated: its first entry is the party's own
+  // role ('debtor' for a sale or credit note, 'creditor' for a purchase or
+  // debit note), the second being the cash/bank alternative a counter sale
+  // uses. A ledger created under any other role would not appear in the very
+  // dropdown it was created from, because that dropdown filters on the role
+  // of the ledger's GROUP.
+  const partyRole = config.roles[0];
 
   const branch = branches.find((b) => b.id === branchId);
 
@@ -145,7 +260,7 @@ export function InvoiceForm({
   function selectParty(newPartyId: string) {
     setPartyId(newPartyId);
     if (placeOfSupplyTouched) return;
-    const party = ledgers.find((l) => l.id === newPartyId);
+    const party = allLedgers.find((l) => l.id === newPartyId);
     if (party?.state_code) setPlaceOfSupply(party.state_code);
   }
 
@@ -173,7 +288,7 @@ export function InvoiceForm({
     if (!supplyType) return { cgst: 0, sgst: 0, igst: 0 };
     let cgst = 0, sgst = 0, igst = 0;
     for (const l of lines) {
-      const item = items.find((x) => x.id === l.itemId);
+      const item = allItems.find((x) => x.id === l.itemId);
       if (!item || !item.gst_rate_percent) continue;
       const amount = lineAmounts(l.quantity, l.rate, l.discountPercent).net;
       if (supplyType === "intra") {
@@ -185,7 +300,7 @@ export function InvoiceForm({
       }
     }
     return { cgst, sgst, igst };
-  }, [lines, items, supplyType]);
+  }, [lines, allItems, supplyType]);
 
   // Mirrors create_invoice's TCS math exactly, for the same display-only
   // reason as `tax` above. Only sales and credit notes ever carry TCS, only
@@ -194,11 +309,11 @@ export function InvoiceForm({
   // taxable amount, never the invoice total.
   const tcs = useMemo(() => {
     if (!tcsOn || !isSale) return 0;
-    const party = ledgers.find((l) => l.id === partyId);
+    const party = allLedgers.find((l) => l.id === partyId);
     const hasPan = !!party?.pan;
     let total = 0;
     for (const l of lines) {
-      const item = items.find((x) => x.id === l.itemId);
+      const item = allItems.find((x) => x.id === l.itemId);
       if (!item || !item.default_tcs_section) continue;
       const section = tcsSections.find((s) => s.section_code === item.default_tcs_section);
       if (!section) continue;
@@ -220,7 +335,7 @@ export function InvoiceForm({
       total += Math.round(((base * rate) / 100) * 100) / 100;
     }
     return total;
-  }, [tcsOn, isSale, lines, items, tcsSections, ledgers, partyId, supplyType]);
+  }, [tcsOn, isSale, lines, allItems, tcsSections, allLedgers, partyId, supplyType]);
 
   const grandTotal = taxable + tax.cgst + tax.sgst + tax.igst + tcs;
 
@@ -248,13 +363,56 @@ export function InvoiceForm({
         // since it is the more specific, more recently-updated figure —
         // still just a suggestion, still fully editable either way.
         if (patch.itemId && !l.rate) {
-          const it = items.find((x) => x.id === patch.itemId);
+          const it = allItems.find((x) => x.id === patch.itemId);
           const suggested = priceListRate(patch.itemId) ?? (isSale ? it?.sale_rate : it?.purchase_rate);
           if (suggested) next.rate = String(suggested);
         }
         return next;
       })
     );
+  }
+
+  /**
+   * A ledger the popup just created. Selected here rather than through
+   * selectParty(), because setAddedLedgers and the selection happen in the
+   * same event: allLedgers still holds the previous render's array at this
+   * point, so the state lookup selectParty does would miss. The place of
+   * supply is taken straight off the row the insert returned instead.
+   */
+  function onPartyCreated(created: QuickAddedLedger) {
+    setAddedLedgers((prev) => [...prev, toLedger(created)]);
+    setPartyId(created.id);
+    if (!placeOfSupplyTouched && created.state_code) setPlaceOfSupply(created.state_code);
+    router.refresh();
+  }
+
+  function onTradingCreated(created: QuickAddedLedger) {
+    setAddedLedgers((prev) => [...prev, toLedger(created)]);
+    setTradingId(created.id);
+    router.refresh();
+  }
+
+  /**
+   * An item the popup just created, selected onto the line it was opened
+   * from. Same reason as above for not routing through update(): its rate
+   * prefill reads allItems, which does not contain this row until the next
+   * render, so the rate is taken from the returned row here instead. An
+   * already-typed rate is never overwritten — the same rule update() applies.
+   */
+  function onItemCreated(lineIndex: number, created: QuickAddedItem) {
+    setAddedItems((prev) => [...prev, toItem(created)]);
+    setLines((prev) =>
+      prev.map((l, idx) => {
+        if (idx !== lineIndex) return l;
+        const suggested = isSale ? created.sale_rate : created.purchase_rate;
+        return {
+          ...l,
+          itemId: created.id,
+          rate: l.rate || (suggested ? String(suggested) : ""),
+        };
+      })
+    );
+    router.refresh();
   }
 
   async function onSubmit(e: React.FormEvent) {
@@ -267,6 +425,14 @@ export function InvoiceForm({
     if (!tradingId) return setError(`Select a ${config.trading.toLowerCase()}.`);
     if (taxable <= 0) return setError("The invoice must come to more than zero.");
     if (gstOn && !placeOfSupply) return setError("Select a place of supply.");
+    // The same rule app_private.assert_rule46b_number applies, checked here so
+    // the preparer reads a sentence rather than waiting for a round trip that
+    // fails — and, on a tax invoice, so a number the IRP would reject never
+    // gets issued in the first place.
+    if (policy?.mode === "manual") {
+      const problem = validateManualNumber(manualNumber);
+      if (problem) return setError(problem);
+    }
 
     setBusy(true);
     const items_payload = filled.map((l) => ({
@@ -301,10 +467,20 @@ export function InvoiceForm({
           p_narration: narration.trim() || undefined,
           p_reference_number: reference.trim() || undefined,
           p_place_of_supply: placeOfSupply || undefined,
+          // Exactly one of these, and only when the mode calls for it.
+          // next_voucher_number REFUSES a series it was not asked for in
+          // automatic mode, and resolve_manual_voucher_number refuses a typed
+          // number outside manual mode — both deliberately, so a UI bug cannot
+          // quietly fork a company's GST series. undefined is dropped from the
+          // request body by supabase-js and falls through to the SQL default,
+          // exactly as every other optional argument here does.
+          p_voucher_number: policy?.mode === "manual" ? manualNumber.trim() : undefined,
+          p_number_series_id:
+            policy?.mode === "series" ? (effectiveSeriesId ?? undefined) : undefined,
         });
 
     if (error) {
-      setError(error.message);
+      setError(friendlyNumberingError(error.message));
       setBusy(false);
       return;
     }
@@ -374,9 +550,47 @@ export function InvoiceForm({
           </select>
         </label>
 
-        <label className="flex flex-col gap-1.5">
-          <span className="text-sm font-medium">{config.party}</span>
-          <select required value={partyId} onChange={(e) => selectParty(e.target.value)} className={field}>
+        {/* Nothing at all in automatic mode — see VoucherNumberField. */}
+        <VoucherNumberField
+          policy={policy}
+          manualNumber={manualNumber}
+          onManualNumberChange={setManualNumber}
+          seriesId={effectiveSeriesId}
+          onSeriesIdChange={setSeriesId}
+        />
+
+        {/* Read-only on purpose. The number is allocated once, when the invoice
+            is posted, and is very likely already printed on a document sent to
+            the customer and filed in GSTR-1; update_invoice takes no number
+            argument at all, so there is nothing here for an input to send. */}
+        {isEdit && (
+          <div className="flex flex-col gap-1.5">
+            <span className="text-sm font-medium">Invoice number</span>
+            <span className="rounded-lg border border-border bg-bg px-3 py-2 text-sm font-mono text-ink-soft">
+              {existing!.voucherNumber}
+            </span>
+            <span className="text-xs text-ink-faint">Fixed once issued.</span>
+          </div>
+        )}
+
+        <div className="flex flex-col gap-1.5">
+          <div className="flex items-baseline justify-between gap-2">
+            <span className="text-sm font-medium">{config.party}</span>
+            <button
+              type="button"
+              onClick={() => setPartyModalOpen(true)}
+              className="text-xs text-accent underline underline-offset-4"
+            >
+              + New
+            </button>
+          </div>
+          <select
+            required
+            aria-label={config.party}
+            value={partyId}
+            onChange={(e) => selectParty(e.target.value)}
+            className={field}
+          >
             <option value="">Select…</option>
             {partyLedgers.map((l) => (
               <option key={l.id} value={l.id}>
@@ -384,11 +598,26 @@ export function InvoiceForm({
               </option>
             ))}
           </select>
-        </label>
+        </div>
 
-        <label className="flex flex-col gap-1.5">
-          <span className="text-sm font-medium">{config.trading}</span>
-          <select required value={tradingId} onChange={(e) => setTradingId(e.target.value)} className={field}>
+        <div className="flex flex-col gap-1.5">
+          <div className="flex items-baseline justify-between gap-2">
+            <span className="text-sm font-medium">{config.trading}</span>
+            <button
+              type="button"
+              onClick={() => setTradingModalOpen(true)}
+              className="text-xs text-accent underline underline-offset-4"
+            >
+              + New
+            </button>
+          </div>
+          <select
+            required
+            aria-label={config.trading}
+            value={tradingId}
+            onChange={(e) => setTradingId(e.target.value)}
+            className={field}
+          >
             <option value="">Select…</option>
             {tradingLedgers.map((l) => (
               <option key={l.id} value={l.id}>
@@ -396,7 +625,7 @@ export function InvoiceForm({
               </option>
             ))}
           </select>
-        </label>
+        </div>
 
         <label className="flex flex-col gap-1.5">
           <span className="text-sm font-medium">Godown</span>
@@ -454,19 +683,35 @@ export function InvoiceForm({
           </thead>
           <tbody>
             {lines.map((line, i) => {
-              const item = items.find((x) => x.id === line.itemId);
+              const item = allItems.find((x) => x.id === line.itemId);
               const { gross, discount, net } = lineAmounts(line.quantity, line.rate, line.discountPercent);
               return (
                 <tr key={i} className="border-b border-border last:border-0">
                   <td className="px-3 py-2">
-                    <select value={line.itemId} onChange={(e) => update(i, { itemId: e.target.value })} className={cell}>
-                      <option value="">Select an item…</option>
-                      {items.map((it) => (
-                        <option key={it.id} value={it.id}>
-                          {it.name}
-                        </option>
-                      ))}
-                    </select>
+                    <div className="flex items-center gap-1">
+                      <select
+                        aria-label={`Item on line ${i + 1}`}
+                        value={line.itemId}
+                        onChange={(e) => update(i, { itemId: e.target.value })}
+                        className={cell}
+                      >
+                        <option value="">Select an item…</option>
+                        {allItems.map((it) => (
+                          <option key={it.id} value={it.id}>
+                            {it.name}
+                          </option>
+                        ))}
+                      </select>
+                      <button
+                        type="button"
+                        onClick={() => setItemModalLine(i)}
+                        aria-label={`New item for line ${i + 1}`}
+                        title="Create an item without leaving this invoice"
+                        className="shrink-0 rounded px-1.5 py-1 text-xs text-accent underline underline-offset-4"
+                      >
+                        + New
+                      </button>
+                    </div>
                   </td>
                   <td className="px-3 py-2">
                     <input
@@ -627,6 +872,46 @@ export function InvoiceForm({
       >
         {busy ? "Saving…" : isEdit ? "Save changes" : `Save ${config.label.toLowerCase()}`}
       </button>
+
+      {/* The three popups. Rendered inside the form so they sit next to the
+          state they feed, but each is an overlay and none of them is a nested
+          <form> — see QuickAddLedgerModal for why that matters here. */}
+      <QuickAddLedgerModal
+        open={partyModalOpen}
+        onClose={() => setPartyModalOpen(false)}
+        companyId={companyId}
+        title={`New ${config.party.toLowerCase()}`}
+        description={`Created under a ${partyRole === "debtor" ? "receivables" : "payables"} group, so it appears in the ${config.party.toLowerCase()} list straight away.`}
+        roles={[partyRole]}
+        onCreated={onPartyCreated}
+      />
+
+      <QuickAddLedgerModal
+        open={tradingModalOpen}
+        onClose={() => setTradingModalOpen(false)}
+        companyId={companyId}
+        title={`New ${config.trading.toLowerCase()}`}
+        description={
+          isSale
+            ? "An income ledger — what the sale is credited to."
+            : "An expense ledger — what the purchase is debited to."
+        }
+        roles={tradingRoles}
+        onCreated={onTradingCreated}
+      />
+
+      <QuickAddItemModal
+        open={itemModalLine !== null}
+        onClose={() => setItemModalLine(null)}
+        companyId={companyId}
+        gstOn={gstOn}
+        // An invoice line is a stock line — voucher_items refuses anything
+        // that does not maintain stock. See the prop's own comment.
+        requireStockItem
+        onCreated={(created) => {
+          if (itemModalLine !== null) onItemCreated(itemModalLine, created);
+        }}
+      />
     </form>
   );
 }
