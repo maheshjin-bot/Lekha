@@ -54,6 +54,20 @@ export default async function SettingsPage({
       </Link>
 
       <Link
+        href={`/${companyId}/settings/numbering`}
+        className="mt-3 flex items-center justify-between rounded-lg border border-border bg-surface p-5 transition-colors hover:bg-surface-2"
+      >
+        <span>
+          <span className="block font-semibold text-ink">Voucher numbering</span>
+          <span className="mt-0.5 block text-sm text-ink-soft">
+            Prefix, counter digits and numbering mode per document type — and whether
+            the numbers fit the sixteen characters CGST Rule 46(b) allows.
+          </span>
+        </span>
+        <span aria-hidden className="text-ink-faint">→</span>
+      </Link>
+
+      <Link
         href={`/${companyId}/settings/team`}
         className="mt-3 flex items-center justify-between rounded-lg border border-border bg-surface p-5 transition-colors hover:bg-surface-2"
       >
