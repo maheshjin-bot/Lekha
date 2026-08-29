@@ -16,6 +16,7 @@ export default async function SalesInvoicesPage({
       lockedTypes={["sales"]}
       eximHubLink
       einvoiceHubLink
+      discountAgreementsHubLink
       searchParams={{
         from: typeof sp.from === "string" ? sp.from : undefined,
         to: typeof sp.to === "string" ? sp.to : undefined,

@@ -19,6 +19,7 @@ export async function VoucherTypeList({
   searchParams,
   eximHubLink,
   einvoiceHubLink,
+  discountAgreementsHubLink,
 }: {
   companyId: string;
   basePath: string;
@@ -37,6 +38,12 @@ export async function VoucherTypeList({
    * invoice or a credit note THIS company issued (never a purchase/debit
    * note, where this company is the recipient side, not the IRN holder). */
   einvoiceHubLink?: boolean;
+  /** Additive link to the discount agreements hub (0431) — set only on
+   * Sales Invoices and Sales Returns. Sec 15(3) only governs the value of
+   * an OUTWARD supply, so a post-supply-discount agreement is only ever
+   * relevant to a sales invoice line or a credit note THIS company issued,
+   * never a purchase/debit note. */
+  discountAgreementsHubLink?: boolean;
 }) {
   const supabase = await createClient();
 
@@ -69,6 +76,11 @@ export async function VoucherTypeList({
         {einvoiceHubLink && (
           <Link href={`/${companyId}/einvoice`} className="text-accent underline underline-offset-4">
             e-Invoice (IRN) →
+          </Link>
+        )}
+        {discountAgreementsHubLink && (
+          <Link href={`/${companyId}/discount-agreements`} className="text-accent underline underline-offset-4">
+            Discount agreements →
           </Link>
         )}
       </p>
