@@ -117,6 +117,23 @@ type Table6Row = {
   invoice_value: number;
 };
 
+/** Table 11A/11B — advances received for a service not yet invoiced, and
+ * their later adjustment against a real invoice (0500). Both share this row
+ * shape: rate-wise and place-of-supply-wise, split intra/inter. */
+type Table11Row = {
+  rate_percent: number;
+  cess_rate_percent: number;
+  place_of_supply: string;
+  place_of_supply_name: string | null;
+  supply_category: "intra" | "inter";
+  gross_advance: number;
+  taxable_value: number;
+  cgst: number;
+  sgst: number;
+  igst: number;
+  cess: number;
+};
+
 type Table13Row = {
   voucher_type: string;
   nature_of_document: string;
@@ -536,6 +553,78 @@ function Table9bTable({ rows }: { rows: Table9bRow[] }) {
   );
 }
 
+/** Table 11A/11B — advances for a service received (11A) or adjusted against
+ * a real invoice (11B), rate-wise and place-of-supply-wise, split intra/inter
+ * (0500). Same row shape for both; `heading`/`noRows` are the only
+ * difference between the two call sites below. */
+function Table11Table({ rows, heading, noRows }: { rows: Table11Row[]; heading: string; noRows: string }) {
+  const taxTotal = rows.reduce((n, r) => n + Number(r.cgst) + Number(r.sgst) + Number(r.igst) + Number(r.cess), 0);
+  const grossTotal = rows.reduce((n, r) => n + Number(r.gross_advance), 0);
+  return (
+    <div className="border-b border-border">
+      <h3 className="px-4 pt-3 text-xs font-semibold uppercase tracking-wide text-ink-faint">{heading}</h3>
+      <table className="w-full min-w-[900px] text-sm">
+        <thead>
+          <tr className="border-b border-border text-left">
+            <th className={th}>Supply</th>
+            <th className={th}>Place of supply</th>
+            <th className={th + " text-right"}>Rate</th>
+            <th className={th + " text-right"}>Gross advance</th>
+            <th className={th + " text-right"}>Taxable value</th>
+            <th className={th + " text-right"}>CGST</th>
+            <th className={th + " text-right"}>SGST</th>
+            <th className={th + " text-right"}>IGST</th>
+            <th className={th + " text-right"}>Cess</th>
+          </tr>
+        </thead>
+        <tbody>
+          {rows.length === 0 && (
+            <tr>
+              <td colSpan={9} className="px-4 py-8 text-center text-ink-faint">
+                {noRows}
+              </td>
+            </tr>
+          )}
+          {rows.map((r) => (
+            <tr
+              key={`${r.supply_category}-${r.place_of_supply}-${r.rate_percent}-${r.cess_rate_percent}`}
+              className="border-b border-border last:border-0"
+            >
+              <td className={td}>
+                <Badge tone={r.supply_category === "intra" ? "neutral" : "accent"}>
+                  {r.supply_category === "intra" ? "Intra-State" : "Inter-State"}
+                </Badge>
+              </td>
+              <td className={td}>{r.place_of_supply_name ?? r.place_of_supply}</td>
+              <td className={num}>
+                {Number(r.rate_percent)}%{r.cess_rate_percent > 0 ? ` +${Number(r.cess_rate_percent)}%` : ""}
+              </td>
+              <td className={num}>{formatINR(Number(r.gross_advance), { showZero: true })}</td>
+              <td className={num}>{formatINR(Number(r.taxable_value), { showZero: true })}</td>
+              <td className={num}>{formatINR(Number(r.cgst), { showZero: true })}</td>
+              <td className={num}>{formatINR(Number(r.sgst), { showZero: true })}</td>
+              <td className={num}>{formatINR(Number(r.igst), { showZero: true })}</td>
+              <td className={num}>{formatINR(Number(r.cess), { showZero: true })}</td>
+            </tr>
+          ))}
+          {rows.length > 0 && (
+            <tr className="bg-bg font-semibold">
+              <td className={td} colSpan={3}>
+                Total
+              </td>
+              <td className={num}>{formatINR(grossTotal, { showZero: true })}</td>
+              <td className={num}>{formatINR(grossTotal - taxTotal, { showZero: true })}</td>
+              <td className={num} colSpan={4}>
+                {formatINR(taxTotal, { showZero: true })} tax
+              </td>
+            </tr>
+          )}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
 /** Table 13 — Documents Issued: the full GSTN 12-row list, LEKHA-populated where possible. */
 function Table13Table({ rows }: { rows: Table13Row[] }) {
   const byCategory = new Map<string, Table13Row[]>();
@@ -705,6 +794,24 @@ export default async function Gstr1SummaryPage({
     }),
   ]);
 
+  // Table 11A/11B (0500) — separate Promise.all so a failure/slowness here
+  // (both are brand-new RPCs) never blocks the tables above from rendering;
+  // additive only, per this task's own scope.
+  const [{ data: table11aRows }, { data: table11bRows }] = await Promise.all([
+    supabase.rpc("get_gstr1_table11a", {
+      p_company_id: companyId,
+      p_period_start: from,
+      p_period_end: to,
+      p_gst_registration_id: regId,
+    }),
+    supabase.rpc("get_gstr1_table11b", {
+      p_company_id: companyId,
+      p_period_start: from,
+      p_period_end: to,
+      p_gst_registration_id: regId,
+    }),
+  ]);
+
   const output = (outputRows ?? []) as OutputRow[];
   // `as unknown as` — same reason as reports/balance-sheet after 0089: the
   // generated database.types.ts still describes get_gstr1_hsn_summary's PRE-
@@ -715,6 +822,8 @@ export default async function Gstr1SummaryPage({
   const table6a = (table6aRows ?? []) as unknown as Table6Row[];
   const table6b = (table6bRows ?? []) as unknown as Table6Row[];
   const table6c = (table6cRows ?? []) as unknown as Table6Row[];
+  const table11a = (table11aRows ?? []) as unknown as Table11Row[];
+  const table11b = (table11bRows ?? []) as unknown as Table11Row[];
 
   // Tables 4A/5A/7 are DOMESTIC supply tables — confirmed live via WebSearch
   // while building 0134: "Table 4 B2B specifically excludes SEZ supplies and
@@ -910,6 +1019,37 @@ export default async function Gstr1SummaryPage({
 
       <div className="border-b border-t border-border p-4">
         <h2 className="flex items-center gap-2 font-semibold">
+          Table 11A — Advances received <Badge tone="neutral">services only</Badge>
+        </h2>
+        <p className="mt-0.5 text-xs text-ink-soft">
+          Advances tagged this period against a customer for a SERVICE not yet invoiced (Sec 13(2)), rate-
+          wise and place-of-supply-wise. Goods advances have been exempt from this since Notification
+          66/2017-Central Tax and are not represented here. Excludes any advance also invoiced within this
+          same period — it nets to nothing and shows up as an ordinary invoice line above instead, per
+          Instruction 15 to FORM GSTR-1. Tag a receipt as a service advance, or mark one adjusted, at{" "}
+          <Link href={`/${companyId}/service-advances`} className="underline">
+            Service advances
+          </Link>
+          .
+        </p>
+      </div>
+      <Table11Table rows={table11a} heading="11A(1)/11A(2) — Rate-wise" noRows="No service advances tagged this month." />
+
+      <div className="border-b border-t border-border p-4">
+        <h2 className="flex items-center gap-2 font-semibold">
+          Table 11B — Advances adjusted <Badge tone="neutral">services only</Badge>
+        </h2>
+        <p className="mt-0.5 text-xs text-ink-soft">
+          The mirror image of 11A: advances received in an EARLIER period, now adjusted against a real
+          invoice raised this period — keyed off that invoice&rsquo;s own date, not whenever &ldquo;mark
+          adjusted&rdquo; happened to be clicked. Reverses exactly what 11A showed for that advance back in
+          its own period.
+        </p>
+      </div>
+      <Table11Table rows={table11b} heading="11B(1)/11B(2) — Rate-wise" noRows="No service advances adjusted this month." />
+
+      <div className="border-b border-t border-border p-4">
+        <h2 className="flex items-center gap-2 font-semibold">
           Table 13 — Documents issued <Badge tone="warn">mandatory, incl. NIL</Badge>
         </h2>
         <p className="mt-0.5 text-xs text-ink-faint">
@@ -962,7 +1102,15 @@ export default async function Gstr1SummaryPage({
         WHO of a deemed-export refund claim (supplier vs. recipient, Rule 89/Statement 5B) is a refund-application
         fact, not a GSTR-1 field, and is not represented here, the same scoping ITC-04 prep already applied to
         Statement 5B/5C. All three tables are invoice-wise, not split by rate the way Table 12 is — a single
-        invoice mixing two GST rates prints as one blended row, same simplification as Table 4A/9B.
+        invoice mixing two GST rates prints as one blended row, same simplification as Table 4A/9B. Tables
+        11A/11B (0500) read a manual tag/overlay — service_advance_receipts — never anything inferred from a
+        plain receipt voucher automatically; a business that never uses the Service advances screen will
+        correctly show NIL here even if it does, in fact, collect advances, because LEKHA cannot tell an
+        advance apart from an ordinary settlement without being told. GST liability is grossed UP out of the
+        tagged advance amount (Rule 50&rsquo;s cum-tax treatment), not added on top of it. Rule 50&rsquo;s own
+        further proviso — treat the supply as inter-State when its nature genuinely cannot be determined — has
+        no representation here, since Table 11 itself has no &ldquo;place of supply unknown&rdquo; bucket to
+        honestly show it in.
       </p>
     </ReportShell>
   );
