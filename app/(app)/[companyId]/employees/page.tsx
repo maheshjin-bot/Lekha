@@ -80,7 +80,10 @@ export default async function EmployeesPage({
         register. This page only computes and reports; it doesn&rsquo;t post
         vouchers itself — book posting (salary expense, PF/ESI/PT payable)
         happens from the payroll register report, one month and branch at a
-        time, once you&rsquo;ve reviewed the numbers here.
+        time, once you&rsquo;ve reviewed the numbers here.{" "}
+        <Link href={`/${companyId}/employees/perquisites`} className="underline">
+          Record accommodation, company car or other Sec 17(2) perquisites →
+        </Link>
       </p>
       {!payrollOn && (
         <div className="mt-4 rounded-md bg-blue-50 px-4 py-3 text-sm text-blue-900">

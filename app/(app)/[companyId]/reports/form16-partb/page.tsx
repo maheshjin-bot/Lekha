@@ -276,8 +276,13 @@ export default async function Form16PartBPage({
                 <td className={td}>
                   Value of perquisites u/s 17(2)
                   <div className="text-xs font-normal text-ink-faint">
-                    Not captured by this app (no accommodation/car/ESOP fields) — 0 means &ldquo;not tracked,&rdquo; not a
-                    confirmed absence.
+                    From accommodation/company-car/other rows recorded at{" "}
+                    <Link href={`/${companyId}/employees/perquisites?emp=${selectedEmployeeId}&fy=${fy}`} className="underline">
+                      Employees → Perquisites
+                    </Link>{" "}
+                    (Rule 15/old Rule 3, migration 0650). Still not folded into gross salary or the tax computed
+                    below — see that page&rsquo;s own note. ESOP and any perquisite type not recorded there is not
+                    captured; 0 there means &ldquo;not recorded,&rdquo; not a confirmed absence.
                   </div>
                 </td>
                 <td className={num}>{formatINR(r.perquisites_value, { showZero: true })}</td>
@@ -446,16 +451,17 @@ export default async function Form16PartBPage({
               </span>
             </div>
             <p className="mt-3 text-xs text-ink-faint">
-              TDS deposited per payroll postings this FY (get_payroll_run&apos;s own Sec 192 running estimate, always
-              computed on a NEW-REGIME basis regardless of the regime above — 0049/0075/0093, unchanged by this
-              page):{" "}
+              TDS deposited per payroll postings this FY (get_payroll_run&apos;s own Sec 192 running estimate — since
+              migration 0430, computed on the SAME regime as the declaration above, with regime-correct slabs,
+              standard deduction, rebate and surcharge, but still WITHOUT HRA exemption, Chapter VI-A deductions or
+              Sec 192(2) previous-employer netting, which remain this page&rsquo;s job alone):{" "}
               <strong className="font-medium text-ink">
                 {formatINR(r.tds_deposited_per_payroll_projection, { showZero: true })}
               </strong>
               . This is <strong className="font-medium">not</strong> netted against the net tax payable figure above
-              — for an employee on the old regime the two are computed on different bases and will not reconcile to
-              a clean balance. Any shortfall or excess is settled at ITR-filing time or by a manual employer true-up
-              before FY-end.
+              — even on the same regime the two are computed on different bases (no HRA/80C/80D/24(b) in the running
+              estimate) and will not reconcile to a clean balance. Any shortfall or excess is settled at ITR-filing
+              time or by a manual employer true-up before FY-end.
             </p>
           </div>
 
