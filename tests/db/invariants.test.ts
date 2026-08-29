@@ -4446,6 +4446,144 @@ describeDb(`GSTR-3B Table 5.1 interest and late fee (${hasDb ? "live" : noDbReas
 });
 
 // ---------------------------------------------------------------------------
+// Tier 5 batch 11 (0296-0661): payroll TDS regime-awareness + Sec 87A
+// marginal relief, AOC-4 XBRL Schedule III P&L wiring (pure TS, no
+// describeDb block), EWB non-sales/state-threshold/multi-vehicle, external
+// signer link, Sec 15(3)(b) discount agreements, Notes to Accounts employee-
+// benefits split, perquisites (Sec 17(2)) capture, SBO register, GSTR-1
+// Table 11 service advances.
+// ---------------------------------------------------------------------------
+describeDb(`tier 5 batch 11 new functions (${hasDb ? "live" : noDbReason})`, () => {
+  it("no new function from this wave is reachable by anon or PUBLIC, except the three deliberately token/API-gated ones", async () => {
+    const rows = await sql(`
+      select routine_name, grantee from information_schema.routine_privileges
+       where routine_name in (
+         'get_employee_perquisites_total', 'get_employee_perquisites_valued',
+         'get_notes_employee_benefits_breakup', 'get_gstr1_table11a', 'get_gstr1_table11b',
+         'create_service_advance_receipt', 'mark_service_advance_adjusted', 'unmark_service_advance_adjusted',
+         'get_taggable_receipt_vouchers', 'get_service_advance_receipts', 'get_discount_agreement_coverage',
+         'get_delivery_challan_ewb_requirement', 'get_delivery_challan_ewb_status', 'build_delivery_challan_ewb_json',
+         'regenerate_signer_access_token', 'authenticate_signer_token'
+       ) and grantee in ('PUBLIC', 'anon')
+    `);
+    expect(rows, `a batch 11 function reachable by a role it shouldn't be:\n${offenders(rows)}`).toEqual([]);
+  });
+});
+
+describeDb(`payroll TDS regime-awareness and Sec 87A marginal relief (${hasDb ? "live" : noDbReason})`, () => {
+  it("get_salary_tds_estimate's regime_used matches every employee's own real declaration for the matching FY", async () => {
+    const rows = await sql(`
+      select t.employee_id, t.regime as declared,
+             (select r.regime_used from get_salary_tds_estimate(t.company_id, '2026-08-01') r where r.employee_id = t.employee_id) as regime_used
+        from employee_tax_declarations t
+       where t.financial_year_label = '2026-27'
+    `);
+    for (const r of rows as Record<string, unknown>[]) {
+      expect(r.regime_used, `regime_used didn't match the declared regime for employee ${r.employee_id}`).toBe(r.declared);
+    }
+  });
+});
+
+describeDb(`SBO register (${hasDb ? "live" : noDbReason})`, () => {
+  it("no significant_beneficial_owners row exists for a company outside pvt_ltd/ltd/opc", async () => {
+    const rows = await sql(`
+      select s.id, c.entity_type from significant_beneficial_owners s
+        join companies c on c.id = s.company_id
+       where c.entity_type not in ('pvt_ltd', 'ltd', 'opc')
+    `);
+    expect(rows, `an SBO row exists for an entity type that cannot have one:\n${offenders(rows)}`).toEqual([]);
+  });
+});
+
+describeDb(`perquisites (Sec 17(2)) (${hasDb ? "live" : noDbReason})`, () => {
+  it("get_employee_perquisites_total equals the sum of get_employee_perquisites_valued's own rows, for every employee/FY with data", async () => {
+    const rows = await sql(`
+      select ep.employee_id, ep.financial_year_label,
+             (select sum(v.taxable_value) from get_employee_perquisites_valued(ep.company_id, ep.employee_id, ep.financial_year_label) v) as valued_sum,
+             get_employee_perquisites_total(ep.company_id, ep.employee_id, ep.financial_year_label) as total_fn
+        from (select distinct company_id, employee_id, financial_year_label from employee_perquisites) ep
+    `);
+    for (const r of rows as Record<string, unknown>[]) {
+      expect(r.total_fn, `get_employee_perquisites_total disagrees with the sum of valued rows for employee ${r.employee_id}`).toBe(r.valued_sum);
+    }
+  });
+});
+
+describeDb(`Notes to Accounts: employee benefits break-up (${hasDb ? "live" : noDbReason})`, () => {
+  it("the employee-benefits note sub-buckets sum exactly to get_profit_and_loss's own employee_benefits ledger_role total, per company/period", async () => {
+    const rows = await sql(`
+      select c.name,
+             round(coalesce((select sum(amount) from get_notes_employee_benefits_breakup(c.id, '2000-01-01', '2099-12-31')), 0), 2) as note_total,
+             round(coalesce((select sum(pl.amount) from get_profit_and_loss(c.id, '2000-01-01', '2099-12-31') pl where pl.ledger_role = 'employee_benefits'), 0), 2) as pl_total
+        from companies c
+       where round(coalesce((select sum(amount) from get_notes_employee_benefits_breakup(c.id, '2000-01-01', '2099-12-31')), 0), 2)
+          <> round(coalesce((select sum(pl.amount) from get_profit_and_loss(c.id, '2000-01-01', '2099-12-31') pl where pl.ledger_role = 'employee_benefits'), 0), 2)
+    `);
+    expect(rows, `a company's employee-benefits note doesn't sum to its own P&L ledger_role total:\n${offenders(rows)}`).toEqual([]);
+  });
+});
+
+describeDb(`Sec 15(3)(b) discount agreements (${hasDb ? "live" : noDbReason})`, () => {
+  it("no voucher_item is linked to more than one discount agreement", async () => {
+    const rows = await sql(`
+      select voucher_item_id, count(*) from discount_agreement_links
+       where voucher_item_id is not null group by voucher_item_id having count(*) > 1
+    `);
+    expect(rows, `a voucher line is double-linked to more than one discount agreement:\n${offenders(rows)}`).toEqual([]);
+  });
+});
+
+describeDb(`GSTR-1 Table 11 service advances (${hasDb ? "live" : noDbReason})`, () => {
+  it("every 'adjusted' service_advance_receipts row points at a real, undeleted sales voucher", async () => {
+    const rows = await sql(`
+      select s.id from service_advance_receipts s
+       where s.status = 'adjusted'
+         and (s.adjusted_voucher_id is null
+              or not exists (select 1 from vouchers v where v.id = s.adjusted_voucher_id and v.voucher_type = 'sales' and not v.is_deleted))
+    `);
+    expect(rows, `an adjusted service advance doesn't point at a real sales voucher:\n${offenders(rows)}`).toEqual([]);
+  });
+});
+
+describeDb(`EWB: delivery challans, state thresholds, multi-vehicle (${hasDb ? "live" : noDbReason})`, () => {
+  it("ewb_details.vehicle_number always matches its own most recent vehicle-update row, when any exist", async () => {
+    const rows = await sql(`
+      select e.id, e.vehicle_number, latest.vehicle_number as latest_update
+        from ewb_details e
+        join lateral (
+          select vehicle_number from ewb_vehicle_updates u where u.ewb_detail_id = e.id order by updated_at desc limit 1
+        ) latest on true
+       where e.vehicle_number is distinct from latest.vehicle_number
+    `);
+    expect(rows, `an ewb_details row's vehicle_number is out of sync with its own latest history entry:\n${offenders(rows)}`).toEqual([]);
+  });
+
+  it("ref_state_ewb_thresholds has no duplicate state and every row cites a source", async () => {
+    const dupes = await sql(`
+      select state_code, count(*) from ref_state_ewb_thresholds group by state_code having count(*) > 1
+    `);
+    expect(dupes, `a state appears more than once in the threshold table:\n${offenders(dupes)}`).toEqual([]);
+    const unsourced = await sql(`
+      select state_code from ref_state_ewb_thresholds where source_reference is null or trim(source_reference) = ''
+    `);
+    expect(unsourced, `a threshold row has no cited source:\n${offenders(unsourced)}`).toEqual([]);
+  });
+});
+
+describeDb(`e-signature external signer link (${hasDb ? "live" : noDbReason})`, () => {
+  it("a signer's access_token exists if and only if their request is sent or completed, never while still draft", async () => {
+    const rows = await sql(`
+      select s.id, r.status, (s.access_token is not null) as has_token
+        from signature_request_signers s
+        join signature_requests r on r.id = s.request_id
+       where (r.status = 'draft' and s.access_token is not null)
+          or (r.status in ('sent', 'completed') and s.access_token is null)
+    `);
+    expect(rows, `a signer's access_token state doesn't match its request's status:\n${offenders(rows)}`).toEqual([]);
+  });
+});
+
+// ---------------------------------------------------------------------------
 // Needs fixtures. Seeded database only — never the live project.
 // ---------------------------------------------------------------------------
 describe.skip("post_gst_setoff, post_deferred_tax [needs seed]", () => {

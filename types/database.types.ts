@@ -1675,6 +1675,94 @@ export type Database = {
           },
         ]
       }
+      delivery_challan_ewb_details: {
+        Row: {
+          approx_distance_km: number | null
+          challan_id: string
+          company_id: string
+          created_at: string
+          created_by: string | null
+          ewb_generated_date: string | null
+          ewb_number: string | null
+          ewb_valid_until: string | null
+          id: string
+          status: string
+          to_pincode: string | null
+          to_state_code: string | null
+          transport_doc_date: string | null
+          transport_doc_number: string | null
+          transport_mode: string
+          transporter_id: string | null
+          transporter_name: string | null
+          updated_at: string
+          vehicle_number: string | null
+        }
+        Insert: {
+          approx_distance_km?: number | null
+          challan_id: string
+          company_id: string
+          created_at?: string
+          created_by?: string | null
+          ewb_generated_date?: string | null
+          ewb_number?: string | null
+          ewb_valid_until?: string | null
+          id?: string
+          status?: string
+          to_pincode?: string | null
+          to_state_code?: string | null
+          transport_doc_date?: string | null
+          transport_doc_number?: string | null
+          transport_mode?: string
+          transporter_id?: string | null
+          transporter_name?: string | null
+          updated_at?: string
+          vehicle_number?: string | null
+        }
+        Update: {
+          approx_distance_km?: number | null
+          challan_id?: string
+          company_id?: string
+          created_at?: string
+          created_by?: string | null
+          ewb_generated_date?: string | null
+          ewb_number?: string | null
+          ewb_valid_until?: string | null
+          id?: string
+          status?: string
+          to_pincode?: string | null
+          to_state_code?: string | null
+          transport_doc_date?: string | null
+          transport_doc_number?: string | null
+          transport_mode?: string
+          transporter_id?: string | null
+          transporter_name?: string | null
+          updated_at?: string
+          vehicle_number?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "delivery_challan_ewb_details_challan_id_company_id_fkey"
+            columns: ["challan_id", "company_id"]
+            isOneToOne: false
+            referencedRelation: "delivery_challans"
+            referencedColumns: ["id", "company_id"]
+          },
+          {
+            foreignKeyName: "delivery_challan_ewb_details_company_id_fkey"
+            columns: ["company_id"]
+            isOneToOne: false
+            referencedRelation: "companies"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "delivery_challan_ewb_details_to_state_code_fkey"
+            columns: ["to_state_code"]
+            isOneToOne: false
+            referencedRelation: "ref_states"
+            referencedColumns: ["code"]
+          },
+        ]
+      }
       delivery_challan_receipts: {
         Row: {
           challan_id: string
@@ -1904,6 +1992,129 @@ export type Database = {
           },
         ]
       }
+      discount_agreement_links: {
+        Row: {
+          agreement_id: string
+          company_id: string
+          created_at: string
+          created_by: string | null
+          id: string
+          original_invoice_voucher_id: string | null
+          voucher_id: string
+          voucher_item_id: string | null
+        }
+        Insert: {
+          agreement_id: string
+          company_id: string
+          created_at?: string
+          created_by?: string | null
+          id?: string
+          original_invoice_voucher_id?: string | null
+          voucher_id: string
+          voucher_item_id?: string | null
+        }
+        Update: {
+          agreement_id?: string
+          company_id?: string
+          created_at?: string
+          created_by?: string | null
+          id?: string
+          original_invoice_voucher_id?: string | null
+          voucher_id?: string
+          voucher_item_id?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "discount_agreement_links_agreement_id_company_id_fkey"
+            columns: ["agreement_id", "company_id"]
+            isOneToOne: false
+            referencedRelation: "discount_agreements"
+            referencedColumns: ["id", "company_id"]
+          },
+          {
+            foreignKeyName: "discount_agreement_links_company_id_fkey"
+            columns: ["company_id"]
+            isOneToOne: false
+            referencedRelation: "companies"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "discount_agreement_links_original_invoice_voucher_id_compa_fkey"
+            columns: ["original_invoice_voucher_id", "company_id"]
+            isOneToOne: false
+            referencedRelation: "vouchers"
+            referencedColumns: ["id", "company_id"]
+          },
+          {
+            foreignKeyName: "discount_agreement_links_voucher_id_company_id_fkey"
+            columns: ["voucher_id", "company_id"]
+            isOneToOne: false
+            referencedRelation: "vouchers"
+            referencedColumns: ["id", "company_id"]
+          },
+          {
+            foreignKeyName: "discount_agreement_links_voucher_item_id_voucher_id_compan_fkey"
+            columns: ["voucher_item_id", "voucher_id", "company_id"]
+            isOneToOne: false
+            referencedRelation: "voucher_items"
+            referencedColumns: ["id", "voucher_id", "company_id"]
+          },
+        ]
+      }
+      discount_agreements: {
+        Row: {
+          agreed_date: string
+          company_id: string
+          created_at: string
+          created_by: string | null
+          id: string
+          is_active: boolean
+          party_ledger_id: string
+          standard_discount_percent: number | null
+          terms: string
+          updated_at: string
+        }
+        Insert: {
+          agreed_date: string
+          company_id: string
+          created_at?: string
+          created_by?: string | null
+          id?: string
+          is_active?: boolean
+          party_ledger_id: string
+          standard_discount_percent?: number | null
+          terms: string
+          updated_at?: string
+        }
+        Update: {
+          agreed_date?: string
+          company_id?: string
+          created_at?: string
+          created_by?: string | null
+          id?: string
+          is_active?: boolean
+          party_ledger_id?: string
+          standard_discount_percent?: number | null
+          terms?: string
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "discount_agreements_company_id_fkey"
+            columns: ["company_id"]
+            isOneToOne: false
+            referencedRelation: "companies"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "discount_agreements_party_ledger_id_company_id_fkey"
+            columns: ["party_ledger_id", "company_id"]
+            isOneToOne: false
+            referencedRelation: "ledgers"
+            referencedColumns: ["id", "company_id"]
+          },
+        ]
+      }
       documents: {
         Row: {
           company_id: string
@@ -2128,6 +2339,95 @@ export type Database = {
         Relationships: [
           {
             foreignKeyName: "employee_leave_ledger_employee_id_company_id_fkey"
+            columns: ["employee_id", "company_id"]
+            isOneToOne: false
+            referencedRelation: "employees"
+            referencedColumns: ["id", "company_id"]
+          },
+        ]
+      }
+      employee_perquisites: {
+        Row: {
+          accommodation_ownership: string | null
+          actual_running_maintenance_cost: number
+          amount_recovered_from_employee: number
+          car_actual_cost_or_hire_charges: number
+          car_cc_class: string | null
+          car_is_hired: boolean
+          car_usage: string | null
+          city_population_tier: string | null
+          company_id: string
+          created_at: string
+          created_by: string | null
+          driver_provided: boolean
+          driver_salary_paid_by_employer: number
+          employee_id: string
+          financial_year_label: string
+          id: string
+          lease_rent_paid_by_employer: number
+          months_applicable: number
+          notes: string | null
+          other_cost_to_employer: number
+          other_perquisite_description: string | null
+          perquisite_type: string
+          running_cost_borne_by: string | null
+          updated_at: string
+        }
+        Insert: {
+          accommodation_ownership?: string | null
+          actual_running_maintenance_cost?: number
+          amount_recovered_from_employee?: number
+          car_actual_cost_or_hire_charges?: number
+          car_cc_class?: string | null
+          car_is_hired?: boolean
+          car_usage?: string | null
+          city_population_tier?: string | null
+          company_id: string
+          created_at?: string
+          created_by?: string | null
+          driver_provided?: boolean
+          driver_salary_paid_by_employer?: number
+          employee_id: string
+          financial_year_label: string
+          id?: string
+          lease_rent_paid_by_employer?: number
+          months_applicable?: number
+          notes?: string | null
+          other_cost_to_employer?: number
+          other_perquisite_description?: string | null
+          perquisite_type: string
+          running_cost_borne_by?: string | null
+          updated_at?: string
+        }
+        Update: {
+          accommodation_ownership?: string | null
+          actual_running_maintenance_cost?: number
+          amount_recovered_from_employee?: number
+          car_actual_cost_or_hire_charges?: number
+          car_cc_class?: string | null
+          car_is_hired?: boolean
+          car_usage?: string | null
+          city_population_tier?: string | null
+          company_id?: string
+          created_at?: string
+          created_by?: string | null
+          driver_provided?: boolean
+          driver_salary_paid_by_employer?: number
+          employee_id?: string
+          financial_year_label?: string
+          id?: string
+          lease_rent_paid_by_employer?: number
+          months_applicable?: number
+          notes?: string | null
+          other_cost_to_employer?: number
+          other_perquisite_description?: string | null
+          perquisite_type?: string
+          running_cost_borne_by?: string | null
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "employee_perquisites_employee_id_company_id_fkey"
             columns: ["employee_id", "company_id"]
             isOneToOne: false
             referencedRelation: "employees"
@@ -2409,6 +2709,57 @@ export type Database = {
             columns: ["voucher_id", "company_id"]
             isOneToOne: false
             referencedRelation: "vouchers"
+            referencedColumns: ["id", "company_id"]
+          },
+        ]
+      }
+      ewb_vehicle_updates: {
+        Row: {
+          company_id: string
+          created_at: string
+          created_by: string | null
+          ewb_detail_id: string
+          id: string
+          reason: string | null
+          reason_code: string | null
+          updated_at: string
+          vehicle_number: string
+        }
+        Insert: {
+          company_id: string
+          created_at?: string
+          created_by?: string | null
+          ewb_detail_id: string
+          id?: string
+          reason?: string | null
+          reason_code?: string | null
+          updated_at?: string
+          vehicle_number: string
+        }
+        Update: {
+          company_id?: string
+          created_at?: string
+          created_by?: string | null
+          ewb_detail_id?: string
+          id?: string
+          reason?: string | null
+          reason_code?: string | null
+          updated_at?: string
+          vehicle_number?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "ewb_vehicle_updates_company_id_fkey"
+            columns: ["company_id"]
+            isOneToOne: false
+            referencedRelation: "companies"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "ewb_vehicle_updates_ewb_detail_id_company_id_fkey"
+            columns: ["ewb_detail_id", "company_id"]
+            isOneToOne: false
+            referencedRelation: "ewb_details"
             referencedColumns: ["id", "company_id"]
           },
         ]
@@ -4516,6 +4867,38 @@ export type Database = {
         }
         Relationships: []
       }
+      ref_state_ewb_thresholds: {
+        Row: {
+          effective_from: string | null
+          intra_state_threshold_amount: number
+          notes: string | null
+          source_reference: string
+          state_code: string
+        }
+        Insert: {
+          effective_from?: string | null
+          intra_state_threshold_amount: number
+          notes?: string | null
+          source_reference: string
+          state_code: string
+        }
+        Update: {
+          effective_from?: string | null
+          intra_state_threshold_amount?: number
+          notes?: string | null
+          source_reference?: string
+          state_code?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "ref_state_ewb_thresholds_state_code_fkey"
+            columns: ["state_code"]
+            isOneToOne: true
+            referencedRelation: "ref_states"
+            referencedColumns: ["code"]
+          },
+        ]
+      }
       ref_states: {
         Row: {
           code: string
@@ -4686,6 +5069,102 @@ export type Database = {
           },
         ]
       }
+      service_advance_receipts: {
+        Row: {
+          adjusted_at: string | null
+          adjusted_note: string | null
+          adjusted_voucher_id: string | null
+          advance_amount: number
+          cess_rate_percent: number
+          company_id: string
+          created_at: string
+          created_by: string | null
+          gst_rate_percent: number
+          id: string
+          notes: string | null
+          party_ledger_id: string
+          place_of_supply: string
+          rate_not_determinable: boolean
+          status: string
+          updated_at: string
+          voucher_id: string
+        }
+        Insert: {
+          adjusted_at?: string | null
+          adjusted_note?: string | null
+          adjusted_voucher_id?: string | null
+          advance_amount: number
+          cess_rate_percent?: number
+          company_id: string
+          created_at?: string
+          created_by?: string | null
+          gst_rate_percent: number
+          id?: string
+          notes?: string | null
+          party_ledger_id: string
+          place_of_supply: string
+          rate_not_determinable?: boolean
+          status?: string
+          updated_at?: string
+          voucher_id: string
+        }
+        Update: {
+          adjusted_at?: string | null
+          adjusted_note?: string | null
+          adjusted_voucher_id?: string | null
+          advance_amount?: number
+          cess_rate_percent?: number
+          company_id?: string
+          created_at?: string
+          created_by?: string | null
+          gst_rate_percent?: number
+          id?: string
+          notes?: string | null
+          party_ledger_id?: string
+          place_of_supply?: string
+          rate_not_determinable?: boolean
+          status?: string
+          updated_at?: string
+          voucher_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "service_advance_receipts_adjusted_voucher_id_company_id_fkey"
+            columns: ["adjusted_voucher_id", "company_id"]
+            isOneToOne: false
+            referencedRelation: "vouchers"
+            referencedColumns: ["id", "company_id"]
+          },
+          {
+            foreignKeyName: "service_advance_receipts_company_id_fkey"
+            columns: ["company_id"]
+            isOneToOne: false
+            referencedRelation: "companies"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "service_advance_receipts_party_ledger_id_company_id_fkey"
+            columns: ["party_ledger_id", "company_id"]
+            isOneToOne: false
+            referencedRelation: "ledgers"
+            referencedColumns: ["id", "company_id"]
+          },
+          {
+            foreignKeyName: "service_advance_receipts_place_of_supply_fkey"
+            columns: ["place_of_supply"]
+            isOneToOne: false
+            referencedRelation: "ref_states"
+            referencedColumns: ["code"]
+          },
+          {
+            foreignKeyName: "service_advance_receipts_voucher_id_company_id_fkey"
+            columns: ["voucher_id", "company_id"]
+            isOneToOne: false
+            referencedRelation: "vouchers"
+            referencedColumns: ["id", "company_id"]
+          },
+        ]
+      }
       share_classes: {
         Row: {
           authorized_shares: number
@@ -4798,6 +5277,7 @@ export type Database = {
       }
       signature_request_signers: {
         Row: {
+          access_token: string | null
           company_id: string
           created_at: string
           decline_reason: string | null
@@ -4811,9 +5291,11 @@ export type Database = {
           signer_email: string
           signer_name: string
           status: string
+          token_last_used_at: string | null
           updated_at: string
         }
         Insert: {
+          access_token?: string | null
           company_id: string
           created_at?: string
           decline_reason?: string | null
@@ -4827,9 +5309,11 @@ export type Database = {
           signer_email: string
           signer_name: string
           status?: string
+          token_last_used_at?: string | null
           updated_at?: string
         }
         Update: {
+          access_token?: string | null
           company_id?: string
           created_at?: string
           decline_reason?: string | null
@@ -4843,6 +5327,7 @@ export type Database = {
           signer_email?: string
           signer_name?: string
           status?: string
+          token_last_used_at?: string | null
           updated_at?: string
         }
         Relationships: [
@@ -4903,6 +5388,74 @@ export type Database = {
         Relationships: [
           {
             foreignKeyName: "signature_requests_company_id_fkey"
+            columns: ["company_id"]
+            isOneToOne: false
+            referencedRelation: "companies"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      significant_beneficial_owners: {
+        Row: {
+          ben1_received_date: string | null
+          ben2_filed_date: string | null
+          company_id: string
+          created_at: string
+          created_by: string | null
+          date_became_sbo: string
+          date_ceased_sbo: string | null
+          held_through_entity_name: string | null
+          held_through_entity_type: string | null
+          id: string
+          individual_name: string
+          interest_nature: string
+          notes: string | null
+          pan: string | null
+          percentage_held: number | null
+          qualifying_basis: string[]
+          updated_at: string
+        }
+        Insert: {
+          ben1_received_date?: string | null
+          ben2_filed_date?: string | null
+          company_id: string
+          created_at?: string
+          created_by?: string | null
+          date_became_sbo: string
+          date_ceased_sbo?: string | null
+          held_through_entity_name?: string | null
+          held_through_entity_type?: string | null
+          id?: string
+          individual_name: string
+          interest_nature: string
+          notes?: string | null
+          pan?: string | null
+          percentage_held?: number | null
+          qualifying_basis?: string[]
+          updated_at?: string
+        }
+        Update: {
+          ben1_received_date?: string | null
+          ben2_filed_date?: string | null
+          company_id?: string
+          created_at?: string
+          created_by?: string | null
+          date_became_sbo?: string
+          date_ceased_sbo?: string | null
+          held_through_entity_name?: string | null
+          held_through_entity_type?: string | null
+          id?: string
+          individual_name?: string
+          interest_nature?: string
+          notes?: string | null
+          pan?: string | null
+          percentage_held?: number | null
+          qualifying_basis?: string[]
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "significant_beneficial_owners_company_id_fkey"
             columns: ["company_id"]
             isOneToOne: false
             referencedRelation: "companies"
@@ -5726,6 +6279,10 @@ export type Database = {
         Args: { p_company_id: string; p_ledger_id: string }
         Returns: number
       }
+      build_delivery_challan_ewb_json: {
+        Args: { p_challan_id: string }
+        Returns: Json
+      }
       build_einvoice_json: { Args: { p_voucher_id: string }; Returns: Json }
       build_ewb_json: { Args: { p_voucher_id: string }; Returns: Json }
       cancel_signature_request: {
@@ -5905,6 +6462,19 @@ export type Database = {
           p_start_date: string
           p_template_name: string
           p_voucher_type: string
+        }
+        Returns: string
+      }
+      create_service_advance_receipt: {
+        Args: {
+          p_advance_amount: number
+          p_cess_rate_percent?: number
+          p_company_id: string
+          p_gst_rate_percent: number
+          p_notes?: string
+          p_place_of_supply: string
+          p_rate_not_determinable?: boolean
+          p_voucher_id: string
         }
         Returns: string
       }
@@ -6377,6 +6947,36 @@ export type Database = {
           target_deferred_tax_liability: number
         }[]
       }
+      get_delivery_challan_ewb_requirement: {
+        Args: { p_challan_id: string }
+        Returns: {
+          challan_id: string
+          consignment_value: number
+          is_ewb_required: boolean
+          taxable_value: number
+          threshold_amount: number
+          total_gst_tax: number
+        }[]
+      }
+      get_delivery_challan_ewb_status: {
+        Args: { p_company_id: string }
+        Returns: {
+          challan_date: string
+          challan_id: string
+          challan_number: string
+          consignment_value: number
+          ewb_generated_date: string
+          ewb_id: string
+          ewb_number: string
+          ewb_valid_until: string
+          is_ewb_required: boolean
+          party_display: string
+          purpose: string
+          status: string
+          transport_mode: string
+          vehicle_number: string
+        }[]
+      }
       get_delivery_challans: {
         Args: { p_company_id: string; p_status_filter?: string }
         Returns: {
@@ -6404,6 +7004,33 @@ export type Database = {
           transporter_name: string
           uom: string
           vehicle_number: string
+        }[]
+      }
+      get_discount_agreement_coverage: {
+        Args: { p_company_id: string; p_from: string; p_to: string }
+        Returns: {
+          agreement_agreed_date: string
+          agreement_id: string
+          agreement_is_active: boolean
+          agreement_terms: string
+          amount_before_discount: number
+          backed_reason: string
+          discount_amount: number
+          discount_percent: number
+          is_backed: boolean
+          item_description: string
+          net_amount: number
+          original_invoice_date: string
+          original_invoice_number: string
+          original_invoice_voucher_id: string
+          party_ledger_id: string
+          party_name: string
+          row_scope: string
+          voucher_date: string
+          voucher_id: string
+          voucher_item_id: string
+          voucher_number: string
+          voucher_type: string
         }[]
       }
       get_dpt3_return_content: {
@@ -6499,6 +7126,37 @@ export type Database = {
           voucher_id: string
           voucher_number: string
           voucher_type: string
+        }[]
+      }
+      get_employee_perquisites_total: {
+        Args: {
+          p_company_id: string
+          p_employee_id: string
+          p_financial_year_label: string
+        }
+        Returns: number
+      }
+      get_employee_perquisites_valued: {
+        Args: {
+          p_company_id: string
+          p_employee_id: string
+          p_financial_year_label: string
+        }
+        Returns: {
+          accommodation_ownership: string
+          amount_recovered_from_employee: number
+          car_cc_class: string
+          car_usage: string
+          city_population_tier: string
+          computation_note: string
+          driver_provided: boolean
+          months_applicable: number
+          other_perquisite_description: string
+          perquisite_id: string
+          perquisite_type: string
+          rule_salary_base: number
+          running_cost_borne_by: string
+          taxable_value: number
         }[]
       }
       get_esi_mc_data: {
@@ -6932,6 +7590,48 @@ export type Database = {
           total_quantity: number
           total_value: number
           uom: string
+        }[]
+      }
+      get_gstr1_table11a: {
+        Args: {
+          p_company_id: string
+          p_gst_registration_id?: string
+          p_period_end: string
+          p_period_start: string
+        }
+        Returns: {
+          cess: number
+          cess_rate_percent: number
+          cgst: number
+          gross_advance: number
+          igst: number
+          place_of_supply: string
+          place_of_supply_name: string
+          rate_percent: number
+          sgst: number
+          supply_category: string
+          taxable_value: number
+        }[]
+      }
+      get_gstr1_table11b: {
+        Args: {
+          p_company_id: string
+          p_gst_registration_id?: string
+          p_period_end: string
+          p_period_start: string
+        }
+        Returns: {
+          cess: number
+          cess_rate_percent: number
+          cgst: number
+          gross_advance: number
+          igst: number
+          place_of_supply: string
+          place_of_supply_name: string
+          rate_percent: number
+          sgst: number
+          supply_category: string
+          taxable_value: number
         }[]
       }
       get_gstr1_table13: {
@@ -7428,6 +8128,22 @@ export type Database = {
           severity: string
         }[]
       }
+      get_notes_employee_benefits_breakup: {
+        Args: {
+          p_branch_id?: string
+          p_company_id: string
+          p_period_end: string
+          p_period_start: string
+        }
+        Returns: {
+          amount: number
+          bucket_label: string
+          bucket_order: number
+          ledger_id: string
+          ledger_name: string
+          source_basis: string
+        }[]
+      }
       get_notices: {
         Args: { p_company_id: string; p_status_filter?: string }
         Returns: {
@@ -7656,6 +8372,7 @@ export type Database = {
           employee_name: string
           monthly_gross: number
           monthly_tds: number
+          regime_used: string
           standard_deduction: number
           taxable_salary_income: number
         }[]
@@ -7706,6 +8423,34 @@ export type Database = {
           payment_date: string
         }[]
       }
+      get_service_advance_receipts: {
+        Args: { p_company_id: string; p_status_filter?: string }
+        Returns: {
+          adjusted_at: string
+          adjusted_note: string
+          adjusted_voucher_date: string
+          adjusted_voucher_id: string
+          adjusted_voucher_number: string
+          advance_amount: number
+          cess_amount: number
+          cess_rate_percent: number
+          created_at: string
+          gst_amount: number
+          gst_rate_percent: number
+          id: string
+          notes: string
+          party_ledger_id: string
+          party_name: string
+          place_of_supply: string
+          place_of_supply_name: string
+          rate_not_determinable: boolean
+          status: string
+          taxable_value: number
+          voucher_date: string
+          voucher_id: string
+          voucher_number: string
+        }[]
+      }
       get_share_capital_summary: {
         Args: { p_company_id: string }
         Returns: {
@@ -7718,6 +8463,25 @@ export type Database = {
           paid_up_capital: number
           share_class_id: string
           unissued_shares: number
+        }[]
+      }
+      get_signature_request_by_token: {
+        Args: { p_token: string }
+        Returns: {
+          company_id: string
+          company_name: string
+          decline_reason: string
+          documents: Json
+          request_description: string
+          request_id: string
+          request_status: string
+          request_title: string
+          sign_order: number
+          signed_at: string
+          signer_email: string
+          signer_id: string
+          signer_name: string
+          signer_status: string
         }[]
       }
       get_statutory_bonus_computation: {
@@ -7851,6 +8615,19 @@ export type Database = {
           variance_value: number
           verification_date: string
           verification_id: string
+        }[]
+      }
+      get_taggable_receipt_vouchers: {
+        Args: { p_company_id: string }
+        Returns: {
+          already_tagged_amount: number
+          available_amount: number
+          party_ledger_id: string
+          party_name: string
+          received_amount: number
+          voucher_date: string
+          voucher_id: string
+          voucher_number: string
         }[]
       }
       get_tax_audit_applicability: {
@@ -8101,6 +8878,15 @@ export type Database = {
         Args: { p_company_id: string; p_order_id: string; p_voucher_id: string }
         Returns: undefined
       }
+      mark_service_advance_adjusted: {
+        Args: {
+          p_adjusted_note?: string
+          p_adjusted_voucher_id: string
+          p_advance_id: string
+          p_company_id: string
+        }
+        Returns: undefined
+      }
       match_bank_line: {
         Args: { p_statement_line_id: string; p_voucher_entry_id: string }
         Returns: undefined
@@ -8253,6 +9039,18 @@ export type Database = {
         }
         Returns: undefined
       }
+      record_signed_document_by_token: {
+        Args: {
+          p_file_name: string
+          p_has_embedded_signature?: boolean
+          p_mime_type: string
+          p_signature_check_note?: string
+          p_size_bytes: number
+          p_storage_path: string
+          p_token: string
+        }
+        Returns: undefined
+      }
       record_stock_verification: {
         Args: {
           p_batch_id?: string
@@ -8273,6 +9071,10 @@ export type Database = {
           variance_value: number
           verification_id: string
         }[]
+      }
+      regenerate_signer_access_token: {
+        Args: { p_signer_id: string }
+        Returns: string
       }
       reopen_period: {
         Args: { p_company_id: string; p_new_lock_date?: string }
@@ -8326,6 +9128,10 @@ export type Database = {
       }
       set_recurring_voucher_template_active: {
         Args: { p_is_active: boolean; p_template_id: string }
+        Returns: undefined
+      }
+      unmark_service_advance_adjusted: {
+        Args: { p_advance_id: string; p_company_id: string }
         Returns: undefined
       }
       unmatch_bank_line: {
