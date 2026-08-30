@@ -54,7 +54,12 @@ export function NavRail({
         { href: `${base}/invoices/new`, label: "New invoice" },
         { href: `${base}/pos`, label: "Quick billing" },
         { href: `${base}/import`, label: "Import" },
-        { href: `${base}/capture`, label: "Capture a bill" },
+        { href: `${base}/capture`, label: "Document inbox" },
+        // Not company-scoped: /scan picks its own company on the device and
+        // deliberately carries none of this shell. It is listed here anyway
+        // because otherwise nobody discovers it — the people who USE it are
+        // handed the URL, but the person who sets it up looks for it here.
+        { href: `/scan`, label: "Scan on a phone" },
         { href: `${base}/orders`, label: "Orders" },
         { href: `${base}/forex`, label: "Foreign currency" },
         { href: `${base}/job-work`, label: "Job work" },

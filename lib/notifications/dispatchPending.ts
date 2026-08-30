@@ -1,6 +1,7 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { callRpc } from "@/lib/supabase/rpc";
 import { sendTransactionalEmail } from "@/lib/email/resend";
+import { logError } from "@/lib/errors/logError";
 
 /**
  * The one place the real "fetch pending -> send via Resend -> record
@@ -36,6 +37,12 @@ export async function dispatchPendingForCompany(
   if (pendingError) {
     // The RPC itself raises "Only a company admin can..." for a non-admin
     // caller — surfaced as-is rather than reworded, it is already clear.
+    //
+    // Not logged durably. A permission refusal is the database doing its job
+    // and telling the caller so, not an application failure; recording every
+    // one of them would fill the owner's error log with rows that say
+    // "someone without permission tried to send reminders", which is a
+    // different feature (and one this app has an audit trail for).
     return { error: pendingError.message };
   }
 
@@ -70,6 +77,11 @@ export async function dispatchPendingForCompany(
       to: group.to,
       subject: group.subject,
       text: group.body,
+      // So a failed send lands on THIS company's error-log screen rather than
+      // as an unattributed row nobody can see. The transport does the
+      // logging — it is the layer that knows the status code and the
+      // provider's own wording. See lib/email/resend.ts.
+      errorScope: { supabase, companyId },
     });
 
     if (result.skipped) {
@@ -89,6 +101,21 @@ export async function dispatchPendingForCompany(
     >(supabase, "mark_notification_sent", { p_notification_id: notificationId, p_success: result.ok });
     if (markError) {
       console.error(`[notifications] mark_notification_sent failed for ${notificationId}: ${markError.message}`);
+      // This one IS worth a durable record, and is worse than it looks: the
+      // email has already gone out at this point, so the notification stays
+      // 'pending' and the next digest run will send it a second time. That is
+      // a duplicate email landing in a customer's inbox, which the owner will
+      // hear about and would otherwise have no way to explain.
+      await logError({
+        operation: "notification_dispatch",
+        severity: "critical",
+        message:
+          "A reminder email was sent, but the app could not record that it went out — it may be sent again.",
+        detail: `mark_notification_sent failed for notification ${notificationId}: ${markError.message}`,
+        companyId,
+        supabase,
+        context: { notification_id: notificationId, delivered: result.ok },
+      });
     }
   }
 

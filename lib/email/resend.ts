@@ -23,6 +23,9 @@
  * vars below, with no code change.
  */
 
+import type { SupabaseClient } from "@supabase/supabase-js";
+import { logError } from "@/lib/errors/logError";
+
 const RESEND_API_URL = "https://api.resend.com/emails";
 
 export interface SendEmailInput {
@@ -30,6 +33,19 @@ export interface SendEmailInput {
   subject: string;
   text: string;
   html?: string;
+  /**
+   * Optional attribution for the durable error log (public.error_log, 0950).
+   * This module is a pure transport and knows nothing about companies, so a
+   * failure logged from here would otherwise land with no company_id and be
+   * visible to almost nobody. Callers that DO know whose email this was —
+   * lib/notifications/dispatchPending, today the only one — pass it, and the
+   * failure shows up on that company's own error-log screen.
+   *
+   * Logging happens HERE rather than in the caller so there is exactly one
+   * record per failed send: the transport knows the status code and the
+   * provider's own wording, which is what the screen turns into advice.
+   */
+  errorScope?: { supabase?: SupabaseClient; companyId?: string | null };
 }
 
 export interface SendEmailResult {
@@ -62,6 +78,22 @@ export async function sendTransactionalEmail(input: SendEmailInput): Promise<Sen
       `[email] RESEND_API_KEY is not set — skipping send to ${to}: "${input.subject}". ` +
         "Set RESEND_API_KEY (and RESEND_FROM_EMAIL once a domain is verified in Resend) to enable real delivery."
     );
+    // Recorded as a warning, not an error: nothing broke. But "my reminder
+    // emails never arrive" is otherwise completely silent from the owner's
+    // side, and this is the one line that explains it. Repeats collapse onto
+    // a single row with a count (see 0950), so a nightly digest of thirty
+    // notifications does not produce thirty entries.
+    await logError({
+      operation: "email_send",
+      severity: "warning",
+      message: "Emails are not switched on for this server, so nothing was sent.",
+      detail:
+        "RESEND_API_KEY is not set in the server environment. No request was made to Resend; " +
+        `the message "${input.subject}" was skipped and is still marked pending.`,
+      companyId: input.errorScope?.companyId ?? null,
+      supabase: input.errorScope?.supabase,
+      context: { provider: "resend", reason: "missing_env", recipients: Array.isArray(input.to) ? input.to.length : 1 },
+    });
     return { ok: false, skipped: true };
   }
 
@@ -84,6 +116,19 @@ export async function sendTransactionalEmail(input: SendEmailInput): Promise<Sen
     if (!res.ok) {
       const body = await res.text().catch(() => "");
       console.error(`[email] Resend API returned ${res.status} for "${input.subject}": ${body}`);
+      await logError({
+        operation: "email_send",
+        message: `An email could not be sent — Resend replied ${res.status}.`,
+        // Resend's error bodies quote the request back, and this request
+        // carries an `Authorization: Bearer re_…` header. Redaction is not
+        // optional here. See lib/errors/redact.ts.
+        detail: `Subject: "${input.subject}"
+HTTP ${res.status}
+${body.slice(0, 1500)}`,
+        companyId: input.errorScope?.companyId ?? null,
+        supabase: input.errorScope?.supabase,
+        context: { provider: "resend", status: res.status },
+      });
       return { ok: false, error: `Resend API ${res.status}: ${body.slice(0, 300)}` };
     }
 
@@ -92,6 +137,14 @@ export async function sendTransactionalEmail(input: SendEmailInput): Promise<Sen
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     console.error(`[email] Failed to reach Resend for "${input.subject}": ${message}`);
+    await logError({
+      operation: "email_send",
+      message: "An email could not be sent — we could not reach the email service at all.",
+      detail: err,
+      companyId: input.errorScope?.companyId ?? null,
+      supabase: input.errorScope?.supabase,
+      context: { provider: "resend", subject: input.subject },
+    });
     return { ok: false, error: message };
   }
 }

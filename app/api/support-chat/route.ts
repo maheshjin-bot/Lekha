@@ -1,4 +1,5 @@
 import { createClient } from "@/lib/supabase/server";
+import { logError } from "@/lib/errors/logError";
 
 /**
  * Backend for the floating support chat (components/support/SupportChatWidget.tsx).
@@ -138,6 +139,19 @@ export async function POST(request: Request) {
 
   const apiKey = process.env.GOOGLE_API_KEY;
   if (!apiKey) {
+    // Durable record alongside the response the user already gets: from the
+    // owner's side "the help chat says it isn't configured" and "a setting is
+    // missing on the server" are the same fact, and only the second one is
+    // actionable. Never awaited into the response path in a way that could
+    // change it — logError resolves void whatever happens.
+    await logError({
+      operation: "support_chat",
+      severity: "warning",
+      message: "The help assistant is not switched on for this server yet.",
+      detail: "GOOGLE_API_KEY is not set in the server environment, so no request was made to Gemini at all.",
+      supabase,
+      context: { route: "/api/support-chat", reason: "missing_env" },
+    });
     return new Response(
       "Support chat isn't configured on this server yet (missing GOOGLE_API_KEY).",
       { status: 503 }
@@ -184,6 +198,16 @@ export async function POST(request: Request) {
     );
   } catch (err) {
     console.error("[support-chat] failed to reach Gemini", err);
+    await logError({
+      operation: "support_chat",
+      message: "The help assistant could not reach Google at all.",
+      // `err` here routinely carries the request URL, and this app puts the
+      // API key IN that URL's query string — logError redacts before it
+      // stores anything. See lib/errors/redact.ts.
+      detail: err,
+      supabase,
+      context: { route: "/api/support-chat", models: MODELS },
+    });
     return new Response("The assistant is temporarily unavailable. Please try again.", {
       status: 502,
     });
@@ -192,6 +216,17 @@ export async function POST(request: Request) {
   if (!upstream.ok || !upstream.body) {
     const errText = await upstream.text().catch(() => "");
     console.error("[support-chat] Gemini error", upstream.status, errText);
+    // This is the shape of the incident that prompted this whole feature: a
+    // 503 "This model is currently experiencing high demand" that the user
+    // saw only as "temporarily unavailable". The status and Google's own
+    // wording are what let the screen say "it was busy, try again" instead.
+    await logError({
+      operation: "support_chat",
+      message: `The help assistant could not answer — Google replied ${upstream.status}.`,
+      detail: errText.slice(0, 2000) || `HTTP ${upstream.status} with an empty body`,
+      supabase,
+      context: { route: "/api/support-chat", status: upstream.status, models: MODELS },
+    });
     return new Response("The assistant is temporarily unavailable. Please try again.", {
       status: 502,
     });
@@ -231,6 +266,19 @@ export async function POST(request: Request) {
         }
       } catch (err) {
         console.error("[support-chat] stream read error", err);
+        // Runs after the Response has already been handed to the client, so
+        // it cannot and must not change what the user got — the answer they
+        // were reading simply stops. The supabase client is passed explicitly
+        // because cookies() is no longer reachable this far outside the
+        // request scope.
+        await logError({
+          operation: "support_chat",
+          severity: "warning",
+          message: "The help assistant's answer was cut off part-way through.",
+          detail: err,
+          supabase,
+          context: { route: "/api/support-chat", phase: "stream" },
+        });
       } finally {
         controller.close();
       }

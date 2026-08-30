@@ -147,7 +147,17 @@ describe("POST /api/whatsapp/webhook (inbound message)", () => {
     expect(json.processed).toBe(0);
     expect(json.note).toMatch(/WHATSAPP_ACCESS_TOKEN/);
     expect(mockDownload).not.toHaveBeenCalled();
-    expect(mockRpcImpl).not.toHaveBeenCalled();
+    // Narrowed from `not.toHaveBeenCalled()` to name the RPC this test is
+    // actually about. Migration 0950 added a durable error log, and this
+    // branch now records "a bill was forwarded but WhatsApp is not switched
+    // on for this server" through log_error_global — which is another rpc()
+    // call on the same mocked client. The thing that must NOT happen here is
+    // still asserted, and asserted more precisely: no capture draft is
+    // created.
+    expect(
+      mockRpcImpl.mock.calls.map(([fn]) => fn),
+      "no capture draft may be created without an access token"
+    ).not.toContain("receive_whatsapp_inbound_message");
   });
 
   it("with WHATSAPP_ACCESS_TOKEN configured: downloads, creates a draft, uploads it, and returns the confirm link it would send", async () => {

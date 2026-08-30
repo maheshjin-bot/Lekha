@@ -1171,55 +1171,117 @@ export type Database = {
           },
         ]
       }
+      capture_draft_pages: {
+        Row: {
+          created_at: string
+          draft_id: string
+          id: string
+          page_no: number
+          sha256: string | null
+          storage_path: string
+        }
+        Insert: {
+          created_at?: string
+          draft_id: string
+          id?: string
+          page_no: number
+          sha256?: string | null
+          storage_path: string
+        }
+        Update: {
+          created_at?: string
+          draft_id?: string
+          id?: string
+          page_no?: number
+          sha256?: string | null
+          storage_path?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "capture_draft_pages_draft_id_fkey"
+            columns: ["draft_id"]
+            isOneToOne: false
+            referencedRelation: "capture_drafts"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       capture_drafts: {
         Row: {
           branch_id: string | null
+          client_dedupe_key: string | null
           company_id: string | null
           confirm_token: string | null
           confirm_token_used_at: string | null
           confirmed_voucher_id: string | null
           created_at: string
           created_by: string | null
+          document_type: string
+          extracted_at: string | null
           extracted_json: Json | null
           id: string
+          note: string | null
+          rejected_at: string | null
+          rejected_by: string | null
+          rejected_reason: string | null
           source: string
           status: string
           storage_path: string
+          submitted_at: string | null
           updated_at: string
+          vendor_hint: string | null
           whatsapp_phone_number_id: string | null
           whatsapp_sender_phone: string | null
         }
         Insert: {
           branch_id?: string | null
+          client_dedupe_key?: string | null
           company_id?: string | null
           confirm_token?: string | null
           confirm_token_used_at?: string | null
           confirmed_voucher_id?: string | null
           created_at?: string
           created_by?: string | null
+          document_type?: string
+          extracted_at?: string | null
           extracted_json?: Json | null
           id?: string
+          note?: string | null
+          rejected_at?: string | null
+          rejected_by?: string | null
+          rejected_reason?: string | null
           source: string
           status?: string
           storage_path: string
+          submitted_at?: string | null
           updated_at?: string
+          vendor_hint?: string | null
           whatsapp_phone_number_id?: string | null
           whatsapp_sender_phone?: string | null
         }
         Update: {
           branch_id?: string | null
+          client_dedupe_key?: string | null
           company_id?: string | null
           confirm_token?: string | null
           confirm_token_used_at?: string | null
           confirmed_voucher_id?: string | null
           created_at?: string
           created_by?: string | null
+          document_type?: string
+          extracted_at?: string | null
           extracted_json?: Json | null
           id?: string
+          note?: string | null
+          rejected_at?: string | null
+          rejected_by?: string | null
+          rejected_reason?: string | null
           source?: string
           status?: string
           storage_path?: string
+          submitted_at?: string | null
           updated_at?: string
+          vendor_hint?: string | null
           whatsapp_phone_number_id?: string | null
           whatsapp_sender_phone?: string | null
         }
@@ -2734,6 +2796,56 @@ export type Database = {
           },
           {
             foreignKeyName: "employees_company_id_fkey"
+            columns: ["company_id"]
+            isOneToOne: false
+            referencedRelation: "companies"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      error_log: {
+        Row: {
+          company_id: string | null
+          context: Json
+          detail: string | null
+          id: string
+          last_seen_at: string
+          message: string
+          occurred_at: string
+          operation: string
+          repeat_count: number
+          severity: string
+          user_id: string | null
+        }
+        Insert: {
+          company_id?: string | null
+          context?: Json
+          detail?: string | null
+          id?: string
+          last_seen_at?: string
+          message: string
+          occurred_at?: string
+          operation: string
+          repeat_count?: number
+          severity?: string
+          user_id?: string | null
+        }
+        Update: {
+          company_id?: string | null
+          context?: Json
+          detail?: string | null
+          id?: string
+          last_seen_at?: string
+          message?: string
+          occurred_at?: string
+          operation?: string
+          repeat_count?: number
+          severity?: string
+          user_id?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "error_log_company_id_fkey"
             columns: ["company_id"]
             isOneToOne: false
             referencedRelation: "companies"
@@ -6336,6 +6448,8 @@ export type Database = {
           approved_at: string | null
           approved_by: string | null
           branch_id: string
+          challan_date: string | null
+          challan_number: string | null
           company_id: string
           created_at: string
           created_by: string | null
@@ -6369,6 +6483,8 @@ export type Database = {
           approved_at?: string | null
           approved_by?: string | null
           branch_id: string
+          challan_date?: string | null
+          challan_number?: string | null
           company_id: string
           created_at?: string
           created_by?: string | null
@@ -6402,6 +6518,8 @@ export type Database = {
           approved_at?: string | null
           approved_by?: string | null
           branch_id?: string
+          challan_date?: string | null
+          challan_number?: string | null
           company_id?: string
           created_at?: string
           created_by?: string | null
@@ -6536,6 +6654,15 @@ export type Database = {
           accrual_employee_id: string
         }[]
       }
+      add_capture_draft_page: {
+        Args: {
+          p_draft_id: string
+          p_page_no: number
+          p_sha256?: string
+          p_storage_path: string
+        }
+        Returns: string
+      }
       add_gst_registration: {
         Args: {
           p_branch_id?: string
@@ -6612,18 +6739,27 @@ export type Database = {
         Args: { p_branch_id?: string; p_company_id: string; p_draft_id: string }
         Returns: {
           branch_id: string | null
+          client_dedupe_key: string | null
           company_id: string | null
           confirm_token: string | null
           confirm_token_used_at: string | null
           confirmed_voucher_id: string | null
           created_at: string
           created_by: string | null
+          document_type: string
+          extracted_at: string | null
           extracted_json: Json | null
           id: string
+          note: string | null
+          rejected_at: string | null
+          rejected_by: string | null
+          rejected_reason: string | null
           source: string
           status: string
           storage_path: string
+          submitted_at: string | null
           updated_at: string
+          vendor_hint: string | null
           whatsapp_phone_number_id: string | null
           whatsapp_sender_phone: string | null
         }
@@ -6649,6 +6785,17 @@ export type Database = {
       }
       create_api_key: {
         Args: { p_company_id: string; p_name: string }
+        Returns: string
+      }
+      create_capture_draft: {
+        Args: {
+          p_branch_id?: string
+          p_client_dedupe_key?: string
+          p_company_id: string
+          p_document_type?: string
+          p_note?: string
+          p_vendor_hint?: string
+        }
         Returns: string
       }
       create_company: {
@@ -6704,6 +6851,8 @@ export type Database = {
       create_invoice: {
         Args: {
           p_branch_id: string
+          p_challan_date?: string
+          p_challan_number?: string
           p_company_id: string
           p_exchange_rate?: number
           p_godown_id: string
@@ -7123,6 +7272,44 @@ export type Database = {
           whatsapp_sender_phone: string
         }[]
       }
+      get_capture_review_queue: {
+        Args: {
+          p_branch_id?: string
+          p_captured_by?: string
+          p_company_id: string
+          p_document_type?: string
+          p_from?: string
+          p_limit?: number
+          p_status?: string
+          p_to?: string
+        }
+        Returns: {
+          branch_id: string
+          captured_by: string
+          captured_by_email: string
+          captured_by_name: string
+          company_id: string
+          confirmed_voucher_id: string
+          created_at: string
+          document_type: string
+          draft_id: string
+          duplicate_of_draft_id: string
+          extracted_at: string
+          has_extraction: boolean
+          id: string
+          is_possible_duplicate: boolean
+          note: string
+          page_count: number
+          rejected_at: string
+          rejected_reason: string
+          source: string
+          stage: string
+          status: string
+          storage_path: string
+          submitted_at: string
+          vendor_hint: string
+        }[]
+      }
       get_cash_flow_statement: {
         Args: {
           p_company_id: string
@@ -7533,6 +7720,28 @@ export type Database = {
           rule_salary_base: number
           running_cost_borne_by: string
           taxable_value: number
+        }[]
+      }
+      get_error_log: {
+        Args: {
+          p_company_id: string
+          p_limit?: number
+          p_operation?: string
+          p_severity?: string
+          p_since?: string
+        }
+        Returns: {
+          context: Json
+          detail: string
+          id: string
+          last_seen_at: string
+          message: string
+          occurred_at: string
+          operation: string
+          repeat_count: number
+          scope: string
+          severity: string
+          user_name: string
         }[]
       }
       get_esi_mc_data: {
@@ -8495,6 +8704,26 @@ export type Database = {
           notice_date: string
         }[]
       }
+      get_my_capture_drafts: {
+        Args: { p_company_id: string; p_limit?: number }
+        Returns: {
+          confirmed_voucher_id: string
+          created_at: string
+          document_type: string
+          draft_id: string
+          extracted_at: string
+          id: string
+          note: string
+          page_count: number
+          rejected_at: string
+          rejected_reason: string
+          stage: string
+          status: string
+          storage_path: string
+          submitted_at: string
+          vendor_hint: string
+        }[]
+      }
       get_needs_attention: {
         Args: { p_company_id: string }
         Returns: {
@@ -9269,6 +9498,27 @@ export type Database = {
           voucher_type: string
         }[]
       }
+      log_error: {
+        Args: {
+          p_company_id?: string
+          p_context?: Json
+          p_detail?: string
+          p_message: string
+          p_operation: string
+          p_severity?: string
+        }
+        Returns: string
+      }
+      log_error_global: {
+        Args: {
+          p_context?: Json
+          p_detail?: string
+          p_message: string
+          p_operation: string
+          p_severity?: string
+        }
+        Returns: string
+      }
       mark_notification_sent: {
         Args: { p_notification_id: string; p_success: boolean }
         Returns: undefined
@@ -9488,6 +9738,10 @@ export type Database = {
         Args: { p_signer_id: string }
         Returns: string
       }
+      reject_capture_draft: {
+        Args: { p_draft_id: string; p_reason: string }
+        Returns: undefined
+      }
       reopen_period: {
         Args: { p_company_id: string; p_new_lock_date?: string }
         Returns: undefined
@@ -9516,6 +9770,10 @@ export type Database = {
       set_budget_lines: {
         Args: { p_budget_id: string; p_company_id: string; p_lines: Json }
         Returns: number
+      }
+      set_capture_draft_extraction: {
+        Args: { p_draft_id: string; p_extracted: Json }
+        Returns: undefined
       }
       set_company_password: {
         Args: { p_company_id: string; p_password: string }
@@ -9554,6 +9812,7 @@ export type Database = {
         Args: { p_company_id: string; p_mode: string; p_voucher_type: string }
         Returns: undefined
       }
+      submit_capture_draft: { Args: { p_draft_id: string }; Returns: undefined }
       unmark_service_advance_adjusted: {
         Args: { p_advance_id: string; p_company_id: string }
         Returns: undefined
@@ -9564,6 +9823,8 @@ export type Database = {
       }
       update_invoice: {
         Args: {
+          p_challan_date?: string
+          p_challan_number?: string
           p_godown_id: string
           p_items: Json
           p_narration?: string

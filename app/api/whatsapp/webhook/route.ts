@@ -4,6 +4,7 @@ import { callRpc } from "@/lib/supabase/rpc";
 import { analyzeCaptureImage } from "@/lib/capture/analyze";
 import { extractInboundMedia } from "@/lib/whatsapp/webhookPayload";
 import { downloadWhatsAppMedia, sendWhatsAppTextMessage, verifyMetaSignature } from "@/lib/whatsapp/graphApi";
+import { logError } from "@/lib/errors/logError";
 
 export const dynamic = "force-dynamic";
 
@@ -109,6 +110,21 @@ export async function POST(request: Request) {
     const signature = request.headers.get("x-hub-signature-256");
     if (!verifyMetaSignature(rawBody, signature, appSecret)) {
       console.warn("[whatsapp/webhook] rejected: X-Hub-Signature-256 did not match");
+      // `global: true` throughout this file: an inbound Meta delivery carries
+      // no Supabase session, so these go through log_error_global (the narrow
+      // anon-reachable RPC, migration 0950). Note what that costs — a row
+      // with neither a company nor a user is deliberately visible to NOBODY
+      // on the /error-log screen; it exists for whoever runs the server. The
+      // rawBody is NOT logged: it is unauthenticated third-party content and
+      // an attacker could otherwise choose what gets written into this table.
+      await logError({
+        global: true,
+        operation: "whatsapp_webhook",
+        severity: "warning",
+        message: "A WhatsApp delivery was rejected because its signature did not match.",
+        detail: "X-Hub-Signature-256 did not verify against WHATSAPP_APP_SECRET. The payload was discarded unread.",
+        context: { signature_present: Boolean(signature) },
+      });
       return NextResponse.json({ error: "Invalid signature" }, { status: 401 });
     }
   } else {
@@ -136,6 +152,16 @@ export async function POST(request: Request) {
     console.warn(
       `[whatsapp/webhook] received ${mediaMessages.length} attachment notification(s) but WHATSAPP_ACCESS_TOKEN is not set — cannot call the Graph API to download them. Nothing was captured.`
     );
+    await logError({
+      global: true,
+      operation: "whatsapp_webhook",
+      severity: "warning",
+      message: "A bill was forwarded over WhatsApp but could not be collected — WhatsApp is not switched on for this server.",
+      detail:
+        "WHATSAPP_ACCESS_TOKEN is not set, so the Graph API call that downloads the attachment could not be made. " +
+        `${mediaMessages.length} attachment notification(s) were received and discarded.`,
+      context: { attachments: mediaMessages.length, reason: "missing_env" },
+    });
     return NextResponse.json({
       received: true,
       processed: 0,
@@ -161,6 +187,17 @@ export async function POST(request: Request) {
     const media = await downloadWhatsAppMedia(msg.mediaId, accessToken);
     if ("error" in media) {
       console.error("[whatsapp/webhook] media download failed", media.error);
+      // media.error is Meta's own text and can quote the request back — the
+      // Graph API takes its access token as a bearer header and sometimes as
+      // a query parameter, so this string is exactly the kind that carries a
+      // live credential. logError redacts before storing.
+      await logError({
+        global: true,
+        operation: "whatsapp_webhook",
+        message: "A bill forwarded over WhatsApp could not be downloaded.",
+        detail: media.error,
+        context: { media_id: msg.mediaId, mime_type: msg.mimeType },
+      });
       results.push({ waMessageId: msg.waMessageId, ok: false, detail: media.error });
       continue;
     }
@@ -192,6 +229,13 @@ export async function POST(request: Request) {
     const row = created?.[0];
     if (rpcError || !row) {
       console.error("[whatsapp/webhook] receive_whatsapp_inbound_message failed", rpcError?.message);
+      await logError({
+        global: true,
+        operation: "whatsapp_webhook",
+        message: "A bill arrived over WhatsApp but could not be saved as a draft.",
+        detail: rpcError?.message ?? "receive_whatsapp_inbound_message returned no row",
+        context: { step: "receive_whatsapp_inbound_message", mime_type: media.mimeType },
+      });
       results.push({
         waMessageId: msg.waMessageId,
         ok: false,
@@ -208,6 +252,19 @@ export async function POST(request: Request) {
       // header, "DELIBERATELY NOT DONE" — no compensating cleanup for this
       // narrow failure window) — flagged loudly rather than silently.
       console.error("[whatsapp/webhook] storage upload failed after draft was created", uploadError.message);
+      // Critical rather than error: the draft row exists but its file does
+      // not, so someone will open a capture draft that shows nothing and has
+      // no way to find out why. 0745's own header records that there is
+      // deliberately no compensating cleanup for this window; this at least
+      // makes the window visible instead of silent.
+      await logError({
+        global: true,
+        operation: "whatsapp_webhook",
+        severity: "error",
+        message: "A bill arrived over WhatsApp and a draft was created, but the file itself could not be stored.",
+        detail: `Draft ${row.draft_id} exists with no file behind it: ${uploadError.message}`,
+        context: { step: "storage_upload", draft_id: row.draft_id },
+      });
       results.push({
         waMessageId: msg.waMessageId,
         ok: false,
@@ -226,6 +283,19 @@ export async function POST(request: Request) {
       console.warn(
         `[whatsapp/webhook] would reply to ${msg.senderPhone} with: "${replyText}" — send failed: ${sendResult.error}`
       );
+      // The draft exists either way — a failed reply never blocks capture —
+      // but the sender is now waiting for a confirmation link that will never
+      // arrive, which is worth a record. The phone number and the confirm
+      // link are both deliberately left out of the stored text: the link is a
+      // bearer token, and the number belongs to a third party.
+      await logError({
+        global: true,
+        operation: "whatsapp_webhook",
+        severity: "warning",
+        message: "A bill was captured from WhatsApp, but the confirmation reply could not be sent back.",
+        detail: sendResult.error,
+        context: { step: "send_reply" },
+      });
     }
 
     results.push({ waMessageId: msg.waMessageId, ok: true, detail: confirmLink });

@@ -67,6 +67,24 @@ export default async function SettingsPage({
         <span aria-hidden className="text-ink-faint">→</span>
       </Link>
 
+      {/* Reachable from Settings rather than the nav rail: components/nav/
+          NavRail.tsx is owned by a concurrent session and must not be edited
+          here. This card is what makes the screen findable at all today —
+          the integration pass should add a proper nav entry. */}
+      <Link
+        href={`/${companyId}/error-log`}
+        className="mt-3 flex items-center justify-between rounded-lg border border-border bg-surface p-5 transition-colors hover:bg-surface-2"
+      >
+        <span>
+          <span className="block font-semibold text-ink">Error log</span>
+          <span className="mt-0.5 block text-sm text-ink-soft">
+            When something in the app did not work — what went wrong, in plain language,
+            and what to do about it.
+          </span>
+        </span>
+        <span aria-hidden className="text-ink-faint">&rarr;</span>
+      </Link>
+
       <Link
         href={`/${companyId}/settings/team`}
         className="mt-3 flex items-center justify-between rounded-lg border border-border bg-surface p-5 transition-colors hover:bg-surface-2"
