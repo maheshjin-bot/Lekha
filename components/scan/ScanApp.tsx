@@ -18,6 +18,8 @@ import {
   type ScanSendResume,
   type ScanTransport,
 } from "@/lib/scan/uploadQueue";
+import { getScanQueue } from "@/lib/scan/queueClient";
+import { registerScanServiceWorker } from "@/lib/scan/registerScanServiceWorker";
 import {
   SCAN_PLACE_SERVER_SNAPSHOT,
   getScanPlaceServerSnapshot,
@@ -41,8 +43,10 @@ import { CropScreen } from "./CropScreen";
 import { TagScreen } from "./TagScreen";
 import { SendScreen, type SendState } from "./SendScreen";
 import { RecentSendsScreen } from "./RecentSendsScreen";
+import { QueueBar } from "./QueueBar";
+import { QueueScreen } from "./QueueScreen";
 
-type Screen = "place" | "shoot" | "crop" | "tag" | "send" | "recent";
+type Screen = "place" | "shoot" | "crop" | "tag" | "send" | "recent" | "queue";
 
 const EMPTY_TAGS: ScanTags = { documentType: "purchase_invoice", vendorHint: "", note: "" };
 
@@ -54,7 +58,10 @@ const IDLE_SEND: SendState = {
   failedPage: null,
   submitting: false,
   succeeded: false,
+  queued: false,
+  queuedKey: null,
   error: null,
+  permanent: false,
 };
 
 /**
@@ -85,6 +92,14 @@ export function ScanApp({
 
   const dedupeKeyRef = useRef<string | null>(null);
   const resumeRef = useRef<ScanSendResume | null>(null);
+  /**
+   * The job the send screen is working on, held so a retry after clearPages()
+   * still has its blobs. Declared up here with the other refs rather than down
+   * beside startSend, because queueJob below writes it — and a ref first
+   * mentioned inside a useCallback and only declared later is what this
+   * project's react-hooks/immutability rule rejects.
+   */
+  const jobRef = useRef<ScanDocumentJob | null>(null);
   const cameraRef = useRef<HTMLInputElement>(null);
   const transportRef = useRef<ScanTransport | null>(null);
 
@@ -93,6 +108,33 @@ export function ScanApp({
     for (const b of branches) (map[b.company_id] ??= []).push(b);
     return map;
   }, [branches]);
+
+  // ---------------------------------------------------------------------
+  // The offline queue. Read as an external store for the same reason
+  // localStorage is above: it lives outside React, it changes from `online`
+  // and `visibilitychange` listeners that React knows nothing about, and
+  // copying it into state inside an effect would be a cascading render this
+  // project's lint rejects outright.
+  // ---------------------------------------------------------------------
+  const queue = useMemo(() => getScanQueue(), []);
+  const queueState = useSyncExternalStore(
+    queue.subscribe,
+    queue.getSnapshot,
+    queue.getServerSnapshot
+  );
+
+  // Attaching the listeners also performs the first drain — which is the
+  // "app start" trigger, and the one that actually matters: a phone that was
+  // carried out of signal yesterday empties itself the moment the scanner is
+  // reopened today.
+  useEffect(() => queue.start(), [queue]);
+
+  // The other half of offline: making /scan LOAD with no signal. Registered
+  // from here rather than from the layout because this is the only client root
+  // under /scan, and it runs before the early returns below.
+  useEffect(() => {
+    void registerScanServiceWorker();
+  }, []);
 
   // ---------------------------------------------------------------------
   // Where am I? Answered once and remembered on the handset.
@@ -214,8 +256,60 @@ export function ScanApp({
   // Sending. Kicked off from a button, never from an effect — an effect that
   // re-fires on a re-render would double-send a document.
   // ---------------------------------------------------------------------
+  /**
+   * Hand the whole document to the phone's own disk and tell the shooter the
+   * truth about where it is. Used both when there was never any signal to try
+   * with, and when a try died on a retryable error.
+   */
+  const queueJob = useCallback(
+    async (job: ScanDocumentJob, resume: ScanSendResume | null, reason: string | null) => {
+      const stored = await queue.enqueue(job, resume, reason);
+      if (stored.ok) {
+        resumeRef.current = null;
+        dedupeKeyRef.current = null;
+        jobRef.current = null;
+        clearPages();
+        setSendState({
+          running: false,
+          total: job.pages.length,
+          currentPage: null,
+          donePages: resume?.uploadedPageNos ?? [],
+          failedPage: null,
+          submitting: false,
+          succeeded: false,
+          queued: true,
+          queuedKey: job.dedupeKey,
+          error: null,
+          permanent: false,
+        });
+        return true;
+      }
+      // The phone could not hold it. The pages are still in memory, so the one
+      // honest thing to do is keep them there and say so.
+      setSendState((s) => ({
+        ...s,
+        running: false,
+        submitting: false,
+        succeeded: false,
+        queued: false,
+        queuedKey: null,
+        error: stored.message,
+        permanent: false,
+      }));
+      return false;
+    },
+    [clearPages, queue]
+  );
+
   const runSend = useCallback(
     async (job: ScanDocumentJob, resume: ScanSendResume | null) => {
+      // No point burning thirty seconds of a shooter's time on a fetch that
+      // cannot possibly leave the handset. Straight to the queue.
+      if (typeof navigator !== "undefined" && navigator.onLine === false) {
+        await queueJob(job, resume, null);
+        return;
+      }
+
       transportRef.current ??= createHttpTransport(createClient());
 
       setSendState({
@@ -226,7 +320,10 @@ export function ScanApp({
         failedPage: null,
         submitting: false,
         succeeded: false,
+        queued: false,
+        queuedKey: null,
         error: null,
+        permanent: false,
       });
 
       const result = await sendScanDocument(job, {
@@ -283,20 +380,36 @@ export function ScanApp({
           failedPage: null,
           submitting: false,
           succeeded: true,
+          queued: false,
+          queuedKey: null,
           error: null,
+          permanent: false,
         });
-      } else {
-        resumeRef.current = result.resume;
-        setSendState((s) => ({
-          ...s,
-          running: false,
-          submitting: false,
-          succeeded: false,
-          error: result.message,
-        }));
+        return;
       }
+
+      resumeRef.current = result.resume;
+
+      // A bad link is the queue's job. A refusal is a person's job, and dropping
+      // it into a retry loop would hide it forever behind "waiting to send" —
+      // which is the one thing this feature must never do.
+      if (result.kind === "retryable") {
+        await queueJob(job, result.resume, result.message);
+        return;
+      }
+
+      setSendState((s) => ({
+        ...s,
+        running: false,
+        submitting: false,
+        succeeded: false,
+        queued: false,
+        queuedKey: null,
+        error: result.message,
+        permanent: true,
+      }));
     },
-    [clearPages]
+    [clearPages, queueJob]
   );
 
   const buildJob = useCallback(
@@ -319,10 +432,6 @@ export function ScanApp({
     },
     [place, tags]
   );
-
-  // The job the send screen is working on. Held so a retry after clearPages()
-  // (which only runs on success) still has its blobs.
-  const jobRef = useRef<ScanDocumentJob | null>(null);
 
   const startSend = useCallback(() => {
     const job = buildJob(pages);
@@ -394,6 +503,19 @@ export function ScanApp({
   // a shutter that has nowhere to send to.
   const showPicker = !place || screen === "place";
 
+  // "Saved on this phone" is only true while it stays true. If the drain
+  // running behind this screen gets the very document it queued REFUSED, the
+  // reassuring paragraph has to become the refusal — a screen left promising
+  // that a rejected bill will go by itself is the precise failure this phase
+  // exists to prevent. Derived during render from the queue snapshot, so it
+  // updates the moment the drain does.
+  const queuedRefusal =
+    sendState.queued && sendState.queuedKey
+      ? (queueState.entries.find(
+          (e) => e.dedupeKey === sendState.queuedKey && e.state === "blocked"
+        )?.lastError ?? null)
+      : null;
+
   if (!hydrated) {
     return (
       <div className="flex flex-1 items-center justify-center px-8 text-center text-base text-ink-soft">
@@ -421,6 +543,20 @@ export function ScanApp({
         tabIndex={-1}
         data-testid="scan-camera-input"
       />
+
+      {/*
+        The waiting count, above every screen the shooter works on. NOT on the
+        crop screen (a full-bleed direct-manipulation surface where a strip
+        appearing under the thumb mid-drag would be a hazard) and not on the
+        place picker (which has nothing to send into yet).
+      */}
+      {!showPicker && screen !== "crop" && screen !== "queue" && (
+        <QueueBar
+          snapshot={queueState}
+          onOpen={() => setScreen("queue")}
+          onTryNow={() => void queue.drain("manual")}
+        />
+      )}
 
       {showPicker && (
         <PlacePicker
@@ -472,6 +608,8 @@ export function ScanApp({
           onDone={() => startNewDocument()}
           onBack={() => setScreen("tag")}
           onOpenRecent={() => setScreen("recent")}
+          onOpenQueue={() => setScreen("queue")}
+          queuedRefusal={queuedRefusal}
         />
       )}
 
@@ -480,6 +618,16 @@ export function ScanApp({
           companyId={place.companyId}
           onBack={() => setScreen("shoot")}
           onReshoot={reshoot}
+        />
+      )}
+
+      {!showPicker && screen === "queue" && (
+        <QueueScreen
+          snapshot={queueState}
+          onBack={() => setScreen("shoot")}
+          onTryNow={() => void queue.drain("manual")}
+          onDiscard={(key) => void queue.discard(key)}
+          onUnblock={(key) => void queue.unblock(key)}
         />
       )}
     </>

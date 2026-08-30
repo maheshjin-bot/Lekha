@@ -1,6 +1,6 @@
 "use client";
 
-import { Camera, Check, ClipboardList, RefreshCw } from "lucide-react";
+import { AlertTriangle, Camera, Check, ClipboardList, CloudOff, RefreshCw } from "lucide-react";
 
 export type SendState = {
   running: boolean;
@@ -12,7 +12,27 @@ export type SendState = {
   failedPage: number | null;
   submitting: boolean;
   succeeded: boolean;
+  /**
+   * The link was down, so the whole document is on this phone's disk waiting
+   * for signal. Deliberately a THIRD outcome and not a flavour of `succeeded`:
+   * "the office has it" and "this phone has it" are different facts and the
+   * shooter has to be able to tell them apart.
+   */
+  queued: boolean;
+  /**
+   * Which document went into the queue, so this screen can keep watching it.
+   * A "saved on this phone" message that stays on screen while the drain
+   * behind it gets the document REFUSED would be the exact lie this whole
+   * phase exists to prevent.
+   */
+  queuedKey: string | null;
   error: string | null;
+  /**
+   * The server refused this document rather than the link failing, so it will
+   * NOT retry on its own and saying "it will go when there is signal" would be
+   * a lie. Drives the copy under the error, nothing else.
+   */
+  permanent: boolean;
 };
 
 /**
@@ -32,13 +52,81 @@ export function SendScreen({
   onDone,
   onBack,
   onOpenRecent,
+  onOpenQueue,
+  queuedRefusal,
 }: {
   state: SendState;
   onRetry: () => void;
   onDone: () => void;
   onBack: () => void;
   onOpenRecent: () => void;
+  onOpenQueue: () => void;
+  /**
+   * Non-null once the queue has tried the document this screen queued and the
+   * server refused it. Live, because this screen can sit on a counter for
+   * minutes while the drain runs behind it.
+   */
+  queuedRefusal?: string | null;
 }) {
+  if (state.queued) {
+    const refused = Boolean(queuedRefusal);
+    return (
+      <div className="flex flex-1 flex-col justify-between px-5 pb-8 pt-8">
+        <div className="flex flex-1 flex-col items-center justify-center gap-5 text-center">
+          <span
+            className={
+              "flex h-24 w-24 items-center justify-center rounded-full " +
+              (refused ? "bg-error-soft text-error" : "bg-warning-soft text-warning")
+            }
+          >
+            {refused ? (
+              <AlertTriangle size={48} strokeWidth={2} />
+            ) : (
+              <CloudOff size={48} strokeWidth={2} />
+            )}
+          </span>
+          <p className="font-display text-3xl font-semibold text-ink">
+            {refused ? "It was not accepted" : "Saved on this phone"}
+          </p>
+          {/* The whole safety property of phase 4 lives in this paragraph. It
+              must never say or imply that the office has it, and it must stop
+              promising the document will go by itself the moment that stops
+              being true. */}
+          <p className="max-w-xs text-base text-ink-soft">
+            {refused
+              ? `${queuedRefusal} It has NOT reached the office and it will not go by itself. Open what is waiting and deal with it.`
+              : "There is no signal, so it has NOT reached the office yet. It is safe here and will go by itself as soon as there is signal, as long as the scanner is open. Carry on photographing."}
+          </p>
+        </div>
+        <div className={"flex gap-3 " + (refused ? "flex-col-reverse" : "flex-col")}>
+          <button
+            type="button"
+            onClick={onDone}
+            data-testid="scan-another"
+            className="flex min-h-[64px] items-center justify-center gap-2 rounded-card bg-accent px-4 text-xl font-semibold text-accent-ink active:opacity-90"
+          >
+            <Camera size={24} />
+            Next document
+          </button>
+          <button
+            type="button"
+            onClick={onOpenQueue}
+            data-testid="scan-open-queue"
+            className={
+              "flex min-h-[56px] items-center justify-center gap-2 rounded-card px-4 text-base font-semibold active:bg-surface-2 " +
+              (refused
+                ? "border border-error/50 text-error"
+                : "border border-border-strong text-ink")
+            }
+          >
+            {refused ? <AlertTriangle size={20} /> : <CloudOff size={20} />}
+            See what is waiting
+          </button>
+        </div>
+      </div>
+    );
+  }
+
   if (state.succeeded) {
     return (
       <div className="flex flex-1 flex-col justify-between px-5 pb-8 pt-8">
@@ -142,7 +230,9 @@ export function SendScreen({
             {state.error}
           </p>
           <p className="mt-1 text-sm text-ink-soft">
-            Nothing is lost. The pages are still on this phone.
+            {state.permanent
+              ? "Nothing is lost — the pages are still on this phone — but this will NOT send by itself. The office has not got it."
+              : "Nothing is lost. The pages are still on this phone."}
           </p>
         </div>
       )}
