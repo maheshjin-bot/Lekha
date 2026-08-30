@@ -197,6 +197,44 @@ export type CaptureLineItem = {
    * before 0865.
    */
   hsn_sac?: string | null;
+
+  /* ---------------------------------------------------------------------- */
+  /* The rest of the ITEM master, added by the item sibling of 0995's task   */
+  /* ---------------------------------------------------------------------- */
+  /*
+   * hsn_sac above was the only item-master field this module read, and it is
+   * not the only one an invoice prints. Every line of a rule-46 tax invoice
+   * carries a UNIT and a TAX RATE beside the HSN, and public.items has had a
+   * column for both since 0006 (uom, gst_rate_percent). So — exactly as with
+   * the party block in 0995 — this is not new storage, it is reading that was
+   * being thrown away, and it exists for the same single purpose: to prefill
+   * QuickAddItemModal when the preparer creates the item this line refers to.
+   *
+   * BOTH ARE OPTIONAL AND NULLABLE, and that is a compatibility contract, not
+   * carelessness: every extracted_json row stored before this change carries
+   * neither key, and the review screen and the WhatsApp confirm screen must
+   * keep rendering those rows unchanged.
+   *
+   * Neither is ever written to a voucher line. create_invoice takes item ids
+   * and reads the rate off the item master itself; a unit or a rate read off a
+   * photograph is a suggestion for a MASTER a human is about to create, and
+   * nothing more.
+   */
+  /**
+   * The line's unit, normalised to a public.ref_uom CODE — never the string
+   * the document printed. items.uom is a FOREIGN KEY to ref_uom(code)
+   * (items_uom_fkey, confirmed live), so a unit the reference table does not
+   * hold is not a weaker reading, it is an insert that fails. "Mtr" off the
+   * paper becomes "MTR"; "Rolls" becomes "ROL"; anything unrecognised becomes
+   * null and QuickAddItemModal keeps its own default. See toUomCodeOrNull.
+   */
+  uom?: string | null;
+  /**
+   * The WHOLE GST rate for this line as a percentage — 18, never the 9 that a
+   * CGST column prints. See toGstRatePercentOrNull for why the notified-rate
+   * list is what makes that distinction enforceable rather than hoped for.
+   */
+  gst_rate_percent?: number | null;
 };
 
 /**
@@ -371,6 +409,26 @@ STEP 2 — EXTRACT.
   of the three you cannot read, but still include the line if its description
   is legible. Never include subtotal, tax, discount, round-off or grand-total
   rows as line items.
+- unit on each line: the unit of measure printed against that line, EXACTLY as
+  printed and with nothing else attached — "Nos", "Mtr", "Kgs", "Pcs", "Box",
+  "Rolls", "Sq.Ft". Many invoices print it as its own column headed UOM / Unit
+  / Qty Unit; many others print it stuck to the quantity ("120 Mtr", "8 Nos"),
+  and then the unit is "Mtr" and the quantity is 120. Return null when the
+  document prints no unit at all — never invent one from the description, and
+  never return a packing description ("carton of 12") as a unit.
+- gst_rate_percent on each line: the GST RATE applying to that line, as a
+  percentage number — the RATE column, never a tax amount in rupees. Read it
+  as the WHOLE rate on the goods:
+    * CGST 9% and SGST 9% printed side by side is an 18% line. Return 18.
+      CGST and SGST are two halves of one rate and are never added to each
+      other by the reader of an invoice; returning 9 is always wrong.
+    * IGST 18% is also an 18% line. Return 18.
+    * A single "GST %" or "Tax Rate" column showing 12 is a 12% line.
+    * Never add IGST to CGST or SGST — a line carries one or the other.
+  The rates actually notified in India are 0, 0.25, 3, 5, 12, 18 and 28.
+  Return null if the document prints no rate against the line, or prints only
+  tax amounts and no rate at all — do not divide an amount by a value to
+  recover one.
 - hsn_sac on each line: the HSN code (goods) or SAC code (services) printed
   against that line. DIGITS ONLY — HSN is 4, 6 or 8 digits and SAC is 6
   digits beginning 99; strip any dots or spaces, so "5208.11.10" becomes
@@ -473,8 +531,18 @@ const RESPONSE_SCHEMA = {
         properties: {
           description: { type: "STRING" },
           hsn_sac: { type: "STRING", nullable: true },
+          // `unit` on the wire, `uom` in CaptureLineItem — deliberately two
+          // names for two different things. The model is asked for the string
+          // the paper printed ("Mtr"), because that is a reading; what is
+          // stored is a ref_uom code ("MTR"), because that is what
+          // items.uom's foreign key will accept. Asking the model for the
+          // code directly would invite it to invent one.
+          unit: { type: "STRING", nullable: true },
           quantity: { type: "NUMBER", nullable: true },
           rate: { type: "NUMBER", nullable: true },
+          // After `rate`, so the model has already read the money columns and
+          // is less likely to hand back a tax AMOUNT here.
+          gst_rate_percent: { type: "NUMBER", nullable: true },
           amount: { type: "NUMBER", nullable: true },
         },
         required: ["description"],
@@ -639,6 +707,217 @@ function toHsnSacOrNull(v: unknown): string | null {
   if (typeof v !== "string") return null;
   const cleaned = v.trim().replace(/[\s.\-]/g, "");
   return /^\d{4,8}$/.test(cleaned) ? cleaned : null;
+}
+
+/* -------------------------------------------------------------------------- */
+/* The line's unit, and the line's tax rate                                   */
+/* -------------------------------------------------------------------------- */
+
+/**
+ * public.ref_uom, mirrored — the notified Unit Quantity Codes, which is the
+ * only vocabulary items.uom may hold: items_uom_fkey is a FOREIGN KEY to
+ * ref_uom(code) (confirmed live, and it is a foreign key rather than a CHECK,
+ * so a stray value is a 23503 at insert time, not a friendly validation).
+ *
+ * COPIED RATHER THAN QUERIED because this module has no database access at
+ * all and is not about to grow one — see the file header. The copy is not
+ * left to trust: tests/unit/capture-item-master.test.ts reads ref_uom live and
+ * fails if this table and that one have drifted, which is the same discipline
+ * every mirrored CHECK constraint in normalizeParty is held to.
+ *
+ * The names are ref_uom's own, and they matter: an invoice prints "Rolls" as
+ * often as it prints "ROL", so the name is a second key into the same row.
+ */
+export const REF_UOM: readonly { readonly code: string; readonly name: string }[] = [
+  { code: "BAG", name: "Bags" },
+  { code: "BOX", name: "Box" },
+  { code: "BTL", name: "Bottles" },
+  { code: "CBM", name: "Cubic Metre" },
+  { code: "CMS", name: "Centimetre" },
+  { code: "DAY", name: "Days" },
+  { code: "DOZ", name: "Dozen" },
+  { code: "GMS", name: "Grams" },
+  { code: "HRS", name: "Hours" },
+  { code: "KGS", name: "Kilograms" },
+  { code: "KLR", name: "Kilolitre" },
+  { code: "KME", name: "Kilometre" },
+  { code: "LTR", name: "Litres" },
+  { code: "MLT", name: "Millilitre" },
+  { code: "MTR", name: "Metres" },
+  { code: "NOS", name: "Numbers" },
+  { code: "OTH", name: "Others" },
+  { code: "PAC", name: "Pack" },
+  { code: "PCS", name: "Pieces" },
+  { code: "QTL", name: "Quintal" },
+  { code: "ROL", name: "Rolls" },
+  { code: "SET", name: "Set" },
+  { code: "SQF", name: "Square Feet" },
+  { code: "SQM", name: "Square Metre" },
+  { code: "TON", name: "Tonnes" },
+];
+
+/** Lowercased with every separator removed: "Sq. Ft." and "SQFT" both key alike. */
+function uomKey(v: string): string {
+  return v.toLowerCase().replace(/[^a-z0-9]+/g, "");
+}
+
+/** One trailing "s" removed, so a printed "Bag" reaches ref_uom's "Bags". */
+function singular(v: string): string {
+  return v.length > 2 && v.endsWith("s") ? v.slice(0, -1) : v;
+}
+
+/**
+ * Printed abbreviations that are NEITHER a UQC code NOR a UQC name, even
+ * after the plural is taken off. Every entry is a form that appears on real
+ * Indian invoices; none of them invents a unit, they all point at a ref_uom
+ * row that already exists.
+ *
+ * Kept deliberately short. The notified codes ARE the common trade
+ * abbreviations — NOS, MTR, KGS, PCS, BOX, ROL, SET all match the printed
+ * form outright — so this table only has to cover the SI short forms and the
+ * two-or-three spellings ("Meter" for "Metre", "MT" for a metric tonne) that
+ * a code-and-name comparison genuinely cannot reach.
+ */
+const PRINTED_UNIT_ALIASES: Readonly<Record<string, string>> = {
+  // Countables. "Unit", "Each" and "No." are all the same UQC as "Nos".
+  no: "NOS",
+  number: "NOS",
+  unit: "NOS",
+  each: "NOS",
+  ea: "NOS",
+  pc: "PCS",
+  pkt: "PAC",
+  packet: "PAC",
+  packets: "PAC",
+  boxes: "BOX",
+  dzn: "DOZ",
+  dozens: "DOZ",
+  // Length. "M" and "Mtrs" for metres, "CM" and "KM" for their multiples.
+  m: "MTR",
+  mtrs: "MTR",
+  meter: "MTR",
+  meters: "MTR",
+  cm: "CMS",
+  centimeter: "CMS",
+  centimeters: "CMS",
+  km: "KME",
+  kilometer: "KME",
+  kilometers: "KME",
+  kilometres: "KME",
+  // Mass. "MT" on an Indian invoice is a metric tonne, not a metre.
+  kg: "KGS",
+  kilogram: "KGS",
+  gm: "GMS",
+  gram: "GMS",
+  mt: "TON",
+  tonne: "TON",
+  quintals: "QTL",
+  // Volume and capacity.
+  l: "LTR",
+  lit: "LTR",
+  ltrs: "LTR",
+  liter: "LTR",
+  liters: "LTR",
+  litre: "LTR",
+  ml: "MLT",
+  milliliter: "MLT",
+  milliliters: "MLT",
+  millilitres: "MLT",
+  kl: "KLR",
+  kiloliter: "KLR",
+  kilolitre: "KLR",
+  cum: "CBM",
+  m3: "CBM",
+  cubicmeter: "CBM",
+  // Area, where the printed form almost never matches the notified name.
+  sqft: "SQF",
+  sft: "SQF",
+  squarefeet: "SQF",
+  squarefoot: "SQF",
+  sqm: "SQM",
+  sqmt: "SQM",
+  sqmtr: "SQM",
+  sqmtrs: "SQM",
+  squaremeter: "SQM",
+  m2: "SQM",
+  // Time.
+  hr: "HRS",
+  hour: "HRS",
+  // Containers.
+  bottle: "BTL",
+  roll: "ROL",
+  rol: "ROL",
+  other: "OTH",
+};
+
+/**
+ * The unit printed on a line, resolved to a ref_uom CODE, or null.
+ *
+ * NULL IS A GOOD ANSWER and is why this function does not guess. items.uom is
+ * NOT NULL with a default of 'NOS' and carries a foreign key to ref_uom, so
+ * there are exactly two outcomes for an unrecognised reading: return null and
+ * let QuickAddItemModal keep its own default (which the preparer sees, in a
+ * dropdown, before anything is created), or return something ref_uom does not
+ * hold and turn a master creation into a foreign-key error on a field nobody
+ * typed. The first is a unit to correct; the second is a dead end.
+ *
+ * Three keys into the same reference table, tried in order — the code, the
+ * name, then the name with the plural taken off (ref_uom's names are plural,
+ * invoices print the singular) — and only then the alias table above.
+ */
+export function toUomCodeOrNull(v: unknown): string | null {
+  if (typeof v !== "string") return null;
+  const key = uomKey(v);
+  if (!key) return null;
+
+  const byCode = REF_UOM.find((u) => uomKey(u.code) === key);
+  if (byCode) return byCode.code;
+
+  const byName = REF_UOM.find((u) => uomKey(u.name) === key);
+  if (byName) return byName.code;
+
+  const bySingular = REF_UOM.find((u) => singular(uomKey(u.name)) === singular(key));
+  if (bySingular) return bySingular.code;
+
+  return PRINTED_UNIT_ALIASES[key] ?? null;
+}
+
+/**
+ * Every GST rate actually notified for goods and services in India. The same
+ * list QuickAddItemModal's dropdown offers, and that is not a coincidence —
+ * this value exists to preselect an option in that dropdown, so a rate the
+ * dropdown cannot show is a rate that would silently display as something
+ * else.
+ */
+const NOTIFIED_GST_RATES = [0, 0.25, 3, 5, 12, 18, 28] as const;
+
+/**
+ * The line's whole GST rate, or null.
+ *
+ * THE NOTIFIED LIST IS NOT DECORATION — IT IS THE HALF-RATE DETECTOR, and it
+ * is the reason this module asks the model for one combined rate rather than
+ * for the CGST and SGST columns separately.
+ *
+ * The one mistake that matters here is returning 9 for an 18% line, because
+ * an intra-state invoice prints "CGST 9%" and "SGST 9%" in two adjacent
+ * columns and 9 is what is literally written under each. A 9% item master
+ * would then charge half the tax on every future invoice — wrong numbers,
+ * silently, forever. But no notified rate is half of another notified rate:
+ * the halves of 0.25, 3, 5, 12, 18 and 28 are 0.125, 1.5, 2.5, 6, 9 and 14,
+ * and not one of those is itself notified. So checking a reading against the
+ * list catches EVERY half-rate misreading, and nothing else does — arithmetic
+ * on the model's own components would only move the mistake.
+ *
+ * A rate that is not on the list is therefore dropped rather than rounded to
+ * the nearest one: 9 is far more likely to be half of 18 than a real rate,
+ * and an empty rate box in the popup is a question the preparer answers in
+ * one click. (0 stays: nil-rated and exempt supplies exist, the value is
+ * notified, and QuickAddItemModal offers it.)
+ */
+export function toGstRatePercentOrNull(v: unknown): number | null {
+  const n = toNumberOrNull(v);
+  if (n === null) return null;
+  return NOTIFIED_GST_RATES.some((r) => Math.abs(r - n) < 1e-9) ? n : null;
 }
 
 /**
@@ -935,6 +1214,14 @@ export function parseExtractionResponse(rawJsonText: string): CaptureExtraction 
     // single voucher, so a wrong one is copied onto every future line for
     // that item. See toHsnSacOrNull.
     hsn_sac: toHsnSacOrNull(li.hsn_sac),
+    // The item sibling of 0995's task. Read from `unit` on the wire and
+    // stored as `uom`, because the two are different things — see the
+    // RESPONSE_SCHEMA comment. Both of these, like hsn_sac above, go on to
+    // prefill a MASTER record rather than a single voucher line, so both are
+    // normalised to what public.items will actually accept and neither is
+    // trusted as returned.
+    uom: toUomCodeOrNull(li.unit),
+    gst_rate_percent: toGstRatePercentOrNull(li.gst_rate_percent),
   }));
 
   const confidence = p.confidence === "high" || p.confidence === "medium" || p.confidence === "low"

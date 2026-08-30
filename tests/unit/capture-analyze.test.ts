@@ -35,11 +35,19 @@ describe("parseExtractionResponse", () => {
     expect(result.vendor_gstin).toBe("27ABCDE1234F1Z5");
     expect(result.bill_date).toBe("2026-08-15");
     expect(result.line_items).toEqual([
-      // hsn_sac is present-but-null (migration 0865): the parser always emits
-      // the key so a consumer never has to tell "the model did not read one"
-      // apart from "this build predates the field". The prompt does not ask
-      // for it yet, so nothing populates it here.
-      { description: "Cotton fabric", quantity: 10, rate: 250, amount: 2500, hsn_sac: null },
+      // hsn_sac, uom and gst_rate_percent are all present-but-null: the
+      // parser always emits every key so a consumer never has to tell "the
+      // model did not read one" apart from "this build predates the field".
+      // This fixture prints none of the three.
+      {
+        description: "Cotton fabric",
+        quantity: 10,
+        rate: 250,
+        amount: 2500,
+        hsn_sac: null,
+        uom: null,
+        gst_rate_percent: null,
+      },
     ]);
     expect(result.taxable_value).toBe(2500);
     expect(result.cgst).toBe(225);
@@ -75,7 +83,15 @@ describe("parseExtractionResponse", () => {
       })
     );
     expect(result.line_items).toEqual([
-      { description: "Valid line", quantity: 1, rate: 100, amount: 100, hsn_sac: null },
+      {
+        description: "Valid line",
+        quantity: 1,
+        rate: 100,
+        amount: 100,
+        hsn_sac: null,
+        uom: null,
+        gst_rate_percent: null,
+      },
     ]);
   });
 
@@ -433,7 +449,15 @@ describe("parseExtractionResponse — never throws, whatever comes back", () => 
       })
     );
     expect(result.line_items).toEqual([
-      { description: "Finished Widget", quantity: null, rate: null, amount: 320000, hsn_sac: null },
+      {
+        description: "Finished Widget",
+        quantity: null,
+        rate: null,
+        amount: 320000,
+        hsn_sac: null,
+        uom: null,
+        gst_rate_percent: null,
+      },
     ]);
     expect(result.confidence).toBe("medium");
   });

@@ -5,7 +5,12 @@ import { useRouter } from "next/navigation";
 import { toast } from "sonner";
 import { createClient } from "@/lib/supabase/client";
 import { formatINR, sumPaise, toPaise } from "@/lib/utils/currency";
-import { fuzzyMatchByName, matchParty, type PartyMatch } from "@/lib/capture/fuzzyMatch";
+import {
+  matchItem,
+  matchParty,
+  type ItemMatch,
+  type PartyMatch,
+} from "@/lib/capture/fuzzyMatch";
 import type {
   CaptureDocumentType,
   CaptureExtraction,
@@ -18,6 +23,7 @@ import {
 } from "@/components/ledgers/QuickAddLedgerModal";
 import {
   QuickAddItemModal,
+  type ItemPrefill,
   type QuickAddedItem,
 } from "@/components/items/QuickAddItemModal";
 import { VoucherNumberField } from "@/components/numbering/VoucherNumberField";
@@ -144,25 +150,64 @@ import {
  * second ledger for the other side.
  *
  * ============================================================================
+ * IDENTIFYING THE ITEM: THE SAME ARGUMENT, ONE LINE FURTHER DOWN THE PAGE
+ * ============================================================================
+ * 0740 matched each line to an item BY ITS DESCRIPTION ONLY — and a
+ * description is written by the SUPPLIER'S billing clerk, not by the company
+ * reading the bill, so "CTN SHRTNG 44in GREY" and our own "Cotton Shirting
+ * 44 inch Grey" are the same goods and score nothing alike. The same line
+ * prints an HSN, which rule 46(g) requires and which both parties take from
+ * the same tariff. lib/capture/fuzzyMatch.ts's matchItem now tries the HSN
+ * and the name together, then the HSN alone, then the name alone, and says
+ * which fired. This screen treats the three differently for the same reason
+ * it treats the party's three differently:
+ *
+ *   hsn_and_name — selected outright. The right family AND the right name.
+ *   name         — selected outright, as it always was, and labelled a name
+ *                  match so the reader knows how thin the evidence is.
+ *   hsn          — NEVER selected. An HSN is a code for a CLASS of goods:
+ *                  5208 is every plain cotton fabric a mill sells. Every item
+ *                  sharing the code is offered instead, best-name-first, and
+ *                  one click accepts any of them. Choosing arbitrarily would
+ *                  post the wrong item to stock — the same voucher, the same
+ *                  total, the wrong godown balance, and nothing on the face of
+ *                  the invoice to show it.
+ *
+ * ============================================================================
  * INLINE MASTER CREATION IS REUSED, NOT REBUILT — AND IS NOW PREFILLED
  * ============================================================================
- * QuickAddLedgerModal and QuickAddItemModal are still used as they stand.
- * QuickAddLedgerModal has since grown the optional `prefill` prop this file's
- * header used to ask for, so the whole party master the model read — name,
- * GSTIN, PAN, address, town, PIN, phone, email, Udyam number and their bank
- * block — is handed straight to the popup instead of being retyped out of it.
- * The COPY chips stay: they are still the only way to get a value the popup is
- * not asking for into the field the preparer wants it in, and they still work
- * when nothing matched. QuickAddItemModal takes no such prop and its chips are
- * unchanged.
+ * QuickAddLedgerModal and QuickAddItemModal are still used as they stand, and
+ * BOTH now take the optional `prefill` prop this file's header used to ask
+ * for. The whole party master the model read — name, GSTIN, PAN, address,
+ * town, PIN, phone, email, Udyam number and their bank block — and the whole
+ * item master it read off the line — description, HSN, unit, GST rate and the
+ * rate — are handed straight to their popups instead of being retyped out of
+ * them. The COPY chips stay: they are still the only way to get a value into
+ * a field the popup is not asking for, and they still work when nothing
+ * matched.
  *
- * HSN is the one extracted value that must not be lost that way, because it
- * belongs on the ITEM MASTER (public.items.hsn_sac) and voucher_items only
- * ever holds a copy taken at posting time. So where the bill shows an HSN and
- * the matched (or just-created) item has none, this screen offers a single
- * explicit button that writes it onto the item — never silently, never
- * overwriting one already on file, and shown as a plain disagreement when the
- * two differ.
+ * The item popup is also told WHICH SIDE of the trade it was opened from
+ * (`rateSide`), and that is not cosmetic. The rate on a supplier's bill is
+ * what THEY charge US: it is a purchase rate, and the popup used to write
+ * every rate to items.sale_rate. Creating an item from a captured purchase
+ * bill therefore recorded our cost as our selling price, and the next sales
+ * invoice for it prefilled at cost. Rare while few items were made that way;
+ * routine the moment this screen makes it the normal path. Fixed in the popup
+ * itself — see its header — and passed from here as sale on a sales challan,
+ * purchase on a purchase bill.
+ *
+ * HSN is the one extracted value that must not be lost, because it belongs on
+ * the ITEM MASTER (public.items.hsn_sac) and voucher_items only ever holds a
+ * copy taken at posting time. So where the bill shows an HSN and the matched
+ * (or just-created) item has none, this screen offers a single explicit button
+ * that writes it onto the item — never silently, never overwriting one already
+ * on file, and shown as a plain disagreement when the two differ. The UNIT and
+ * the GST RATE are shown against an existing item the same way but are NOT
+ * offered as a write-back: an HSN is a fact about the goods that both parties
+ * copy from one tariff, whereas a unit is a fact about how THIS supplier packs
+ * them (they sell rolls, we stock metres) and a rate on their paper is their
+ * classification, not ours. Both belong on a master being created; neither is
+ * grounds to edit a master already on file.
  */
 
 type Branch = { id: string; code: string; name: string; registeredState: string | null };
@@ -184,6 +229,29 @@ type Line = {
   readAmount: number | null;
   /** HSN printed against this line. Belongs on the ITEM MASTER — see header. */
   readHsn: string | null;
+  /**
+   * The description AS PRINTED, kept beside the editable one.
+   *
+   * `description` above starts as this value and is then the preparer's to
+   * change — it ends up in the voucher line's own description. The matcher and
+   * every "the document reads …" sentence must go on quoting the paper after
+   * that edit, exactly as the party block quotes extraction.vendor_name rather
+   * than whatever is in the party box now.
+   */
+  readDescription: string;
+  /**
+   * The unit printed against this line, already resolved to a ref_uom code by
+   * analyze.ts. Belongs on the ITEM MASTER (items.uom) — a voucher line has no
+   * unit of its own, it inherits the item's.
+   */
+  readUom: string | null;
+  /**
+   * The whole GST rate printed against this line — 18, never the 9 in a CGST
+   * column. Belongs on the ITEM MASTER (items.gst_rate_percent), which is also
+   * where the tax on step 3 is computed from, so a disagreement between this
+   * and the matched item is the explanation for a total that will not tally.
+   */
+  readGstRate: number | null;
 };
 
 type Step = 1 | 2 | 3;
@@ -229,17 +297,44 @@ function preselectDocType(
   return extraction?.document_type ?? draft.documentType ?? "purchase_invoice";
 }
 
+/**
+ * An HSN-only match is a suggestion, never a selection — see the file header.
+ * Every other signal preselects the item, which is 0740's behaviour for the
+ * name and the new, stronger behaviour for the HSN-and-name pair.
+ *
+ * The party's own rule is written the same way one screen up (autoSelects), and
+ * the two are deliberately the same shape: one predicate saying which signals
+ * this screen is willing to act on without being asked.
+ */
+function autoSelectsItem(m: ItemMatch<Item> | null): boolean {
+  return m !== null && m.signal !== "hsn";
+}
+
+/** What one captured line says about which item it is, in matchItem's terms. */
+function itemReading(li: { readDescription: string; readHsn: string | null }) {
+  return { description: li.readDescription, hsn_sac: li.readHsn };
+}
+
 function extractionLineToFormLine(li: CaptureLineItem, items: Item[], isSale: boolean): Line {
-  const match = fuzzyMatchByName(li.description, items);
-  const fallbackRate = isSale ? match?.sale_rate : match?.purchase_rate;
+  const readHsn = li.hsn_sac?.trim() || null;
+  const match = matchItem({ description: li.description, hsn_sac: readHsn }, items);
+  const selected = autoSelectsItem(match) ? match!.item : null;
+  const fallbackRate = isSale ? selected?.sale_rate : selected?.purchase_rate;
   return {
-    itemId: match?.id ?? "",
+    itemId: selected?.id ?? "",
     quantity: li.quantity != null ? String(li.quantity) : "1",
     rate: li.rate != null ? String(li.rate) : fallbackRate != null ? String(fallbackRate) : "",
     discountPercent: "",
     description: li.description,
     readAmount: li.amount ?? null,
-    readHsn: li.hsn_sac?.trim() || null,
+    readHsn,
+    readDescription: li.description,
+    // Both already normalised by analyze.ts to what public.items will accept —
+    // a ref_uom code and a notified rate — so anything surviving here is
+    // insertable. `?? null` only because both keys are absent from every
+    // extraction stored before this feature.
+    readUom: li.uom ?? null,
+    readGstRate: li.gst_rate_percent ?? null,
   };
 }
 
@@ -251,6 +346,9 @@ const emptyLine = (): Line => ({
   description: "",
   readAmount: null,
   readHsn: null,
+  readDescription: "",
+  readUom: null,
+  readGstRate: null,
 });
 
 function seedLines(ex: CaptureExtraction | null, items: Item[], isSale: boolean): Line[] {
@@ -265,10 +363,11 @@ const field =
 /**
  * One value the model read, on a chip that copies it.
  *
- * This exists only because QuickAddLedgerModal and QuickAddItemModal take no
- * initial values and are owned elsewhere (see the file header). The popup
- * covers the text it was read from, so without this the preparer has to close
- * it, memorise a fifteen-character GSTIN and reopen it.
+ * Both popups now take their own prefill, so this is no longer the only way a
+ * read value reaches a master. It stays because it is still the only way to
+ * get a value into a field the popup is NOT asking for — and because the popup
+ * covers the text it was read from, so a preparer who wants a figure anywhere
+ * else would otherwise have to close it, memorise the number and reopen it.
  */
 function ReadChip({ label, value }: { label: string; value: string }) {
   return (
@@ -342,6 +441,35 @@ function partyPrefill(ex: CaptureExtraction | null, hint: string | null): Ledger
     bankName: ex?.vendor_bank_name ?? null,
     bankAccountNumber: ex?.vendor_bank_account_number ?? null,
     bankIfsc: ex?.vendor_bank_ifsc ?? null,
+  };
+}
+
+/**
+ * The whole item master one captured line describes, in QuickAddItemModal's
+ * own shape.
+ *
+ * Passed whenever this screen opens the item popup, even for a line the
+ * preparer added by hand: on THIS screen the document is on the display behind
+ * the popup, so an empty HSN box is somewhere to type what is visibly printed,
+ * not clutter. The invoice screen passes no prefill and is unaffected — see
+ * QuickAddItemModal's header.
+ *
+ * The description is seeded as the NAME, which is the one value here that is
+ * genuinely a guess rather than a reading: a supplier's line text is how THEY
+ * describe the goods, and it becomes this company's own item name only if the
+ * preparer leaves it alone. It is seeded anyway because a name is required and
+ * an editable wrong name beats an empty box beside a covered document.
+ */
+function itemPrefill(line: Line): ItemPrefill {
+  return {
+    name: line.readDescription || line.description || "",
+    hsnSac: line.readHsn,
+    uom: line.readUom,
+    gstRatePercent: line.readGstRate,
+    // The rate as read, falling back to whatever is in the line's own rate box
+    // — the preparer may have corrected it against the paper already, and the
+    // corrected figure is the better one to carry into the master.
+    rate: line.rate.trim() ? Number(line.rate) : null,
   };
 }
 
@@ -1280,6 +1408,26 @@ export function CaptureReviewForm({
                     const readHsn = line.readHsn;
                     const readAmount = line.readAmount;
                     const lineOff = readAmount != null && Math.abs(readAmount - net) > 1;
+                    /*
+                     * Recomputed per render rather than stored on the line, for
+                     * the same reason partyMatch is: `allItems` grows when the
+                     * preparer creates a master from this very screen, and a
+                     * match frozen at seeding time would go on saying "nothing
+                     * on file is like this" about an item that now exists.
+                     *
+                     * Matched on what the DOCUMENT reads, never on the
+                     * editable description — the same rule the party block
+                     * follows.
+                     */
+                    const match = matchItem(itemReading(line), allItems);
+                    // The HSN family, offered when this screen will not choose
+                    // from it. Suppressed once the selection IS one of them:
+                    // the question has been answered.
+                    const hsnFamily =
+                      match && match.signal === "hsn" &&
+                      !match.candidates.some((c) => c.id === line.itemId)
+                        ? match.candidates
+                        : null;
                     return (
                       <div key={i} className="rounded-lg border border-border bg-surface p-3">
                         <div className="mb-2 flex items-center justify-between gap-2">
@@ -1307,16 +1455,24 @@ export function CaptureReviewForm({
                           )}
                         </div>
 
-                        {(line.description || readAmount != null || readHsn) && (
+                        {(line.readDescription ||
+                          readAmount != null ||
+                          readHsn ||
+                          line.readUom ||
+                          line.readGstRate != null) && (
                           <div className="mb-2.5 rounded-md border border-border bg-bg p-2">
                             <p className="text-xs font-medium uppercase tracking-wide text-ink-faint">
                               Read off the document
                             </p>
                             <div className="mt-1.5 flex flex-wrap gap-1.5">
-                              {line.description && (
-                                <ReadChip label="Description" value={line.description} />
+                              {line.readDescription && (
+                                <ReadChip label="Description" value={line.readDescription} />
                               )}
                               {readHsn && <ReadChip label="HSN" value={readHsn} />}
+                              {line.readUom && <ReadChip label="Unit" value={line.readUom} />}
+                              {line.readGstRate != null && (
+                                <ReadChip label="GST" value={`${line.readGstRate}%`} />
+                              )}
                               {line.rate && <ReadChip label="Rate" value={line.rate} />}
                               {readAmount != null && (
                                 <span className="inline-flex items-baseline gap-1.5 rounded-md border border-border bg-surface-2 px-2 py-1 text-xs">
@@ -1327,8 +1483,9 @@ export function CaptureReviewForm({
                             </div>
                             {!line.itemId && (
                               <p className="mt-1.5 text-xs text-ink-faint">
-                                Copy what you need, then use &ldquo;+ New&rdquo; — the popup covers
-                                this panel while it is open, and it takes no starting values.
+                                All of this is carried into the &ldquo;+ New&rdquo; popup already —
+                                the chips are for pasting a value somewhere else. The{" "}
+                                {isSale ? "rate is saved as the sale rate" : "rate is saved as the purchase rate, not as what you sell it for"}.
                               </p>
                             )}
                           </div>
@@ -1362,6 +1519,86 @@ export function CaptureReviewForm({
                             </button>
                           </div>
 
+                          {/*
+                            WHICH SIGNAL MATCHED, said out loud — the same
+                            three-way distinction the party block makes one
+                            step up. "The same HSN and a name like it" and
+                            "one of eleven things sharing a tariff heading"
+                            are not the same claim and must not read alike.
+                          */}
+                          {match && match.item.id === line.itemId && (
+                            <p
+                              className={
+                                "text-xs " +
+                                (match.signal === "hsn_and_name"
+                                  ? "text-success"
+                                  : "text-ink-faint")
+                              }
+                            >
+                              {match.signal === "hsn_and_name" ? (
+                                <>
+                                  Same HSN <span className="font-mono">{readHsn}</span> and a
+                                  matching name — this is{" "}
+                                  <span className="font-medium">{match.item.name}</span>, already
+                                  on file.
+                                </>
+                              ) : (
+                                <>
+                                  Matched <span className="text-ink-soft">{match.item.name}</span>{" "}
+                                  by NAME only, from the document&rsquo;s &ldquo;
+                                  {line.readDescription}&rdquo; — the weakest signal on the line,
+                                  and the supplier wrote it. Check it is the right one.
+                                </>
+                              )}
+                            </p>
+                          )}
+
+                          {/*
+                            An HSN-only match. Never chosen for the preparer —
+                            see the file header — because an HSN names a class
+                            of goods, not a product, and posting the wrong item
+                            moves the wrong stock at the right total. Every
+                            member of the family is offered, best-name-first,
+                            and one click accepts any of them.
+                          */}
+                          {hsnFamily && (
+                            <div className="rounded-lg border border-warning/40 bg-warning-soft/40 px-3 py-2">
+                              <p className="text-xs text-ink-soft">
+                                {hsnFamily.length === 1 ? (
+                                  <>
+                                    <span className="font-medium text-ink">
+                                      {hsnFamily[0].name}
+                                    </span>{" "}
+                                    is on file under the same HSN{" "}
+                                    <span className="font-mono">{readHsn}</span>, but is not called
+                                    anything like &ldquo;{line.readDescription}&rdquo;.
+                                  </>
+                                ) : (
+                                  <>
+                                    {hsnFamily.length} items on file carry HSN{" "}
+                                    <span className="font-mono">{readHsn}</span>, and none is called
+                                    anything like &ldquo;{line.readDescription}&rdquo;.
+                                  </>
+                                )}{" "}
+                                An HSN covers a whole family of goods, so this screen will not
+                                choose for you — the wrong one posts the right total against the
+                                wrong stock. Pick the right one, or create a new item.
+                              </p>
+                              <div className="mt-1.5 flex flex-wrap gap-2">
+                                {hsnFamily.map((c) => (
+                                  <button
+                                    key={c.id}
+                                    type="button"
+                                    onClick={() => update(i, { itemId: c.id })}
+                                    className="text-xs font-medium text-accent underline underline-offset-4"
+                                  >
+                                    Use {c.name}
+                                  </button>
+                                ))}
+                              </div>
+                            </div>
+                          )}
+
                           {/* HSN belongs on the item master — 0865 fact 6.
                               Offered, never written silently. */}
                           {item && readHsn && !onFile && (
@@ -1393,6 +1630,34 @@ export function CaptureReviewForm({
                               HSN {onFile} on the item master matches the document.
                             </p>
                           )}
+
+                          {/*
+                            The unit and the rate the document printed, against
+                            what the item already holds. REPORTED, NOT OFFERED
+                            AS A WRITE-BACK, unlike the HSN above: a supplier's
+                            unit is how THEY pack the goods (they sell rolls,
+                            we stock metres) and their tax rate is their own
+                            classification. Neither is grounds to edit a master
+                            somebody already set up — but both explain a
+                            document that will not tally, so they are said.
+                          */}
+                          {item && line.readUom && line.readUom !== item.uom && (
+                            <p className="text-xs text-ink-faint">
+                              The document bills this in {line.readUom}; {item.name} is stocked in{" "}
+                              {item.uom}. The quantity above is taken as {item.uom} — convert it if
+                              the two are not the same measure.
+                            </p>
+                          )}
+                          {gstOn && item && line.readGstRate != null &&
+                            line.readGstRate !== Number(item.gst_rate_percent) && (
+                              <p className="text-xs text-warning">
+                                The document charges GST at {line.readGstRate}% on this line;{" "}
+                                {item.name} is on file at {item.gst_rate_percent}%. Step 3 computes
+                                the tax from the ITEM, so this is why the totals will not agree.
+                                Whichever is wrong, it is fixed on the items screen — not from a
+                                photograph.
+                              </p>
+                            )}
 
                           <div className="grid grid-cols-3 gap-2.5">
                             <label className="flex flex-col gap-1">
@@ -1804,10 +2069,10 @@ export function CaptureReviewForm({
         )}
       </form>
 
-      {/* The three popups, reused as they stand. Only the PARTY one is
-          prefilled: the trading ledger is a purchase/expense or income
-          account of ours and nothing on the counterparty's letterhead
-          belongs on it, and QuickAddItemModal takes no prefill prop. */}
+      {/* The three popups, reused as they stand. The PARTY and the ITEM one
+          are prefilled; the TRADING ledger deliberately is not — it is a
+          purchase/expense or income account of ours and nothing on the
+          counterparty's letterhead belongs on it. */}
       <QuickAddLedgerModal
         open={partyModalOpen}
         onClose={() => setPartyModalOpen(false)}
@@ -1866,24 +2131,36 @@ export function CaptureReviewForm({
         // An invoice line is a stock line — voucher_items refuses anything
         // that does not maintain stock. See the prop's own comment.
         requireStockItem
-        onCreated={async (created: QuickAddedItem) => {
+        /*
+         * WHICH COLUMN THE RATE GOES IN. The figure in the rate column of a
+         * supplier's bill is what they charge US, and writing it to
+         * items.sale_rate — which is what this popup did for every caller
+         * until it was given this prop — records our cost as our selling
+         * price. See both file headers.
+         *
+         * Derived from isSale, so it follows the confirmed document type and
+         * agrees with the line-rate fallback and the "+ New" hint above. A
+         * document typed "other" posts nothing and lands on the purchase
+         * side, which is the same choice every other rate decision on this
+         * screen already makes for it.
+         */
+        rateSide={isSale ? "sale" : "purchase"}
+        prefill={
+          itemModalLine !== null && lines[itemModalLine]
+            ? itemPrefill(lines[itemModalLine])
+            : undefined
+        }
+        onCreated={(created: QuickAddedItem) => {
           const lineIndex = itemModalLine;
-          // QuickAddedItem does not carry hsn_sac — the modal writes it but
-          // does not read it back, and it is not this screen's file to change.
-          // Read it here so the "save the HSN on this item" offer below knows
-          // whether the preparer already typed it into the popup.
-          const { data: fresh } = await createClient()
-            .from("items")
-            .select("hsn_sac")
-            .eq("id", created.id)
-            .maybeSingle();
           setAddedItems((prev) => [
             ...prev,
             {
               id: created.id,
               name: created.name,
               uom: created.uom,
-              hsn_sac: fresh?.hsn_sac ?? null,
+              // Read straight back by the popup now. It used to be re-fetched
+              // here because QuickAddedItem did not carry it; it does.
+              hsn_sac: created.hsn_sac,
               sale_rate: created.sale_rate,
               purchase_rate: created.purchase_rate,
               gst_rate_percent: created.gst_rate_percent,
