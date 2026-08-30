@@ -1171,6 +1171,89 @@ export type Database = {
           },
         ]
       }
+      capture_drafts: {
+        Row: {
+          branch_id: string | null
+          company_id: string | null
+          confirm_token: string | null
+          confirm_token_used_at: string | null
+          confirmed_voucher_id: string | null
+          created_at: string
+          created_by: string | null
+          extracted_json: Json | null
+          id: string
+          source: string
+          status: string
+          storage_path: string
+          updated_at: string
+          whatsapp_phone_number_id: string | null
+          whatsapp_sender_phone: string | null
+        }
+        Insert: {
+          branch_id?: string | null
+          company_id?: string | null
+          confirm_token?: string | null
+          confirm_token_used_at?: string | null
+          confirmed_voucher_id?: string | null
+          created_at?: string
+          created_by?: string | null
+          extracted_json?: Json | null
+          id?: string
+          source: string
+          status?: string
+          storage_path: string
+          updated_at?: string
+          whatsapp_phone_number_id?: string | null
+          whatsapp_sender_phone?: string | null
+        }
+        Update: {
+          branch_id?: string | null
+          company_id?: string | null
+          confirm_token?: string | null
+          confirm_token_used_at?: string | null
+          confirmed_voucher_id?: string | null
+          created_at?: string
+          created_by?: string | null
+          extracted_json?: Json | null
+          id?: string
+          source?: string
+          status?: string
+          storage_path?: string
+          updated_at?: string
+          whatsapp_phone_number_id?: string | null
+          whatsapp_sender_phone?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "capture_drafts_branch_id_company_id_fkey"
+            columns: ["branch_id", "company_id"]
+            isOneToOne: false
+            referencedRelation: "branches"
+            referencedColumns: ["id", "company_id"]
+          },
+          {
+            foreignKeyName: "capture_drafts_branch_id_fkey"
+            columns: ["branch_id"]
+            isOneToOne: false
+            referencedRelation: "branches"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "capture_drafts_company_id_fkey"
+            columns: ["company_id"]
+            isOneToOne: false
+            referencedRelation: "companies"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "capture_drafts_confirmed_voucher_id_company_id_fkey"
+            columns: ["confirmed_voucher_id", "company_id"]
+            isOneToOne: false
+            referencedRelation: "vouchers"
+            referencedColumns: ["id", "company_id"]
+          },
+        ]
+      }
       charges: {
         Row: {
           amount_secured: number
@@ -6392,6 +6475,47 @@ export type Database = {
           },
         ]
       }
+      whatsapp_inbound_numbers: {
+        Row: {
+          company_id: string
+          created_at: string
+          created_by: string | null
+          display_phone_number: string | null
+          id: string
+          is_active: boolean
+          updated_at: string
+          whatsapp_phone_number_id: string
+        }
+        Insert: {
+          company_id: string
+          created_at?: string
+          created_by?: string | null
+          display_phone_number?: string | null
+          id?: string
+          is_active?: boolean
+          updated_at?: string
+          whatsapp_phone_number_id: string
+        }
+        Update: {
+          company_id?: string
+          created_at?: string
+          created_by?: string | null
+          display_phone_number?: string | null
+          id?: string
+          is_active?: boolean
+          updated_at?: string
+          whatsapp_phone_number_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "whatsapp_inbound_numbers_company_id_fkey"
+            columns: ["company_id"]
+            isOneToOne: false
+            referencedRelation: "companies"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
     }
     Views: {
       [_ in never]: never
@@ -6483,6 +6607,32 @@ export type Database = {
       cancel_signature_request: {
         Args: { p_request_id: string }
         Returns: undefined
+      }
+      claim_capture_draft: {
+        Args: { p_branch_id?: string; p_company_id: string; p_draft_id: string }
+        Returns: {
+          branch_id: string | null
+          company_id: string | null
+          confirm_token: string | null
+          confirm_token_used_at: string | null
+          confirmed_voucher_id: string | null
+          created_at: string
+          created_by: string | null
+          extracted_json: Json | null
+          id: string
+          source: string
+          status: string
+          storage_path: string
+          updated_at: string
+          whatsapp_phone_number_id: string | null
+          whatsapp_sender_phone: string | null
+        }
+        SetofOptions: {
+          from: "*"
+          to: "capture_drafts"
+          isOneToOne: true
+          isSetofReturn: false
+        }
       }
       close_period: {
         Args: { p_company_id: string; p_lock_date: string }
@@ -6955,6 +7105,22 @@ export type Database = {
           nature: string
           variance: number
           variance_percent: number
+        }[]
+      }
+      get_capture_draft_by_token: {
+        Args: { p_token: string }
+        Returns: {
+          claimed: boolean
+          company_id: string
+          company_name: string
+          created_at: string
+          draft_id: string
+          extracted_json: Json
+          source: string
+          status: string
+          suggested_company_id: string
+          suggested_company_name: string
+          whatsapp_sender_phone: string
         }[]
       }
       get_cash_flow_statement: {
@@ -9212,6 +9378,19 @@ export type Database = {
           p_period_month: string
         }
         Returns: string
+      }
+      receive_whatsapp_inbound_message: {
+        Args: {
+          p_extracted_json?: Json
+          p_mime_type: string
+          p_sender_phone: string
+          p_whatsapp_phone_number_id: string
+        }
+        Returns: {
+          confirm_token: string
+          draft_id: string
+          storage_path: string
+        }[]
       }
       record_fnf_settlement: {
         Args: {
