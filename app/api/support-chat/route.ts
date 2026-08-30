@@ -15,7 +15,19 @@ import { createClient } from "@/lib/supabase/server";
 // always points at their current flash model, works on the free tier, and
 // won't 404 again the way a pinned snapshot did. Swap to a Pro model name
 // once billing is set up, if the flash tier's answers aren't sharp enough.
-const MODEL = "gemini-flash-latest";
+// Ordered fallback. Both are Google-MAINTAINED ALIASES, never pinned
+// snapshots — the comment below records why a pin was wrong, and probing
+// this key today still bears it out: pinned gemini-2.5-flash 404s while
+// every *-latest alias resolves. So the answer to an overloaded model is a
+// SECOND ALIAS, never a pin.
+//
+// Why a fallback at all: observed live in production, gemini-flash-latest
+// returned 503 "This model is currently experiencing high demand" on three
+// retries and on three further probes minutes later, while
+// gemini-flash-lite-latest answered 200 throughout. A sustained overload is
+// not something a second of backoff rides out. Same fix, same reasoning as
+// lib/capture/analyze.ts.
+const MODELS = ["gemini-flash-latest", "gemini-flash-lite-latest"] as const;
 
 const SYSTEM_PROMPT = `You are the in-app support assistant for LEKHA, an accounting and statutory
 compliance app for Indian businesses (GST, TDS, MSME, income tax, payroll,
@@ -71,31 +83,45 @@ const MAX_MESSAGE_LENGTH = 4000;
 const RETRYABLE_STATUSES = new Set([429, 503]);
 const RETRY_DELAYS_MS = [400, 1000];
 
-async function fetchGeminiWithRetry(url: string, body: string): Promise<Response> {
-  for (let attempt = 0; attempt <= RETRY_DELAYS_MS.length; attempt++) {
-    const isLastAttempt = attempt === RETRY_DELAYS_MS.length;
-    try {
-      const res = await fetch(url, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body,
-      });
-      if (res.ok || !RETRYABLE_STATUSES.has(res.status) || isLastAttempt) {
-        return res;
+async function fetchGeminiWithRetry(urls: readonly string[], body: string): Promise<Response> {
+  let lastRetryable: Response | null = null;
+  let lastError: unknown = null;
+
+  // Each model gets the full backoff before the next is tried, so an ordinary
+  // blip is ridden out on the preferred model rather than silently demoting
+  // every conversation to the weaker one.
+  for (const url of urls) {
+    for (let attempt = 0; attempt <= RETRY_DELAYS_MS.length; attempt++) {
+      const isLastAttempt = attempt === RETRY_DELAYS_MS.length;
+      try {
+        const res = await fetch(url, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body,
+        });
+        // A non-retryable status is this model's real answer — return it
+        // rather than asking another model the same question.
+        if (res.ok || !RETRYABLE_STATUSES.has(res.status)) return res;
+        const errText = await res.text().catch(() => "");
+        console.warn(
+          `[support-chat] Gemini ${res.status} on attempt ${attempt + 1}, retrying:`,
+          errText.slice(0, 300)
+        );
+        lastRetryable = res;
+        if (isLastAttempt) break;
+      } catch (err) {
+        console.warn(`[support-chat] fetch failed on attempt ${attempt + 1}, retrying:`, err);
+        lastError = err;
+        if (isLastAttempt) break;
       }
-      const errText = await res.text().catch(() => "");
-      console.warn(
-        `[support-chat] Gemini ${res.status} on attempt ${attempt + 1}, retrying:`,
-        errText.slice(0, 300)
-      );
-    } catch (err) {
-      if (isLastAttempt) throw err;
-      console.warn(`[support-chat] fetch failed on attempt ${attempt + 1}, retrying:`, err);
+      await new Promise((resolve) => setTimeout(resolve, RETRY_DELAYS_MS[attempt]));
     }
-    await new Promise((resolve) => setTimeout(resolve, RETRY_DELAYS_MS[attempt]));
   }
-  // Unreachable — the loop always returns or throws on its last attempt.
-  throw new Error("fetchGeminiWithRetry: exhausted attempts without returning");
+
+  // Every model exhausted. Return the last real response so the caller logs
+  // Google's own status and message rather than a generic failure.
+  if (lastRetryable) return lastRetryable;
+  throw lastError ?? new Error("fetchGeminiWithRetry: exhausted attempts without returning");
 }
 
 export async function POST(request: Request) {
@@ -146,7 +172,10 @@ export async function POST(request: Request) {
   let upstream: Response;
   try {
     upstream = await fetchGeminiWithRetry(
-      `https://generativelanguage.googleapis.com/v1beta/models/${MODEL}:streamGenerateContent?alt=sse&key=${apiKey}`,
+      MODELS.map(
+        (m) =>
+          `https://generativelanguage.googleapis.com/v1beta/models/${m}:streamGenerateContent?alt=sse&key=${apiKey}`
+      ),
       JSON.stringify({
         contents,
         systemInstruction: { parts: [{ text: SYSTEM_PROMPT }] },
