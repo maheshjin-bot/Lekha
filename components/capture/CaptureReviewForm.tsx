@@ -324,7 +324,9 @@ function extractionLineToFormLine(li: CaptureLineItem, items: Item[], isSale: bo
     itemId: selected?.id ?? "",
     quantity: li.quantity != null ? String(li.quantity) : "1",
     rate: li.rate != null ? String(li.rate) : fallbackRate != null ? String(fallbackRate) : "",
-    discountPercent: "",
+    // Read off the document (0147's column). Missing this was what made a
+    // 60%-discounted line compute 6,279.00 against a printed 2,511.60.
+    discountPercent: li.discount_percent != null ? String(li.discount_percent) : "",
     description: li.description,
     readAmount: li.amount ?? null,
     readHsn,
@@ -563,7 +565,15 @@ export function CaptureReviewForm({
   const [placeOfSupplyTouched, setPlaceOfSupplyTouched] = useState(false);
   const [placeOfSupply, setPlaceOfSupply] = useState("");
   const [tradingId, setTradingId] = useState("");
-  const [reference, setReference] = useState("");
+  // The document's own printed number, seeded the same way the date above is.
+  // It lands in vouchers.reference_number, which this screen labels "Their
+  // bill no." on a purchase — the supplier's invoice number, off their paper.
+  const [reference, setReference] = useState(() => extraction?.bill_number ?? "");
+  // The bill-to check is a flag, never a gate: a sister concern, a group
+  // company or a branch billed under another name are all ordinary reasons
+  // for a supplier to address paper elsewhere. Acknowledging it collapses the
+  // banner; it never changes what is posted.
+  const [wrongCompanyAcknowledged, setWrongCompanyAcknowledged] = useState(false);
   const [challanNumber, setChallanNumber] = useState(
     () => extraction?.challan_number?.trim() ?? ""
   );
@@ -1741,6 +1751,40 @@ export function CaptureReviewForm({
                   </button>
 
                   <div className="rounded-lg border border-border bg-bg p-3 text-sm">
+                {extraction?.addressed_to_this_company === false &&
+                  !wrongCompanyAcknowledged && (
+                    <div className="mb-4 rounded-lg border border-warning bg-warning-soft p-4">
+                      <p className="text-sm font-medium text-warning">
+                        This bill is addressed to someone else
+                      </p>
+                      <p className="mt-1 text-sm text-ink-soft">
+                        The document is made out to{" "}
+                        <span className="font-medium text-ink">
+                          {extraction.recipient_name ?? "another party"}
+                        </span>
+                        {extraction.recipient_gstin ? (
+                          <>
+                            {" "}(<span className="font-mono text-xs">{extraction.recipient_gstin}</span>)
+                          </>
+                        ) : null}
+                        , which is not this company. Posting it here books another
+                        firm&rsquo;s purchase into your accounts and claims their input
+                        credit as yours.
+                      </p>
+                      <p className="mt-1 text-xs text-ink-faint">
+                        If that is deliberate — a sister concern, or a supplier who
+                        bills a group company — carry on.
+                      </p>
+                      <button
+                        type="button"
+                        onClick={() => setWrongCompanyAcknowledged(true)}
+                        className="mt-3 rounded-lg border border-border-strong px-3 py-1.5 text-xs font-semibold text-ink-soft hover:bg-surface-2"
+                      >
+                        I know, carry on
+                      </button>
+                    </div>
+                  )}
+
                     <div className="flex justify-between tabular-nums font-mono">
                       <span className="text-ink-faint">Lines so far</span>
                       <span>{formatINR(taxable, { showZero: true })}</span>

@@ -47,6 +47,7 @@ describe("parseExtractionResponse", () => {
         hsn_sac: null,
         uom: null,
         gst_rate_percent: null,
+        discount_percent: null,
       },
     ]);
     expect(result.taxable_value).toBe(2500);
@@ -91,6 +92,7 @@ describe("parseExtractionResponse", () => {
         hsn_sac: null,
         uom: null,
         gst_rate_percent: null,
+        discount_percent: null,
       },
     ]);
   });
@@ -457,6 +459,7 @@ describe("parseExtractionResponse — never throws, whatever comes back", () => 
         hsn_sac: null,
         uom: null,
         gst_rate_percent: null,
+        discount_percent: null,
       },
     ]);
     expect(result.confidence).toBe("medium");

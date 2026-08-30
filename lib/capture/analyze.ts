@@ -160,6 +160,49 @@ export type CaptureExtraction = {
   /** Best-effort ISO 8601 (yyyy-mm-dd), or null if illegible/undeterminable. */
   bill_date: string | null;
   /**
+   * The DOCUMENT'S OWN printed number — "Invoice No. 1300" on a supplier
+   * bill. Flows to vouchers.reference_number via create_invoice's
+   * p_reference_number, which the screen labels "Their bill no." on a
+   * purchase and "Their PO no." on a sale.
+   *
+   * It was never read. The field existed on the form and on the voucher, and
+   * the number was printed at the top of every invoice, but nothing carried
+   * it across — so a preparer had to copy it by hand off a photograph they
+   * were looking at anyway. Distinct from challan_number below: an invoice
+   * can carry both, and 0865 gave them separate columns for exactly that.
+   */
+  bill_number?: string | null;
+  /**
+   * WHO THE DOCUMENT IS ADDRESSED TO — the Bill-to / "To" block, not us and
+   * not the supplier. Read so the screen can check it against the company
+   * being posted into: a supplier bill made out to a different firm is one of
+   * the easiest mistakes to make with a pile of paper, and one of the most
+   * annoying to unwind once it is in the ledger and in GSTR-2B.
+   *
+   * Reported, never enforced. A sister concern, a group company or a branch
+   * billed under another name are all ordinary, so this is a flag the
+   * preparer can look at and overrule, not a gate.
+   */
+  recipient_name?: string | null;
+  /** The Bill-to party's GSTIN, when the document prints one. */
+  recipient_gstin?: string | null;
+  /**
+   * Whether the Bill-to block matches the company being captured into.
+   *
+   *   true   the recipient GSTIN is one of this company's own, or (with no
+   *          GSTIN printed) the recipient name matches its name
+   *   false  a GSTIN is printed and it is NOT one of ours — the strongest
+   *          available evidence that this paper belongs to somebody else
+   *   null   nothing to compare: no recipient read, or no own-GSTIN on file
+   *
+   * Computed HERE rather than on the screen because this module is already
+   * given the company's own name and GSTINs as context, and the screen is
+   * not. A verdict of false is shown to the preparer and can be overruled —
+   * a sister concern or a group company is an ordinary reason for a bill to
+   * be addressed elsewhere — so it never blocks a post.
+   */
+  addressed_to_this_company?: boolean | null;
+  /**
    * The challan's own printed number, where the document IS a challan (0865).
    * Flows to vouchers.challan_number via create_invoice's p_challan_number.
    * Distinct from the counterparty's document reference, which is
@@ -235,6 +278,23 @@ export type CaptureLineItem = {
    * list is what makes that distinction enforceable rather than hoped for.
    */
   gst_rate_percent?: number | null;
+  /**
+   * The per-line trade discount as a PERCENTAGE. Unlike uom and
+   * gst_rate_percent above, this one IS written to the voucher line:
+   * voucher_items has carried discount_percent since 0147 and create_invoice
+   * computes the net from it.
+   *
+   * Not reading it was a real defect found on a real bill. A supplier invoice
+   * printing rate 6,279.00 against a 60% discount has a taxable value of
+   * 2,511.60; without the discount the draft computed 6,279.00 and the review
+   * screen reported a 3,767.40 gap it could not explain. The figure was on
+   * the paper the whole time, in a column nothing read.
+   *
+   * A discount column very often prints a WORD rather than a number — "Nett"
+   * on that same invoice — which must resolve to null, never to NaN and never
+   * to a zero that claims a reading was taken.
+   */
+  discount_percent?: number | null;
 };
 
 /**
@@ -396,6 +456,17 @@ STEP 2 — EXTRACT.
 
 - Every date must be ISO 8601 (yyyy-mm-dd). Indian documents are written
   dd/mm/yyyy or dd-mm-yyyy — convert them; never read them as mm/dd/yyyy.
+- recipient_name and recipient_gstin: WHO THE DOCUMENT IS ADDRESSED TO — the
+  "To", "Bill to", "Billed to" or "Buyer" block. On a supplier invoice this
+  is the CUSTOMER, which is normally us; on our own outgoing challan it is the
+  consignee. It is never the issuer, and never the same party you returned as
+  vendor_name. Return exactly the name printed there and its GSTIN if one is
+  shown beside it, or null for either you cannot read. Do not reason about
+  whether it matches the capturing company — just report what the paper says.
+- bill_number is THIS document's own printed number — "Invoice No.", "Bill
+  No.", "Voucher No.", or a bare number in the header block beside the date.
+  It is the number the ISSUER put on this paper, never a challan number, never
+  a purchase-order number, and never our own. Return null if none is printed.
 - bill_date is the date printed on THIS document: the invoice date, or on a
   challan the challan's own date.
 - challan_number and challan_date: the DELIVERY CHALLAN's own number and date
@@ -409,6 +480,14 @@ STEP 2 — EXTRACT.
   of the three you cannot read, but still include the line if its description
   is legible. Never include subtotal, tax, discount, round-off or grand-total
   rows as line items.
+- discount_percent on each line: the trade discount applying to THAT line, as
+  a percentage number, from a column headed Disc / Disc % / Discount. Many
+  invoices print a WORD there for a line with no discount — "Nett", "Net",
+  "-" — and for those return null, not 0. Read 60 from "60 %". If the column
+  gives a discount in RUPEES rather than a percentage, return null rather
+  than converting it. This matters: a line whose rate is 6279.00 with a 60%
+  discount has a taxable value of 2511.60, and reading the rate while missing
+  the discount overstates that line by 3767.40.
 - unit on each line: the unit of measure printed against that line, EXACTLY as
   printed and with nothing else attached — "Nos", "Mtr", "Kgs", "Pcs", "Box",
   "Rolls", "Sq.Ft". Many invoices print it as its own column headed UOM / Unit
@@ -521,6 +600,9 @@ const RESPONSE_SCHEMA = {
     vendor_bank_name: { type: "STRING", nullable: true },
     vendor_bank_account_number: { type: "STRING", nullable: true },
     vendor_bank_ifsc: { type: "STRING", nullable: true },
+    bill_number: { type: "STRING", nullable: true },
+    recipient_name: { type: "STRING", nullable: true },
+    recipient_gstin: { type: "STRING", nullable: true },
     bill_date: { type: "STRING", nullable: true },
     challan_number: { type: "STRING", nullable: true },
     challan_date: { type: "STRING", nullable: true },
@@ -540,6 +622,9 @@ const RESPONSE_SCHEMA = {
           unit: { type: "STRING", nullable: true },
           quantity: { type: "NUMBER", nullable: true },
           rate: { type: "NUMBER", nullable: true },
+          // Immediately after `rate`: a discount column sits beside the rate
+          // on the paper and is meaningless read apart from it.
+          discount_percent: { type: "NUMBER", nullable: true },
           // After `rate`, so the model has already read the money columns and
           // is less likely to hand back a tax AMOUNT here.
           gst_rate_percent: { type: "NUMBER", nullable: true },
@@ -590,6 +675,10 @@ function fallback(note: string): CaptureExtraction {
     vendor_bank_account_number: null,
     vendor_bank_ifsc: null,
     bill_date: null,
+    bill_number: null,
+    recipient_name: null,
+    recipient_gstin: null,
+    addressed_to_this_company: null,
     line_items: [],
     taxable_value: null,
     cgst: null,
@@ -921,6 +1010,57 @@ export function toGstRatePercentOrNull(v: unknown): number | null {
 }
 
 /**
+ * Does the Bill-to block belong to the company being captured into?
+ *
+ * A printed GSTIN decides it outright: it identifies one legal entity in one
+ * state, so "not one of ours" is about as strong as evidence on a
+ * photographed page gets. The name is used only when no GSTIN was read —
+ * names on invoices are abbreviated, suffixed and misspelt constantly, so a
+ * name mismatch is worth a look but not worth asserting. That comparison is
+ * deliberately loose (case and punctuation folded, containment either way) so
+ * "Ridhivi Enterprise - Sachin (C)" against "Ridhivi Enterprise" is not
+ * called a mismatch.
+ *
+ * null means there was nothing to compare, and the screen shows nothing.
+ */
+export function isAddressedToCompany(
+  recipientGstin: string | null,
+  recipientName: string | null,
+  context?: CaptureContext
+): boolean | null {
+  const own = (context?.companyGstins ?? []).map((g) => g.trim().toUpperCase()).filter(Boolean);
+  if (recipientGstin && own.length) {
+    return own.includes(recipientGstin.trim().toUpperCase());
+  }
+  const ourName = context?.companyName?.trim();
+  if (recipientName && ourName) {
+    const fold = (x: string) => x.toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
+    const a = fold(recipientName);
+    const b = fold(ourName);
+    if (!a || !b) return null;
+    return a.includes(b) || b.includes(a);
+  }
+  return null;
+}
+
+/**
+ * A per-line trade discount, as a percentage, or null.
+ *
+ * Bounded to 0..100 because voucher_items.discount_percent is, and because a
+ * discount outside that range is a misreading rather than a bargain. A
+ * discount column routinely prints a WORD instead of a number — "Nett" on
+ * the bill that prompted this — and toNumberOrNull already turns that into
+ * null, which is the right answer: null means nothing was read here, whereas
+ * a fabricated 0 would claim a reading was taken and quietly agree with a
+ * document that might have said otherwise. A genuine printed 0% survives.
+ */
+export function toDiscountPercentOrNull(v: unknown): number | null {
+  const d = toNumberOrNull(v);
+  if (d === null) return null;
+  return d >= 0 && d <= 100 ? d : null;
+}
+
+/**
  * Only the three values public.capture_drafts.document_type's CHECK
  * constraint accepts survive. Anything else the model invents — and a model
  * asked an open question will invent — becomes null, which reads as "no
@@ -1222,6 +1362,9 @@ export function parseExtractionResponse(rawJsonText: string): CaptureExtraction 
     // trusted as returned.
     uom: toUomCodeOrNull(li.unit),
     gst_rate_percent: toGstRatePercentOrNull(li.gst_rate_percent),
+    // Unlike the three above this one is written to the VOUCHER LINE, not to
+    // a master: create_invoice computes the net from it (0147).
+    discount_percent: toDiscountPercentOrNull(li.discount_percent),
   }));
 
   const confidence = p.confidence === "high" || p.confidence === "medium" || p.confidence === "low"
@@ -1251,6 +1394,20 @@ export function parseExtractionResponse(rawJsonText: string): CaptureExtraction 
     // from a shape test to a real-calendar test; 0740's own inline regex
     // accepted "2026-02-31".
     bill_date: toIsoDateOrNull(p.bill_date),
+    // The document's own printed number. Trimmed only — an invoice number is
+    // whatever the issuer chose to print, so there is no shape to enforce.
+    bill_number:
+      typeof p.bill_number === "string" && p.bill_number.trim() ? p.bill_number.trim() : null,
+    // Compared against this company's own name and GSTINs by the review
+    // screen. Reported there, never enforced — see the type comment.
+    recipient_name:
+      typeof p.recipient_name === "string" && p.recipient_name.trim()
+        ? p.recipient_name.trim()
+        : null,
+    recipient_gstin:
+      typeof p.recipient_gstin === "string" && p.recipient_gstin.trim()
+        ? p.recipient_gstin.trim().toUpperCase()
+        : null,
     line_items: lineItems,
     taxable_value: toNumberOrNull(p.taxable_value),
     cgst: toNumberOrNull(p.cgst),
@@ -1347,5 +1504,16 @@ export async function analyzeCaptureImage(
     );
   }
 
-  return parseExtractionResponse(text);
+  const parsed = parseExtractionResponse(text);
+  // Computed here rather than in the parser: this is the only place holding
+  // both the reading and the company's own identity. parseExtractionResponse
+  // stays a pure string-to-shape function, which is what its tests exercise.
+  return {
+    ...parsed,
+    addressed_to_this_company: isAddressedToCompany(
+      parsed.recipient_gstin ?? null,
+      parsed.recipient_name ?? null,
+      context
+    ),
+  };
 }
