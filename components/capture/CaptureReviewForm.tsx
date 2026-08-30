@@ -563,7 +563,22 @@ export function CaptureReviewForm({
     return autoSelects(m) ? m!.party.id : "";
   });
   const [placeOfSupplyTouched, setPlaceOfSupplyTouched] = useState(false);
-  const [placeOfSupply, setPlaceOfSupply] = useState("");
+  // Seeded from the SAME auto-matched party partyId is seeded from, a few
+  // lines above. Leaving this at "" meant that matching the party perfectly —
+  // the good path, a GSTIN hit — left the place of supply blank, and with it
+  // the whole CGST/SGST/IGST split, so a bill whose taxable value agreed to
+  // the paisa still showed no tax at all. selectParty() below sets it, but
+  // only fires on a human CHANGING the dropdown, which an auto-match never
+  // does. The reset path already did this correctly; only the initial state
+  // did not.
+  const [placeOfSupply, setPlaceOfSupply] = useState(() => {
+    const conf = docConfig(preselectDocType(draft, extraction));
+    const m = matchParty(
+      partyReading(extraction, draft.vendorHint),
+      ledgers.filter((l) => conf.partyRoles.includes(l.ledger_role))
+    );
+    return autoSelects(m) ? (m!.party.state_code ?? "") : "";
+  });
   const [tradingId, setTradingId] = useState("");
   // The document's own printed number, seeded the same way the date above is.
   // It lands in vouchers.reference_number, which this screen labels "Their
