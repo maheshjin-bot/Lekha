@@ -1037,6 +1037,45 @@ export function CaptureReviewForm({
           </p>
         )}
 
+        {/* ── Whose paper IS this. ABOVE the document-type chooser and the
+            steps, because it is a fact about the WHOLE document rather than
+            about any one step. It was first written into step 3 and that was
+            wrong: by the time a preparer reaches the totals they have already
+            matched a party and every line, which is exactly the work this is
+            meant to stop them starting. Warns, never blocks. ────────────── */}
+        {extraction?.addressed_to_this_company === false && !wrongCompanyAcknowledged && (
+          <div className="mt-5 rounded-lg border border-warning bg-warning-soft p-4">
+            <p className="text-sm font-medium text-warning">
+              This bill is addressed to someone else
+            </p>
+            <p className="mt-1 text-sm text-ink-soft">
+              It is made out to{" "}
+              <span className="font-medium text-ink">
+                {extraction.recipient_name ?? "another party"}
+              </span>
+              {extraction.recipient_gstin ? (
+                <>
+                  {" "}
+                  (<span className="font-mono text-xs">{extraction.recipient_gstin}</span>)
+                </>
+              ) : null}
+              , not this company. Posting it here books another firm&rsquo;s
+              purchase into your accounts and claims their input credit as yours.
+            </p>
+            <p className="mt-1 text-xs text-ink-faint">
+              If that is deliberate — a sister concern, or a supplier who bills a
+              group company — carry on.
+            </p>
+            <button
+              type="button"
+              onClick={() => setWrongCompanyAcknowledged(true)}
+              className="mt-3 rounded-lg border border-border-strong px-3 py-1.5 text-xs font-semibold text-ink-soft hover:bg-surface-2"
+            >
+              I know, carry on
+            </button>
+          </div>
+        )}
+
         {/* ── What the paper IS. Above the steps, because it decides what
             every step below means. ─────────────────────────────────────── */}
         <fieldset className="mt-5">
@@ -1751,40 +1790,6 @@ export function CaptureReviewForm({
                   </button>
 
                   <div className="rounded-lg border border-border bg-bg p-3 text-sm">
-                {extraction?.addressed_to_this_company === false &&
-                  !wrongCompanyAcknowledged && (
-                    <div className="mb-4 rounded-lg border border-warning bg-warning-soft p-4">
-                      <p className="text-sm font-medium text-warning">
-                        This bill is addressed to someone else
-                      </p>
-                      <p className="mt-1 text-sm text-ink-soft">
-                        The document is made out to{" "}
-                        <span className="font-medium text-ink">
-                          {extraction.recipient_name ?? "another party"}
-                        </span>
-                        {extraction.recipient_gstin ? (
-                          <>
-                            {" "}(<span className="font-mono text-xs">{extraction.recipient_gstin}</span>)
-                          </>
-                        ) : null}
-                        , which is not this company. Posting it here books another
-                        firm&rsquo;s purchase into your accounts and claims their input
-                        credit as yours.
-                      </p>
-                      <p className="mt-1 text-xs text-ink-faint">
-                        If that is deliberate — a sister concern, or a supplier who
-                        bills a group company — carry on.
-                      </p>
-                      <button
-                        type="button"
-                        onClick={() => setWrongCompanyAcknowledged(true)}
-                        className="mt-3 rounded-lg border border-border-strong px-3 py-1.5 text-xs font-semibold text-ink-soft hover:bg-surface-2"
-                      >
-                        I know, carry on
-                      </button>
-                    </div>
-                  )}
-
                     <div className="flex justify-between tabular-nums font-mono">
                       <span className="text-ink-faint">Lines so far</span>
                       <span>{formatINR(taxable, { showZero: true })}</span>
