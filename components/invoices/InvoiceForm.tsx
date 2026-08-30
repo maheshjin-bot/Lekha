@@ -137,6 +137,15 @@ export type ExistingInvoice = {
   godownId: string;
   placeOfSupply: string;
   reference: string;
+  /**
+   * vouchers.challan_number / challan_date (migration 0865) — the delivery
+   * challan this invoice was raised against. A DIFFERENT fact from
+   * `reference`, which is the counterparty's own document number; a sale can
+   * carry both at once. Empty strings, not nulls, so they drop straight into
+   * the controlled inputs below.
+   */
+  challanNumber: string;
+  challanDate: string;
   narration: string;
   lines: Line[];
   /** The voucher_ship_to row on file, or null when goods go where the bill goes. */
@@ -242,6 +251,12 @@ export function InvoiceForm({
   // the party-change effect below silently override it with a guess.
   const [placeOfSupplyTouched, setPlaceOfSupplyTouched] = useState(isEdit);
   const [reference, setReference] = useState(existing?.reference ?? "");
+  // Migration 0865. Kept separate from `reference` on purpose: on a sale the
+  // reference is the customer's PO number and this is our own outgoing
+  // delivery challan's number, and an invoice raised after goods moved on a
+  // challan (Rule 55(4)) routinely carries both.
+  const [challanNumber, setChallanNumber] = useState(existing?.challanNumber ?? "");
+  const [challanDate, setChallanDate] = useState(existing?.challanDate ?? "");
   const [narration, setNarration] = useState(existing?.narration ?? "");
   const [lines, setLines] = useState<Line[]>(existing?.lines.length ? existing.lines : [emptyLine()]);
   const [busy, setBusy] = useState(false);
@@ -538,6 +553,23 @@ export function InvoiceForm({
     }
 
     setBusy(true);
+
+    // The two trailing arguments migration 0865 added to BOTH create_invoice
+    // and update_invoice. Spread into each call rather than written inline
+    // because types/database.types.ts — owned by the integration pass — does
+    // not know them yet, so the object has to carry the escape hatch once
+    // instead of twice. undefined is dropped from the request body by
+    // supabase-js and falls through to the SQL default, exactly as every
+    // other optional argument here does.
+    //
+    // A date with no number is deliberately still sent: the database accepts
+    // it, because a challan whose printed number is illegible is still dated.
+    const challanArgs = {
+      p_challan_number: challanNumber.trim() || undefined,
+      p_challan_date: challanDate || undefined,
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any -- see above
+    } as any;
+
     const items_payload = filled.map((l) => ({
       item_id: l.itemId,
       quantity: Number(l.quantity),
@@ -557,6 +589,7 @@ export function InvoiceForm({
           p_narration: narration.trim() || undefined,
           p_reference_number: reference.trim() || undefined,
           p_place_of_supply: placeOfSupply || undefined,
+          ...challanArgs,
         })
       : await createClient().rpc("create_invoice", {
           p_company_id: companyId,
@@ -580,6 +613,7 @@ export function InvoiceForm({
           p_voucher_number: policy?.mode === "manual" ? manualNumber.trim() : undefined,
           p_number_series_id:
             policy?.mode === "series" ? (effectiveSeriesId ?? undefined) : undefined,
+          ...challanArgs,
         });
 
     if (error) {
@@ -680,6 +714,47 @@ export function InvoiceForm({
             placeholder={isSale ? "Their PO no." : "Their bill no."}
             className={field}
           />
+        </label>
+
+        {/* Migration 0865. A separate field from Reference above, not a
+            rewording of it: Reference is the counterparty's document number
+            and this is the delivery challan the goods actually moved on —
+            ours on a sale (Rule 55(4): challan first, tax invoice after),
+            the supplier's on a purchase. Both routinely appear on one
+            invoice, which is exactly why one text box could not hold them. */}
+        <label className="flex flex-col gap-1.5">
+          <span className="text-sm font-medium">
+            Challan no. <span className="font-normal text-ink-faint">optional</span>
+          </span>
+          <input
+            value={challanNumber}
+            onChange={(e) => setChallanNumber(e.target.value)}
+            placeholder={isSale ? "Our challan no." : "Their challan no."}
+            className={field}
+          />
+          <span className="text-xs text-ink-faint">
+            {isSale
+              ? "The delivery challan these goods went out on."
+              : "The challan these goods arrived on."}
+          </span>
+        </label>
+
+        <label className="flex flex-col gap-1.5">
+          <span className="text-sm font-medium">
+            Challan date <span className="font-normal text-ink-faint">optional</span>
+          </span>
+          <input
+            type="date"
+            value={challanDate}
+            onChange={(e) => setChallanDate(e.target.value)}
+            className={field}
+          />
+          <span className="text-xs text-ink-faint">
+            {/* Sec 31(7): where goods went out on approval, the six-month
+                clock for issuing the invoice runs from the date of REMOVAL —
+                which is the challan's date, not this invoice's. */}
+            Usually earlier than the invoice date.
+          </span>
         </label>
 
         <label className="flex flex-col gap-1.5">

@@ -95,6 +95,19 @@ export default async function EditInvoicePage({
   // by the integration pass — does not know it yet, so it needs the escape
   // hatch below and cannot be destructured with the typed queries. Same
   // convention as components/einvoice/EinvoiceDetailForm.tsx.
+  // The invoice's delivery-challan reference (vouchers.challan_number /
+  // challan_date, migration 0865). Read separately from the typed voucher
+  // query above for the same reason voucher_ship_to is: the two columns are
+  // brand new and types/database.types.ts — owned by the integration pass —
+  // does not know them yet, so naming them in that select would not typecheck.
+  const { data: challanRow } = await supabase
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any -- see above
+    .from("vouchers" as any)
+    .select("challan_number, challan_date")
+    .eq("id", voucherId)
+    .eq("company_id", companyId)
+    .maybeSingle<{ challan_number: string | null; challan_date: string | null }>();
+
   const { data: shipToRow } = await supabase
     // eslint-disable-next-line @typescript-eslint/no-explicit-any -- see above
     .from("voucher_ship_to" as any)
@@ -182,6 +195,8 @@ export default async function EditInvoicePage({
     godownId: voucherItems?.[0]?.godown_id ?? godowns?.[0]?.id ?? "",
     placeOfSupply: voucher.place_of_supply ?? "",
     reference: voucher.reference_number ?? "",
+    challanNumber: challanRow?.challan_number ?? "",
+    challanDate: challanRow?.challan_date ?? "",
     narration: voucher.narration ?? "",
     lines: (voucherItems ?? []).map((vi) => ({
       itemId: vi.item_id,
