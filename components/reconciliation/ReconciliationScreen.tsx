@@ -102,6 +102,16 @@ export function ReconciliationScreen({
   const [dateOrder, setDateOrder] = useState<DateOrder>("dmy");
   const [orderConfirmed, setOrderConfirmed] = useState(false);
   const [importResult, setImportResult] = useState<{ imported: number; skipped: number } | null>(null);
+  // Set only for a PDF upload — unlike a CSV file (whose already-parsed
+  // rawRows are format-agnostic and can be re-interpreted locally for any
+  // format the dropdown is switched to), a PDF's rawRows depend on WHICH
+  // format's own column geometry produced them, so switching formats after
+  // a PDF upload re-POSTs the original file rather than re-reading state
+  // that no longer applies. null whenever the current rawRows came from a
+  // CSV, or from nothing yet.
+  const [pdfFile, setPdfFile] = useState<File | null>(null);
+  const [pdfBusy, setPdfBusy] = useState(false);
+  const [pdfNote, setPdfNote] = useState<string | null>(null);
 
   const format = useMemo(() => getBankFormat(formatId), [formatId]);
 
@@ -125,6 +135,16 @@ export function ReconciliationScreen({
   function onFile(file: File) {
     setImportResult(null);
     setOrderConfirmed(false);
+    setPdfNote(null);
+
+    const isPdf = file.type === "application/pdf" || file.name.toLowerCase().endsWith(".pdf");
+    if (isPdf) {
+      setPdfFile(file);
+      parsePdf(file, null);
+      return;
+    }
+
+    setPdfFile(null);
     Papa.parse<BankCsvRow>(file, {
       header: true,
       skipEmptyLines: "greedy",
@@ -148,8 +168,59 @@ export function ReconciliationScreen({
     });
   }
 
+  // A PDF's rawRows are produced by a specific format's own column geometry
+  // (lib/csv/bank-pdf-import.ts) server-side — pass explicitFormatId to
+  // re-run extraction under a different format (the dropdown override path);
+  // pass null to let the server try every registered format, mirroring
+  // detectBankFormat's CSV auto-detect.
+  async function parsePdf(file: File, explicitFormatId: BankFormatId | null) {
+    setPdfBusy(true);
+    setError(null);
+    setPdfNote(null);
+    try {
+      const body = new FormData();
+      body.set("file", file);
+      if (explicitFormatId) body.set("formatId", explicitFormatId);
+
+      const res = await fetch(`/api/companies/${companyId}/bank-statement-pdf`, { method: "POST", body });
+      const json = await res.json();
+      if (!res.ok) {
+        setError(json.error ?? "Could not read this PDF.");
+        setRawRows([]);
+        setPdfBusy(false);
+        return;
+      }
+
+      const rows: BankCsvRow[] = json.rows ?? [];
+      const detected: BankFormatId | null = json.detectedFormatId ?? null;
+      setRawRows(rows);
+      setDetectedFormatId(explicitFormatId ? null : detected);
+      const fmt = getBankFormat(explicitFormatId ?? detected ?? "generic");
+      setFormatId(fmt.id);
+      if (rows.length) reinferDateOrder(rows, fmt);
+      if (!detected) {
+        setPdfNote(
+          explicitFormatId
+            ? `No "${fmt.label}" column header found anywhere in this PDF — try a different format above, or the CSV/Excel export instead.`
+            : "Could not confidently match this PDF's own table layout to a known bank format — check the format above, or try the CSV/Excel export instead."
+        );
+      } else if (rows.length === 0) {
+        setPdfNote("Found this bank's column headers, but no transaction rows underneath them — check the file has statement rows, not just a summary page.");
+      }
+    } catch {
+      setError("Could not reach the server to read this PDF.");
+      setRawRows([]);
+    } finally {
+      setPdfBusy(false);
+    }
+  }
+
   function onFormatChange(id: BankFormatId) {
     setFormatId(id);
+    if (pdfFile) {
+      parsePdf(pdfFile, id);
+      return;
+    }
     if (rawRows.length) reinferDateOrder(rawRows, getBankFormat(id));
   }
 
@@ -195,6 +266,8 @@ export function ReconciliationScreen({
     const imported = data?.length ?? 0;
     setImportResult({ imported, skipped: good.length - imported });
     setRawRows([]);
+    setPdfFile(null);
+    setPdfNote(null);
     if (fileRef.current) fileRef.current.value = "";
     setBusy(false);
     router.refresh();
@@ -306,6 +379,7 @@ export function ReconciliationScreen({
           <select
             value={formatId}
             onChange={(e) => onFormatChange(e.target.value as BankFormatId)}
+            disabled={pdfBusy}
             className={field}
           >
             {BANK_FORMATS.map((f) => (
@@ -318,7 +392,8 @@ export function ReconciliationScreen({
         <input
           ref={fileRef}
           type="file"
-          accept=".csv,text/csv"
+          accept=".csv,text/csv,.pdf,application/pdf"
+          disabled={pdfBusy}
           onChange={(e) => e.target.files?.[0] && onFile(e.target.files[0])}
           className="text-sm file:mr-3 file:rounded-lg file:border file:border-border-strong file:bg-surface file:px-3 file:py-1.5 file:text-sm"
         />
@@ -346,11 +421,22 @@ export function ReconciliationScreen({
         </button>
       </div>
 
-      {rawRows.length > 0 && (
+      {rawRows.length > 0 && !pdfFile && (
         <p className="mt-2 text-xs text-ink-faint">
           {detectedFormatId
             ? `Detected as ${getBankFormat(detectedFormatId).label} from the file's own column headers.`
             : "Could not confidently detect the bank format from this file's headers — check the format above is right before importing; the preview below will show wrong amounts or a wrong debit/credit side if it isn't."}
+        </p>
+      )}
+
+      {pdfBusy && <p className="mt-2 text-xs text-ink-faint">Reading the PDF&apos;s text layer…</p>}
+
+      {pdfFile && !pdfBusy && (
+        <p className="mt-2 text-xs text-ink-faint">
+          {pdfNote ??
+            (detectedFormatId
+              ? `Detected as ${getBankFormat(detectedFormatId).label} from the PDF's own column layout.`
+              : `Read as ${getBankFormat(formatId).label} (your own selection above).`)}
         </p>
       )}
 
@@ -430,7 +516,7 @@ export function ReconciliationScreen({
           <button
             type="button"
             onClick={commitImport}
-            disabled={busy || preview.every((r) => r.issues.length > 0)}
+            disabled={busy || pdfBusy || preview.every((r) => r.issues.length > 0)}
             className="mt-3 rounded-lg bg-accent px-4 py-2 text-sm font-semibold text-accent-ink transition-colors hover:opacity-90 disabled:opacity-50"
           >
             Import {preview.filter((r) => r.issues.length === 0).length} line

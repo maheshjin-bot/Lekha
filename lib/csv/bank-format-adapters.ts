@@ -139,11 +139,19 @@ export function getBankFormat(id: BankFormatId): BankFormatDef {
 }
 
 /** Strips everything but letters/digits and lowercases, so "Chq./Ref.No." and "Chq / Ref No" match. */
-function normalizeHeaderToken(h: string): string {
+export function normalizeHeaderToken(h: string): string {
   return h.toLowerCase().replace(/[^a-z0-9]+/g, "");
 }
 
-function expectedHeaders(def: BankFormatDef): string[] {
+/**
+ * Exported for lib/csv/bank-pdf-import.ts — the PDF path needs the exact
+ * same header-label strings CSV detection matches against, to locate a
+ * format's header row inside a PDF's extracted text and to build the
+ * geometric column ranges from it. detectBankFormat/mapRowToCanonical stay
+ * the single source of truth for what each format's own real column names
+ * are; the PDF path never hardcodes them a second time.
+ */
+export function expectedHeaders(def: BankFormatDef): string[] {
   const c = def.columns;
   return c.amountShape === "split"
     ? [c.date, c.description, c.reference, c.debit, c.credit].filter((x): x is string => !!x)
