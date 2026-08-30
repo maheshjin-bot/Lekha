@@ -26,6 +26,19 @@ export default function manifest(): MetadataRoute.Manifest {
     display: "standalone",
     background_color: "#F7F7F5",
     theme_color: "#3654D6",
+    // A godown handset installs LEKHA once and then only ever wants the
+    // scanner. Long-pressing the installed icon jumps straight there instead
+    // of landing on /companies and navigating down to it in poor light with
+    // one hand. A separate scanner-only manifest (start_url "/scan") would be
+    // better still, but that belongs with the restricted operator role.
+    shortcuts: [
+      {
+        name: "Scan a document",
+        short_name: "Scan",
+        description: "Photograph a bill or delivery challan and send it for review",
+        url: "/scan",
+      },
+    ],
     icons: [
       {
         src: "/icon-192",
