@@ -1,5 +1,6 @@
 import Link from "next/link";
 import { createClient } from "@/lib/supabase/server";
+import { CaptureUploadPanel } from "@/components/capture/CaptureUploadPanel";
 import {
   CaptureReviewInbox,
   type CapturerOption,
@@ -237,6 +238,8 @@ export default async function CapturePage({
         photograph is a usable one. Nothing reaches your books until you press post yourself: a
         draft never posts itself.
       </p>
+
+      <CaptureUploadPanel companyId={companyId} />
 
       {blocked ? (
         <p className="mt-8 rounded-lg border border-dashed border-border-strong px-5 py-8 text-center text-sm text-ink-faint">
