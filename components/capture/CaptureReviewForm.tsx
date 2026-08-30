@@ -27,6 +27,7 @@ import {
   type QuickAddedItem,
 } from "@/components/items/QuickAddItemModal";
 import { VoucherNumberField } from "@/components/numbering/VoucherNumberField";
+import { PostPreview } from "@/components/capture/PostPreview";
 import {
   friendlyNumberingError,
   validateManualNumber,
@@ -607,6 +608,7 @@ export function CaptureReviewForm({
   );
   const [manualNumber, setManualNumber] = useState("");
   const [seriesId, setSeriesId] = useState<string | null>(null);
+  const [previewOpen, setPreviewOpen] = useState(false);
   const [partyModalOpen, setPartyModalOpen] = useState(false);
   const [tradingModalOpen, setTradingModalOpen] = useState(false);
   const [itemModalLine, setItemModalLine] = useState<number | null>(null);
@@ -725,12 +727,14 @@ export function CaptureReviewForm({
   );
 
   /**
-   * Sales TCS (206C) is computed server-side by create_invoice and is
-   * deliberately NOT replicated here — InvoiceForm carries that arithmetic
-   * because it is the full sales screen; a capture preview that guessed at it
-   * would be a second twin to keep in step. What this screen owes the preparer
-   * is the warning that the posted total will be higher, so the comparison
-   * above is not read as a clean match when it is about to stop being one.
+   * Sales TCS (206C) is not part of the comparison above, and should not be:
+   * that table asks whether this draft agrees with the DOCUMENT, and TCS is
+   * something this company collects rather than something printed on the paper
+   * being checked. So the row would always differ, and always correctly.
+   *
+   * It is no longer unpreviewable, though. The post preview computes it from
+   * ref_tcs_sections the way create_invoice does, so the note below points
+   * there instead of simply warning that the posted total will be higher.
    */
   const tcsLikely =
     isSale && lines.some((l) => allItems.find((x) => x.id === l.itemId)?.default_tcs_section);
@@ -742,6 +746,94 @@ export function CaptureReviewForm({
   const manualProblem = policy?.mode === "manual" ? validateManualNumber(manualNumber) : null;
   const invoiceDone =
     Boolean(tradingId) && taxable > 0 && (!gstOn || Boolean(placeOfSupply)) && !manualProblem;
+
+  /* ------------------------------------------------------------------------ *
+   * THE POST PREVIEW — see components/capture/PostPreview.tsx
+   *
+   * p_items is built ONCE, here, and handed to BOTH the preview and the post.
+   * Not two arrays built the same way in two places: a preview of a payload
+   * that differs from the one actually sent is a preview of another document,
+   * and the difference would be invisible precisely because the two would have
+   * been written to look identical.
+   * ------------------------------------------------------------------------ */
+  const itemsPayload = billableLines.map((l) => ({
+    item_id: l.itemId,
+    quantity: Number(l.quantity),
+    rate: Number(l.rate) || 0,
+    discount_percent: Number(l.discountPercent) || 0,
+    description: l.description.trim() || null,
+  }));
+
+  /** The same lines, plus what the paper said, which only the preview uses. */
+  const previewLines = itemsPayload.map((p, i) => ({
+    itemId: p.item_id,
+    quantity: p.quantity,
+    rate: p.rate,
+    discountPercent: p.discount_percent,
+    description: p.description,
+    readAmount: billableLines[i]?.readAmount ?? null,
+    readDescription: billableLines[i]?.readDescription || null,
+  }));
+
+  /**
+   * What stops this being postable at all, in the preview's own words.
+   *
+   * Deliberately the SAME conditions post() checks, in the same order, so the
+   * dialog can never say "here is what will happen" about a document the post
+   * button is about to refuse. It reports all of them at once rather than the
+   * first, because the preview is a place to look rather than a place to be
+   * stopped.
+   */
+  const previewMissing: string[] = [];
+  if (!partyId) {
+    previewMissing.push(
+      `No ${cfg.partyLabel.toLowerCase()} is selected. create_invoice posts against a ledger id, never the name the model read.`
+    );
+  }
+  if (unmatchedLine !== -1) {
+    previewMissing.push(
+      `Line ${unmatchedLine + 1} is not matched to an item, so what it would move in stock and what tax it carries are both unknown.`
+    );
+  }
+  if (!billableLines.length) {
+    previewMissing.push("No line has both an item and a quantity above zero.");
+  }
+  if (!tradingId) {
+    previewMissing.push(
+      `No ${cfg.tradingLabel.toLowerCase()} is selected, so there is no ledger to carry the taxable value.`
+    );
+  }
+  if (gstOn && !placeOfSupply) {
+    previewMissing.push(
+      "No place of supply is selected, so the CGST/SGST versus IGST split cannot be decided."
+    );
+  }
+  if (manualProblem) previewMissing.push(manualProblem);
+
+  /**
+   * The voucher number, as far as it is honestly knowable.
+   *
+   * In MANUAL mode it is exactly what was typed — that string is what
+   * create_invoice stores. In every other mode it is the database's own
+   * next-number preview (computed by get_voucher_numbering_settings, not by
+   * this screen), which is a fact about the counter as it stands and not a
+   * reservation — hence the caveat, which the preview prints rather than
+   * hiding.
+   */
+  const previewSeries =
+    policy?.mode === "series"
+      ? (policy.series.find((s) => s.id === effectiveSeriesId) ?? policy.series[0] ?? null)
+      : (policy?.series[0] ?? null);
+
+  const numberFact =
+    policy?.mode === "manual"
+      ? manualNumber.trim() || "nothing typed yet"
+      : (previewSeries?.previewNumber ?? "assigned by the database on posting");
+
+  const numberCaveat =
+    policy?.mode === "manual"
+      ? "That string is exactly what will be stored, but whether it is FREE is only tested at the moment of posting — app_private.resolve_manual_voucher_number refuses a number already used for this voucher type at this branch in this financial year."
+      : `This is the next number in ${previewSeries?.name ?? "the default series"} for ${policy?.branchCode ?? branch?.code ?? "this branch"} in ${policy?.financialYearLabel ?? "this financial year"} as the counter stood when this screen loaded. It is not reserved: app_private.next_voucher_number draws the real one during the insert, another post can take this one first, and a date in a different financial year draws from that year's counter instead.`;
 
   /**
    * Reseeds every field the document type decides. Only the type switch needs
@@ -934,13 +1026,8 @@ export function CaptureReviewForm({
     }
 
     setBusy(true);
-    const items_payload = billableLines.map((l) => ({
-      item_id: l.itemId,
-      quantity: Number(l.quantity),
-      rate: Number(l.rate) || 0,
-      discount_percent: Number(l.discountPercent) || 0,
-      description: l.description.trim() || null,
-    }));
+    // Built once, above, and shared with the preview dialog — see itemsPayload.
+    const items_payload = itemsPayload;
 
     // The two trailing arguments migration 0865 added to create_invoice.
     // Carried in their own object because types/database.types.ts — owned by
@@ -2064,9 +2151,10 @@ export function CaptureReviewForm({
                     )}
                     {tcsLikely && (
                       <p className="mt-1 text-xs text-ink-faint">
-                        One or more items carry a TCS section. TCS under Sec 206C is computed by
-                        the database when this posts, and is deliberately not previewed here — the
-                        posted total will be a little higher than the figure above.
+                        One or more items carry a TCS section, so the posted total will be higher
+                        than the figure above: TCS under Sec 206C is collected on top of it, and
+                        is not something the document being checked would show. &ldquo;Preview the
+                        entry&rdquo; below works it out and names the ledger it lands on.
                       </p>
                     )}
                   </div>
@@ -2093,7 +2181,8 @@ export function CaptureReviewForm({
               Posting calls the same create_invoice the ordinary invoice screen uses — a{" "}
               {cfg.label.toLowerCase()} posts a <strong>{cfg.voucherType}</strong> voucher through
               it, and nothing here bypasses it. Nothing is written to your books until you press
-              the post button on step 3.
+              the post button on step 3 — including &ldquo;Preview the entry&rdquo;, which only
+              reads.
             </p>
 
             <div className="mt-3 flex flex-wrap items-center gap-3">
@@ -2120,18 +2209,80 @@ export function CaptureReviewForm({
                   Next: {step === 1 ? "items" : "whole invoice"}
                 </button>
               ) : (
-                <button
-                  type="submit"
-                  disabled={busy}
-                  className="rounded-lg bg-accent px-4 py-2 text-sm font-semibold text-accent-ink transition-colors hover:opacity-90 disabled:opacity-50"
-                >
-                  {busy ? "Posting…" : cfg.postLabel}
-                </button>
+                <>
+                  {/* The last look before the books change. Deliberately a
+                      plain type="button" beside the post button rather than a
+                      step of its own: it is a thing to consult, not another
+                      gate to pass, and it writes nothing. */}
+                  <button
+                    type="button"
+                    disabled={busy}
+                    onClick={() => setPreviewOpen(true)}
+                    className="rounded-lg border border-border-strong px-4 py-2 text-sm font-medium text-ink transition-colors hover:bg-surface-2 disabled:opacity-50"
+                  >
+                    Preview the entry
+                  </button>
+                  <button
+                    type="submit"
+                    disabled={busy}
+                    className="rounded-lg bg-accent px-4 py-2 text-sm font-semibold text-accent-ink transition-colors hover:opacity-90 disabled:opacity-50"
+                  >
+                    {busy ? "Posting…" : cfg.postLabel}
+                  </button>
+                </>
               )}
             </div>
           </>
         )}
       </form>
+
+      {/* The post preview. Reads seven things and calls no RPC — there is no
+          post button inside it, so the one create_invoice call on this screen
+          stays the one above. Rendered only for a postable document type
+          because 'other' takes an entirely different branch above and never
+          reaches the button row. */}
+      {cfg.voucherType && (
+        <PostPreview
+          open={previewOpen}
+          onClose={() => setPreviewOpen(false)}
+          companyId={companyId}
+          branchId={branchId}
+          branchLabel={branch ? `${branch.code} — ${branch.name}` : ""}
+          voucherType={cfg.voucherType}
+          voucherDate={date}
+          partyLedgerId={partyId}
+          partyLedgerName={partyLedger?.name ?? ""}
+          tradingLedgerName={allLedgers.find((l) => l.id === tradingId)?.name ?? ""}
+          godownLabel={(() => {
+            const g = godowns.find((x) => x.id === godownId);
+            return g ? `${g.code} — ${g.name}` : "";
+          })()}
+          placeOfSupply={placeOfSupply}
+          placeOfSupplyLabel={states.find((s) => s.code === placeOfSupply)?.name ?? ""}
+          lines={previewLines}
+          documentLabel={cfg.label}
+          referenceLabel={cfg.referenceLabel}
+          referenceNumber={reference.trim()}
+          challanLabel={cfg.challanLabel}
+          challanNumber={challanNumber.trim()}
+          challanDate={challanDate}
+          narration={narration}
+          numberFact={numberFact}
+          numberCaveat={numberCaveat}
+          // Only while it is still UNACKNOWLEDGED, exactly as the banner above
+          // behaves: acknowledging it is a decision, and repeating a decision
+          // back at somebody in every dialog is how a warning stops being read.
+          wrongCompany={
+            extraction?.addressed_to_this_company === false && !wrongCompanyAcknowledged
+              ? {
+                  recipientName: extraction.recipient_name ?? null,
+                  recipientGstin: extraction.recipient_gstin ?? null,
+                }
+              : null
+          }
+          missing={previewMissing}
+        />
+      )}
 
       {/* The three popups, reused as they stand. The PARTY and the ITEM one
           are prefilled; the TRADING ledger deliberately is not — it is a
