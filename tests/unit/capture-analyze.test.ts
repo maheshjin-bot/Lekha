@@ -489,3 +489,205 @@ describe("buildCapturePrompt", () => {
     expect(prompt).not.toContain("own GSTIN(s):");
   });
 });
+
+/**
+ * The party master (0995's task). 0740 read a name and a GSTIN off a
+ * counterparty and threw the rest of the letterhead away, while public.ledgers
+ * had columns waiting for nearly all of it. These cover the two things that
+ * are not obvious: that every value is normalised to what its ledgers column
+ * will actually accept (a value the table refuses is worse than none — the
+ * preparer meets a constraint error creating a master from a field they never
+ * typed), and the 0735 reconciliation, where the GSTIN, the state code and
+ * the PAN are one composite and not three independent readings.
+ *
+ * The fixture is modelled on the real SUPER ELECTRICALS invoice this feature
+ * was built against: full address with PIN, two phone numbers, an email,
+ * GSTIN, Udyam number and a bank block.
+ */
+describe("parseExtractionResponse — the party master", () => {
+  const SUPER_ELECTRICALS = {
+    document_type: "purchase_invoice",
+    vendor_name: "SUPER ELECTRICALS",
+    vendor_gstin: "24AEMPB3576L1ZA",
+    vendor_address: "Shop No 5,\n  Kadodara Char Rasta,\n  Palsana Road,",
+    vendor_city: "Surat",
+    vendor_pincode: "394327",
+    vendor_state_code: "24",
+    vendor_phone: "Mob. 98250 12345 / 0261-2345678",
+    vendor_email: "info@superelectricals.co.in",
+    vendor_udyam_number: "udyam-gj-22-0090672",
+    vendor_bank_name: "HDFC Bank Ltd - Kadodara",
+    vendor_bank_account_number: "5020 0107 748050",
+    vendor_bank_ifsc: "hdfc0003127",
+    line_items: [{ description: "Copper wire 1.5 sq mm", quantity: 10, rate: 250, amount: 2500 }],
+    confidence: "high",
+    note: "Tax invoice from a supplier; whole letterhead legible.",
+  };
+
+  it("reads the whole letterhead and normalises each field to its ledgers column", () => {
+    const r = parseExtractionResponse(JSON.stringify(SUPER_ELECTRICALS));
+
+    expect(r.vendor_name).toBe("SUPER ELECTRICALS");
+    expect(r.vendor_gstin).toBe("24AEMPB3576L1ZA");
+    // A multi-line letterhead address is flattened to the one line
+    // ledgers.address holds, with the trailing comma dropped.
+    expect(r.vendor_address).toBe("Shop No 5, Kadodara Char Rasta, Palsana Road");
+    expect(r.vendor_city).toBe("Surat");
+    expect(r.vendor_pincode).toBe("394327");
+    // Both numbers survive: an invoice printing two is normal, ledgers.phone
+    // is one column, and the caption "Mob." is not part of either number.
+    expect(r.vendor_phone).toBe("98250 12345 / 0261-2345678");
+    expect(r.vendor_email).toBe("info@superelectricals.co.in");
+    // Uppercased to app_private.is_valid_udyam's own pattern.
+    expect(r.vendor_udyam_number).toBe("UDYAM-GJ-22-0090672");
+    expect(r.vendor_bank_name).toBe("HDFC Bank Ltd - Kadodara");
+    // Spaces stripped — ledgers_bank_account_number_check (0995) is
+    // alphanumerics only.
+    expect(r.vendor_bank_account_number).toBe("50200107748050");
+    expect(r.vendor_bank_ifsc).toBe("HDFC0003127");
+    // Nothing had to be reconciled or dropped, so there is nothing to say.
+    expect(r.party_warnings).toBeUndefined();
+  });
+
+  it("derives the state code and the PAN from the GSTIN — 0735's composite", () => {
+    const r = parseExtractionResponse(JSON.stringify(SUPER_ELECTRICALS));
+    // ledgers_gstin_matches_state: state_code MUST be substr(gstin, 1, 2).
+    expect(r.vendor_state_code).toBe("24");
+    // ledgers_gstin_matches_pan: pan MUST be substr(gstin, 3, 10). The model
+    // was never asked for it separately and did not return one.
+    expect(r.vendor_pan).toBe("AEMPB3576L");
+  });
+
+  it("prefers the GSTIN's PAN over a separately printed one, and says it did", () => {
+    const r = parseExtractionResponse(
+      JSON.stringify({ ...SUPER_ELECTRICALS, vendor_pan: "AEMPB3576K" })
+    );
+    // The GSTIN's last character is a checksum over the other fourteen; a PAN
+    // on its own line has no such protection. So the GSTIN's wins — and the
+    // disagreement is reported rather than swallowed, because one of the two
+    // numbers on that paper was misread.
+    expect(r.vendor_pan).toBe("AEMPB3576L");
+    expect(r.party_warnings?.join(" ")).toContain("AEMPB3576K");
+    expect(r.party_warnings?.join(" ")).toContain("AEMPB3576L");
+  });
+
+  it("takes a separately printed PAN when there is no usable GSTIN", () => {
+    const r = parseExtractionResponse(
+      JSON.stringify({ ...SUPER_ELECTRICALS, vendor_gstin: null, vendor_pan: "aempb3576l" })
+    );
+    expect(r.vendor_pan).toBe("AEMPB3576L");
+    // Without a GSTIN the model's own state code is all there is.
+    expect(r.vendor_state_code).toBe("24");
+  });
+
+  it("keeps a mis-shaped GSTIN for the reader but derives nothing from it", () => {
+    const r = parseExtractionResponse(
+      JSON.stringify({ ...SUPER_ELECTRICALS, vendor_gstin: "24AEMPB3576L", vendor_pan: null })
+    );
+    // vendor_gstin's contract has not changed since 0740 — the review screen
+    // prints it beside the matched ledger's own number, and a human comparing
+    // a bad reading to a good one is better served than by a blank.
+    expect(r.vendor_gstin).toBe("24AEMPB3576L");
+    // But nothing is derived from a number that failed its shape.
+    expect(r.vendor_pan).toBeNull();
+    expect(r.party_warnings?.join(" ")).toContain("not the right shape");
+  });
+
+  it("drops the whole bank block when no account number anchors it", () => {
+    const r = parseExtractionResponse(
+      JSON.stringify({ ...SUPER_ELECTRICALS, vendor_bank_account_number: null })
+    );
+    // ledgers_bank_block_anchored (0995) would refuse the row outright, so a
+    // block that cannot be inserted is not carried to the insert.
+    expect(r.vendor_bank_name).toBeNull();
+    expect(r.vendor_bank_ifsc).toBeNull();
+    expect(r.party_warnings?.join(" ")).toContain("no account number");
+  });
+
+  it("drops values their ledgers column would refuse, one warning each", () => {
+    const r = parseExtractionResponse(
+      JSON.stringify({
+        ...SUPER_ELECTRICALS,
+        vendor_pincode: "094327", // ledgers_pincode_check: cannot start with 0
+        vendor_email: "info at superelectricals",
+        vendor_udyam_number: "UAM/GJ/22/0090672", // the pre-Udyam UAM form
+        vendor_bank_ifsc: "HDFC003127", // ten characters, not eleven
+        vendor_phone: "Mob.",
+      })
+    );
+    expect(r.vendor_pincode).toBeNull();
+    expect(r.vendor_email).toBeNull();
+    expect(r.vendor_udyam_number).toBeNull();
+    expect(r.vendor_bank_ifsc).toBeNull();
+    // A caption with no digits in it is not a telephone number.
+    expect(r.vendor_phone).toBeNull();
+    // The account number was still readable, so the block survives without
+    // its IFSC — 0995 deliberately does NOT require one, unlike 0800's block.
+    expect(r.vendor_bank_account_number).toBe("50200107748050");
+    // One warning each for the PIN, the email, the Udyam number and the
+    // IFSC. The phone is dropped silently on purpose: a caption with no
+    // digits in it was never a reading to lose.
+    expect(r.party_warnings?.length).toBe(4);
+  });
+
+  it("never infers an MSME category or a payment period from a Udyam number", () => {
+    const r = parseExtractionResponse(JSON.stringify(SUPER_ELECTRICALS)) as Record<string, unknown>;
+    // Sec 43B(h) bites only for MICRO and SMALL suppliers, and the Udyam
+    // number carries no class field — UDYAM-<state>-<district>-<serial>. A
+    // fabricated tier would either invent a disallowance or hide one, and the
+    // 15/45-day deadline is a fact about a written agreement, not about this
+    // bill. Neither has any business being in an extraction.
+    expect(r.msme_category).toBeUndefined();
+    expect(r.msme_payment_days).toBeUndefined();
+  });
+
+  it("gives an extraction with no party details at all the same key set", () => {
+    // A handwritten cash memo. Every key present and null, so no consumer has
+    // to tell "nothing was read" apart from "this build predates the field".
+    const r = parseExtractionResponse(
+      JSON.stringify({ line_items: [], confidence: "low", note: "Handwritten slip." })
+    ) as Record<string, unknown>;
+    for (const k of [
+      "vendor_pan",
+      "vendor_address",
+      "vendor_city",
+      "vendor_pincode",
+      "vendor_state_code",
+      "vendor_phone",
+      "vendor_email",
+      "vendor_udyam_number",
+      "vendor_bank_name",
+      "vendor_bank_account_number",
+      "vendor_bank_ifsc",
+    ]) {
+      expect(r).toHaveProperty(k);
+      expect(r[k]).toBeNull();
+    }
+    // party_warnings is absent, not empty: it means something happened.
+    expect(r.party_warnings).toBeUndefined();
+  });
+
+  it("asks the model for the whole party block, in the prompt and the schema", () => {
+    const prompt = buildCapturePrompt({ companyName: "Sharma Textiles" });
+    for (const field of [
+      "vendor_address",
+      "vendor_city",
+      "vendor_pincode",
+      "vendor_state_code",
+      "vendor_phone",
+      "vendor_email",
+      "vendor_pan",
+      "vendor_udyam_number",
+      "vendor_bank_account_number",
+      "vendor_bank_ifsc",
+    ]) {
+      expect(prompt).toContain(field);
+    }
+    // And the two instructions that stop the model manufacturing detail: it
+    // must not derive the state code from a state NAME, and must not report a
+    // category the Udyam number does not carry.
+    expect(prompt).toContain("do not look the code up from the name");
+    expect(prompt).toContain("Do NOT return an");
+    expect(prompt).toContain("the number does not carry one");
+  });
+});

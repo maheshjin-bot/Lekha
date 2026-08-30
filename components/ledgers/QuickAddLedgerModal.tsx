@@ -20,7 +20,60 @@ import { Modal } from "@/components/ui/Modal";
  * and the two fields the invoice screen itself reads back — PAN (the TCS
  * no-PAN rate) and state (the place-of-supply default). Everything else is one
  * link away on the full screen, on a ledger that already exists by then.
+ *
+ * ============================================================================
+ * `prefill`, AND WHY IT DOES NOT MAKE THIS FORM BIGGER
+ * ============================================================================
+ * OCR capture reads a whole party master off a photographed invoice — address,
+ * PIN, two phone numbers, an email, GSTIN, PAN, a Udyam number, a bank block —
+ * and until this prop existed it could only put those on COPY CHIPS beside the
+ * "+ New" button, because this modal took no initial values at all
+ * (components/capture/CaptureReviewForm.tsx's own header records that, and
+ * asks for exactly this five-line prop). A preparer was left retyping a
+ * fifteen-character GSTIN out of a popup that covers the text it came from.
+ *
+ * The reasoning above still holds for the OTHER two callers, though: the
+ * invoice and voucher screens open this popup mid-entry and must not be handed
+ * nine more boxes to look past. So the extra fields are rendered ONLY when a
+ * prefill is passed. With no prefill this component renders and behaves
+ * exactly as it did before the prop existed — same inputs, same defaults, same
+ * insert — and that is the invariant to preserve when touching this file,
+ * because a regression here breaks ordinary daily data entry, not capture.
+ *
+ * The extra fields are EDITABLE rather than a read-only "and we'll save these
+ * too" summary. They were read by a vision model off a photograph; a misread
+ * PIN or a transposed account digit has to be fixable at the moment it is
+ * noticed, which is while the popup is open and the document is on screen.
  */
+
+/**
+ * Everything a caller can hand this popup to start from. Every field optional
+ * and nullable — a caller that knows only a name passes only a name.
+ *
+ * Values are trusted to be SHAPED correctly (the capture analyzer normalises
+ * each one to what its ledgers column accepts before it gets here) but are
+ * still re-validated below, because "trusted" and "checked" are different
+ * things and this popup is the last place a person can fix either.
+ */
+export type LedgerPrefill = {
+  name?: string | null;
+  gstin?: string | null;
+  pan?: string | null;
+  /** Two-digit GST state code, as in ref_states.code. */
+  stateCode?: string | null;
+  /** One of ledgers.gst_registration_type's values. */
+  gstRegistrationType?: string | null;
+  address?: string | null;
+  city?: string | null;
+  pincode?: string | null;
+  phone?: string | null;
+  email?: string | null;
+  /** UDYAM-XX-00-0000000. Registration only — never a category. See below. */
+  udyamNumber?: string | null;
+  bankName?: string | null;
+  bankAccountNumber?: string | null;
+  bankIfsc?: string | null;
+};
 
 export type QuickAddedLedger = {
   id: string;
@@ -89,6 +142,24 @@ const CONVENTIONAL_GROUP_BY_ROLE: Record<string, string> = {
   creditor: "Sundry Creditors",
 };
 
+/*
+ * The rest of the ledgers CHECK constraints this popup can now write into,
+ * each mirrored here for the same reason PAN_PATTERN and GSTIN_PATTERN above
+ * already are: so a bad value reads as a sentence in the preparer's own terms
+ * rather than as a constraint name after a round trip. The database is still
+ * the authority — every one of these is enforced there too.
+ */
+/** ledgers_pincode_check. */
+const PINCODE_PATTERN = /^[1-9][0-9]{5}$/;
+/** ledgers_email_check. */
+const EMAIL_PATTERN = /^[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}$/;
+/** app_private.is_valid_udyam, via ledgers_udyam_number_check. */
+const UDYAM_PATTERN = /^UDYAM-[A-Z]{2}-[0-9]{2}-[0-9]{7}$/;
+/** app_private.is_valid_ifsc, via ledgers_bank_ifsc_check (0995). */
+const IFSC_PATTERN = /^[A-Z]{4}0[A-Z0-9]{6}$/;
+/** ledgers_bank_account_number_check (0995), same charset as 0800's. */
+const ACCOUNT_PATTERN = /^[A-Za-z0-9]{5,34}$/;
+
 export function QuickAddLedgerModal({
   open,
   onClose,
@@ -96,6 +167,7 @@ export function QuickAddLedgerModal({
   title,
   description,
   roles,
+  prefill,
   onCreated,
 }: {
   open: boolean;
@@ -113,6 +185,12 @@ export function QuickAddLedgerModal({
    * may legitimately hit any ledger at all.
    */
   roles?: readonly string[];
+  /**
+   * Values to start from, and the switch that reveals the extra fields — see
+   * the file header. Omit it and this popup is byte-for-byte the popup the
+   * invoice and voucher screens have always opened.
+   */
+  prefill?: LedgerPrefill;
   onCreated: (ledger: QuickAddedLedger) => void;
 }) {
   // null means "not fetched yet" — which is also what drives the loading
@@ -132,6 +210,19 @@ export function QuickAddLedgerModal({
   const [stateCode, setStateCode] = useState("");
   const [gstStatus, setGstStatus] = useState("");
   const [gstin, setGstin] = useState("");
+  // The prefill-only fields. Declared unconditionally (hooks must be), but
+  // only ever rendered, validated or written when `prefill` was passed, so
+  // they cost the invoice and voucher screens nothing but eleven empty
+  // strings.
+  const [address, setAddress] = useState("");
+  const [city, setCity] = useState("");
+  const [pincode, setPincode] = useState("");
+  const [phone, setPhone] = useState("");
+  const [email, setEmail] = useState("");
+  const [udyam, setUdyam] = useState("");
+  const [bankName, setBankName] = useState("");
+  const [bankAccount, setBankAccount] = useState("");
+  const [bankIfsc, setBankIfsc] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -160,6 +251,70 @@ export function QuickAddLedgerModal({
       cancelled = true;
     };
   }, [open, companyId]);
+
+  /*
+   * Seeding from the prefill — during render, not in an effect, and keyed on
+   * the CONTENT of the prefill rather than on its identity. Both of those are
+   * deliberate.
+   *
+   * NOT AN EFFECT: this is React's own "adjusting state when a prop changes"
+   * pattern (react.dev, You Might Not Need an Effect). Seeding in an effect
+   * would paint the popup empty for one frame and then fill it, and the
+   * project's react-hooks/set-state-in-effect rule refuses it outright.
+   * Setting state during render of THIS component is the supported form:
+   * React discards the in-progress render and re-runs it before committing
+   * anything to the DOM.
+   *
+   * KEYED ON CONTENT: callers build this object inline from an extraction — a
+   * fresh object every render — so comparing identities would reseed on every
+   * keystroke in the parent form and stamp the preparer's corrections back to
+   * the model's readings. A JSON string of the values reseeds only when the
+   * values themselves change.
+   *
+   * `open` is folded into the key so that CLOSING the popup clears the seed
+   * marker and a second open starts from the prefill again; reset() has
+   * emptied the fields by then, and a popup that opened blank the second time
+   * would look broken.
+   *
+   * With no prefill activeKey is "" and the only thing that ever happens here
+   * is clearing a marker that is already clear — which is the whole
+   * no-prefill guarantee.
+   */
+  const prefillKey = prefill ? JSON.stringify(prefill) : "";
+  const activeKey = open ? prefillKey : "";
+  const [seededKey, setSeededKey] = useState("");
+  if (activeKey !== seededKey) {
+    setSeededKey(activeKey);
+    if (activeKey) seedFromPrefill(JSON.parse(activeKey) as LedgerPrefill);
+  }
+
+  function seedFromPrefill(p: LedgerPrefill) {
+    const g = (p.gstin ?? "").toUpperCase().slice(0, 15);
+
+    setName(p.name ?? "");
+    setGstin(g);
+    // State and PAN follow the GSTIN when there is one, exactly as typing it
+    // by hand does below — that is what keeps ledgers_gstin_matches_state and
+    // ledgers_gstin_matches_pan (0735) satisfied without the caller having to
+    // know they exist. The caller's own values are used only where the GSTIN
+    // cannot supply one.
+    setStateCode(stateFromGstin(g) || (p.stateCode ?? ""));
+    setPan(panFromGstin(g) || (p.pan ?? "").toUpperCase());
+    // A fifteen-character GSTIN on a document IS a claim to be registered, and
+    // "regular" is what that means in all but the composition/SEZ/UIN corners
+    // the dropdown two lines away offers. Preselecting it beats leaving the
+    // strongest fact on the page as "Not stated"; the caller may override.
+    setGstStatus(p.gstRegistrationType ?? (g ? "regular" : ""));
+    setAddress(p.address ?? "");
+    setCity(p.city ?? "");
+    setPincode(p.pincode ?? "");
+    setPhone(p.phone ?? "");
+    setEmail(p.email ?? "");
+    setUdyam((p.udyamNumber ?? "").toUpperCase());
+    setBankName(p.bankName ?? "");
+    setBankAccount(p.bankAccountNumber ?? "");
+    setBankIfsc((p.bankIfsc ?? "").toUpperCase());
+  }
 
   // A value, not an array identity. Callers naturally write roles={["debtor"]}
   // inline, which is a fresh array every render, so anything memoised on the
@@ -225,6 +380,15 @@ export function QuickAddLedgerModal({
     setStateCode("");
     setGstStatus("");
     setGstin("");
+    setAddress("");
+    setCity("");
+    setPincode("");
+    setPhone("");
+    setEmail("");
+    setUdyam("");
+    setBankName("");
+    setBankAccount("");
+    setBankIfsc("");
     setError(null);
   }
 
@@ -247,6 +411,37 @@ export function QuickAddLedgerModal({
         "That doesn't look like a GSTIN (15 characters: 2-digit state, 10-character PAN, then 3 more)."
       );
 
+    /*
+     * The prefill-only fields. Every check here is a ledgers CHECK constraint
+     * said in words — and every one of them is skipped entirely when there is
+     * no prefill, because then the inputs were never rendered and the state
+     * is empty anyway. Stated as an explicit guard rather than relying on
+     * that, so the no-prefill path is provably unchanged.
+     */
+    if (prefill) {
+      if (pincode.trim() && !PINCODE_PATTERN.test(pincode.trim()))
+        return setError("A PIN code is six digits and cannot start with a zero.");
+      if (email.trim() && !EMAIL_PATTERN.test(email.trim()))
+        return setError("That doesn't look like an email address.");
+      if (udyam.trim() && !UDYAM_PATTERN.test(udyam.trim().toUpperCase()))
+        return setError(
+          "A Udyam number reads UDYAM-XX-00-0000000 — two letters for the state, two digits for the district, then seven digits."
+        );
+      if (bankAccount.trim() && !ACCOUNT_PATTERN.test(bankAccount.trim()))
+        return setError("A bank account number is 5 to 34 letters or digits, with no spaces.");
+      if (bankIfsc.trim() && !IFSC_PATTERN.test(bankIfsc.trim().toUpperCase()))
+        return setError(
+          "An IFSC is 11 characters: four letters, then a zero, then six more (e.g. HDFC0003127)."
+        );
+      // ledgers_bank_block_anchored (0995) — the account number is what the
+      // rest of the bank block hangs on, so say that rather than let the
+      // constraint name come back from Postgres.
+      if (!bankAccount.trim() && (bankName.trim() || bankIfsc.trim()))
+        return setError(
+          "A bank name or IFSC can only be saved together with the account number they belong to — add the account number, or clear both."
+        );
+    }
+
     setBusy(true);
     setError(null);
 
@@ -262,6 +457,39 @@ export function QuickAddLedgerModal({
         state_code: stateCode || null,
         gstin: gstin.trim() || null,
         gst_registration_type: gstStatus || null,
+        // The prefill block. Written as an explicit spread of an empty object
+        // when there is no prefill, so the insert payload of the invoice and
+        // voucher screens is EXACTLY the payload it was before this prop
+        // existed — not the same payload with eleven nulls added, which would
+        // overwrite nothing today but is a different statement.
+        ...(prefill
+          ? {
+              address: address.trim() || null,
+              city: city.trim() || null,
+              pincode: pincode.trim() || null,
+              phone: phone.trim() || null,
+              email: email.trim() || null,
+              // Registration only. No msme_category and no msme_payment_days
+              // are written from here, ever: a Udyam number proves a supplier
+              // is on the MSME register and says nothing about whether it is
+              // micro, small or medium — and Sec 43B(h) bites only for micro
+              // and small. The tier is set by a human on the ledgers screen;
+              // the capture review screen says so in those words. See 0995.
+              udyam_number: udyam.trim().toUpperCase() || null,
+              // 0995's three columns are newer than types/database.types.ts,
+              // which this task does not regenerate — the established hatch.
+              // The bank name and IFSC are forced to null when there is no
+              // account number, mirroring ledgers_bank_block_anchored: submit
+              // has already refused that combination, so this only guarantees
+              // the payload can never be the shape the constraint rejects.
+              ...({
+                bank_name: bankAccount.trim() ? bankName.trim() || null : null,
+                bank_account_number: bankAccount.trim() || null,
+                bank_ifsc: bankAccount.trim() ? bankIfsc.trim().toUpperCase() || null : null,
+                // eslint-disable-next-line @typescript-eslint/no-explicit-any -- ledgers.bank_* is new (0995), not yet in generated types
+              } as any),
+            }
+          : {}),
       })
       // Reading the row straight back is what makes the local merge possible:
       // the caller cannot select an id it has not been told about, and
@@ -277,7 +505,11 @@ export function QuickAddLedgerModal({
           ? `This company already has a ledger called "${trimmed}".`
           : insertError?.message?.includes("ledgers_gstin_check")
             ? "That GSTIN failed its check digit — re-read the last character from the certificate."
-            : insertError?.message ?? "The ledger could not be created."
+            : insertError?.message?.includes("ledgers_bank_block_anchored")
+              ? "A bank name or IFSC can only be saved together with the account number they belong to."
+              : insertError?.message?.includes("ledgers_state_code_fkey")
+                ? "That state code is not one the GST system issues — pick the state from the list."
+                : insertError?.message ?? "The ledger could not be created."
       );
       setBusy(false);
       return;
@@ -513,6 +745,158 @@ export function QuickAddLedgerModal({
             </span>
           </label>
         </div>
+
+        {/*
+          Everything below is rendered ONLY for a caller that passed a prefill.
+          The invoice and voucher screens do not, and see the popup they have
+          always seen. See the file header.
+        */}
+        {prefill && (
+          <div className="flex flex-col gap-3 rounded-lg border border-border bg-surface-2/50 p-3">
+            <div>
+              <p className="text-sm font-medium text-ink">Also read off the document</p>
+              <p className="mt-0.5 text-xs text-ink-faint">
+                Saved onto this party as well. Correct anything the reader got wrong — the
+                document is still on screen behind this popup, and this is the last easy
+                moment to fix it.
+              </p>
+            </div>
+
+            <label className="flex flex-col gap-1.5">
+              <span className="text-sm font-medium">Address</span>
+              <input
+                value={address}
+                onChange={(e) => setAddress(e.target.value)}
+                className={field}
+              />
+            </label>
+
+            <div className="grid gap-3 sm:grid-cols-2">
+              <label className="flex flex-col gap-1.5">
+                <span className="text-sm font-medium">Town / city</span>
+                <input value={city} onChange={(e) => setCity(e.target.value)} className={field} />
+              </label>
+              <label className="flex flex-col gap-1.5">
+                <span className="text-sm font-medium">PIN code</span>
+                <input
+                  value={pincode}
+                  onChange={(e) => setPincode(e.target.value.replace(/[^0-9]/g, "").slice(0, 6))}
+                  inputMode="numeric"
+                  maxLength={6}
+                  className={field + " font-mono"}
+                />
+                {pincode.length > 0 && !PINCODE_PATTERN.test(pincode) && (
+                  <span className="text-xs text-warning">
+                    Six digits, and it cannot start with a zero.
+                  </span>
+                )}
+              </label>
+            </div>
+
+            <div className="grid gap-3 sm:grid-cols-2">
+              <label className="flex flex-col gap-1.5">
+                <span className="text-sm font-medium">Phone</span>
+                <input value={phone} onChange={(e) => setPhone(e.target.value)} className={field} />
+              </label>
+              <label className="flex flex-col gap-1.5">
+                <span className="text-sm font-medium">Email</span>
+                <input
+                  value={email}
+                  onChange={(e) => setEmail(e.target.value)}
+                  inputMode="email"
+                  className={field}
+                />
+                {email.length > 0 && !EMAIL_PATTERN.test(email) && (
+                  <span className="text-xs text-warning">That is not a usable address.</span>
+                )}
+              </label>
+            </div>
+
+            <label className="flex flex-col gap-1.5">
+              <span className="text-sm font-medium">
+                Udyam / MSME registration{" "}
+                <span className="font-normal text-ink-faint">optional</span>
+              </span>
+              <input
+                value={udyam}
+                onChange={(e) => setUdyam(e.target.value.toUpperCase())}
+                placeholder="UDYAM-GJ-22-0090672"
+                maxLength={22}
+                className={field + " font-mono uppercase"}
+              />
+              {udyam.length > 0 && !UDYAM_PATTERN.test(udyam) ? (
+                <span className="text-xs text-warning">
+                  A Udyam number reads UDYAM-XX-00-0000000.
+                </span>
+              ) : udyam.length > 0 ? (
+                // The honest statement of what this number does and does not
+                // buy. Sec 43B(h) disallows a deduction only for a MICRO or
+                // SMALL supplier; the Udyam number proves registration and
+                // carries no tier, and the MSME dues report filters on
+                // msme_category after selecting on udyam_number — so without
+                // the tier this supplier is on file and out of that report.
+                <span className="text-xs text-ink-faint">
+                  This proves they are on the MSME register. It does{" "}
+                  <span className="text-ink-soft">not</span> say whether they are micro,
+                  small or medium, and the invoice does not either — so set the category on
+                  the ledgers screen. Until it is set, this supplier will not appear in the
+                  Sec 43B(h) MSME dues report, which covers micro and small only.
+                </span>
+              ) : (
+                <span className="text-xs text-ink-faint">
+                  Printed on the invoice if the supplier is MSME-registered.
+                </span>
+              )}
+            </label>
+
+            <div className="flex flex-col gap-1.5">
+              <span className="text-sm font-medium">
+                Their bank <span className="font-normal text-ink-faint">optional</span>
+              </span>
+              <input
+                value={bankName}
+                onChange={(e) => setBankName(e.target.value)}
+                placeholder="Bank and branch"
+                className={field}
+              />
+              <div className="grid gap-3 sm:grid-cols-2">
+                <div className="flex flex-col gap-1.5">
+                  <input
+                    value={bankAccount}
+                    onChange={(e) => setBankAccount(e.target.value.replace(/[\s-]/g, ""))}
+                    placeholder="Account number"
+                    maxLength={34}
+                    className={field + " font-mono"}
+                  />
+                  {bankAccount.length > 0 && !ACCOUNT_PATTERN.test(bankAccount) && (
+                    <span className="text-xs text-warning">
+                      5 to 34 letters or digits, no spaces.
+                    </span>
+                  )}
+                </div>
+                <div className="flex flex-col gap-1.5">
+                  <input
+                    value={bankIfsc}
+                    onChange={(e) => setBankIfsc(e.target.value.toUpperCase().slice(0, 11))}
+                    placeholder="IFSC"
+                    maxLength={11}
+                    className={field + " font-mono uppercase"}
+                  />
+                  {bankIfsc.length > 0 && !IFSC_PATTERN.test(bankIfsc) && (
+                    <span className="text-xs text-warning">
+                      Eleven characters, e.g. HDFC0003127.
+                    </span>
+                  )}
+                </div>
+              </div>
+              <span className="text-xs text-ink-faint">
+                {!bankAccount.trim() && (bankName.trim() || bankIfsc.trim())
+                  ? "The account number is what the rest of this hangs on — add it, or clear the bank and IFSC."
+                  : "Kept on the party record. LEKHA does not pay anybody: nothing here initiates a transfer."}
+              </span>
+            </div>
+          </div>
+        )}
 
         {error && (
           <p className="rounded-md bg-error-soft px-3 py-2 text-sm text-error">

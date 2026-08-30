@@ -5,7 +5,7 @@ import { useRouter } from "next/navigation";
 import { toast } from "sonner";
 import { createClient } from "@/lib/supabase/client";
 import { formatINR, sumPaise, toPaise } from "@/lib/utils/currency";
-import { fuzzyMatchByName } from "@/lib/capture/fuzzyMatch";
+import { fuzzyMatchByName, matchParty, type PartyMatch } from "@/lib/capture/fuzzyMatch";
 import type {
   CaptureDocumentType,
   CaptureExtraction,
@@ -13,6 +13,7 @@ import type {
 } from "@/lib/capture/analyze";
 import {
   QuickAddLedgerModal,
+  type LedgerPrefill,
   type QuickAddedLedger,
 } from "@/components/ledgers/QuickAddLedgerModal";
 import {
@@ -118,17 +119,42 @@ import {
  * document type while pointing at a voucher of the other.
  *
  * ============================================================================
- * INLINE MASTER CREATION IS REUSED, NOT REBUILT — AND CANNOT BE PREFILLED
+ * IDENTIFYING THE PARTY: THREE SIGNALS, NOT ONE
  * ============================================================================
- * QuickAddLedgerModal and QuickAddItemModal are used exactly as they stand.
- * Neither takes an initial-value prop — QuickAddLedgerModal's props are
- * (open, onClose, companyId, title, description, roles, onCreated) and
- * QuickAddItemModal's are (open, onClose, companyId, gstOn, requireStockItem,
- * onCreated) — and both are owned by another author, so this screen does not
- * add one. What it does instead is put every value the model read on a
- * one-click COPY chip immediately beside the "+ New" button, because the popup
- * covers the text it was read from the moment it opens. See the final report:
- * a five-line prop addition on those two files is the real fix.
+ * 0740 matched the party BY NAME ONLY, which is the weakest thing on an
+ * invoice — while the same invoice prints a GSTIN, which identifies exactly
+ * one registration of one legal entity and is checksummed. lib/capture/
+ * fuzzyMatch.ts's matchParty now tries GSTIN, then PAN, then the name, and
+ * says WHICH one hit; this screen treats the three differently, because they
+ * do not deserve the same confidence:
+ *
+ *   gstin — selected outright. The same GSTIN is the same registration.
+ *   name  — selected outright, as it always was, and labelled as a name match
+ *           so the reader knows how thin the evidence is.
+ *   pan   — NEVER selected automatically. A shared PAN means the same
+ *           BUSINESS with (almost always) a different state registration, and
+ *           silently posting a Gujarat bill against a Maharashtra ledger would
+ *           put the wrong place of supply on the voucher and the wrong GSTIN
+ *           in GSTR-1. It is offered instead, with that said in words, and one
+ *           click accepts it.
+ *
+ * A GSTIN that matches a ledger the document type CANNOT use as a party (the
+ * supplier already exists as a customer) is reported too — it is the answer to
+ * "why can I not find them in the list", and this schema genuinely needs a
+ * second ledger for the other side.
+ *
+ * ============================================================================
+ * INLINE MASTER CREATION IS REUSED, NOT REBUILT — AND IS NOW PREFILLED
+ * ============================================================================
+ * QuickAddLedgerModal and QuickAddItemModal are still used as they stand.
+ * QuickAddLedgerModal has since grown the optional `prefill` prop this file's
+ * header used to ask for, so the whole party master the model read — name,
+ * GSTIN, PAN, address, town, PIN, phone, email, Udyam number and their bank
+ * block — is handed straight to the popup instead of being retyped out of it.
+ * The COPY chips stay: they are still the only way to get a value the popup is
+ * not asking for into the field the preparer wants it in, and they still work
+ * when nothing matched. QuickAddItemModal takes no such prop and its chips are
+ * unchanged.
  *
  * HSN is the one extracted value that must not be lost that way, because it
  * belongs on the ITEM MASTER (public.items.hsn_sac) and voucher_items only
@@ -269,6 +295,62 @@ function ReadChip({ label, value }: { label: string; value: string }) {
   );
 }
 
+/**
+ * What the document says about who it is with, in matchParty's own three
+ * terms. `hint` is what the person holding the phone typed into "who is this
+ * from?" — the only identification a draft has when OCR read nothing at all,
+ * and a name, never a number.
+ */
+function partyReading(ex: CaptureExtraction | null, hint: string | null) {
+  return {
+    name: ex?.vendor_name ?? hint,
+    gstin: ex?.vendor_gstin ?? null,
+    pan: ex?.vendor_pan ?? null,
+  };
+}
+
+/**
+ * A PAN match is a suggestion, never a selection — see the file header. Every
+ * other signal preselects the party, which is 0740's behaviour for the name
+ * and the new, stronger behaviour for the GSTIN.
+ */
+function autoSelects(m: PartyMatch<Ledger> | null): boolean {
+  return m !== null && m.signal !== "pan";
+}
+
+/**
+ * The whole party master the model read, in QuickAddLedgerModal's own shape.
+ *
+ * Passed whenever this screen opens the party popup, even when the extraction
+ * is empty: on THIS screen the document is on the display behind the popup, so
+ * an empty address box is somewhere to type what is visibly printed, not
+ * clutter. The invoice and voucher screens pass no prefill at all and never
+ * see these fields — see QuickAddLedgerModal's header.
+ */
+function partyPrefill(ex: CaptureExtraction | null, hint: string | null): LedgerPrefill {
+  return {
+    name: ex?.vendor_name ?? hint ?? "",
+    gstin: ex?.vendor_gstin ?? null,
+    pan: ex?.vendor_pan ?? null,
+    stateCode: ex?.vendor_state_code ?? null,
+    address: ex?.vendor_address ?? null,
+    city: ex?.vendor_city ?? null,
+    pincode: ex?.vendor_pincode ?? null,
+    phone: ex?.vendor_phone ?? null,
+    email: ex?.vendor_email ?? null,
+    udyamNumber: ex?.vendor_udyam_number ?? null,
+    bankName: ex?.vendor_bank_name ?? null,
+    bankAccountNumber: ex?.vendor_bank_account_number ?? null,
+    bankIfsc: ex?.vendor_bank_ifsc ?? null,
+  };
+}
+
+/** Uppercase, separators stripped — the same comparison matchParty makes. */
+function sameCode(a: string | null | undefined, b: string | null | undefined): boolean {
+  if (!a || !b) return false;
+  return a.replace(/[\s.-]/g, "").toUpperCase() === b.replace(/[\s.-]/g, "").toUpperCase();
+}
+
 export function CaptureReviewForm({
   companyId,
   draft,
@@ -344,14 +426,11 @@ export function CaptureReviewForm({
   const [date, setDate] = useState(() => extraction?.bill_date ?? todayLocal());
   const [partyId, setPartyId] = useState(() => {
     const conf = docConfig(preselectDocType(draft, extraction));
-    return (
-      fuzzyMatchByName(
-        // The name the model read, or — when nothing was read — what the
-        // person holding the phone typed into "who is this from?".
-        extraction?.vendor_name ?? draft.vendorHint,
-        ledgers.filter((l) => conf.partyRoles.includes(l.ledger_role))
-      )?.id ?? ""
+    const m = matchParty(
+      partyReading(extraction, draft.vendorHint),
+      ledgers.filter((l) => conf.partyRoles.includes(l.ledger_role))
     );
+    return autoSelects(m) ? m!.party.id : "";
   });
   const [placeOfSupplyTouched, setPlaceOfSupplyTouched] = useState(false);
   const [placeOfSupply, setPlaceOfSupply] = useState("");
@@ -395,7 +474,32 @@ export function CaptureReviewForm({
   // Not memoized, for the same reason as `comparison` below: partyLedgers is
   // rebuilt every render by design, so its identity is not a dependency worth
   // declaring, and the match is a linear scan over one company's ledgers.
-  const partyMatch = fuzzyMatchByName(extraction?.vendor_name, partyLedgers);
+  //
+  // The vendor HINT is deliberately not fed in here, unlike the initial
+  // selection above: this value drives sentences that say what the DOCUMENT
+  // reads, and what somebody typed on a phone is not what the document reads.
+  const partyMatch = matchParty(
+    { name: extraction?.vendor_name, gstin: extraction?.vendor_gstin, pan: extraction?.vendor_pan },
+    partyLedgers
+  );
+
+  /**
+   * A ledger carrying the document's GSTIN that this document type cannot use
+   * as its party — the supplier already on file as a customer, or the reverse.
+   *
+   * Not a duplicate and not offerable: the party dropdown filters on the
+   * ledger's GROUP role, and one ledger sits in one group, so a business that
+   * both buys and sells genuinely needs two ledgers in this schema. Reported
+   * because it is the answer to "we deal with them, why are they not in the
+   * list" — which otherwise ends in a second ledger created under a
+   * mangled name.
+   */
+  const crossRoleGstinLedger =
+    extraction?.vendor_gstin
+      ? (allLedgers.find(
+          (l) => !cfg.partyRoles.includes(l.ledger_role) && sameCode(l.gstin, extraction.vendor_gstin)
+        ) ?? null)
+      : null;
 
   function selectParty(id: string) {
     setPartyId(id);
@@ -496,7 +600,11 @@ export function CaptureReviewForm({
     const conf = docConfig(nextType);
     const sale = conf.voucherType === "sales";
     const candidates = allLedgers.filter((l) => conf.partyRoles.includes(l.ledger_role));
-    const matchedParty = fuzzyMatchByName(ex?.vendor_name ?? draft.vendorHint, candidates);
+    // Same three signals and the same "a PAN match is offered, not taken" rule
+    // as the initial selection — switching the document type must not quietly
+    // apply a weaker rule than opening the screen did.
+    const matched = matchParty(partyReading(ex, draft.vendorHint), candidates);
+    const matchedParty = autoSelects(matched) ? matched!.party : null;
 
     setDate(ex?.bill_date ?? todayLocal());
     setPlaceOfSupplyTouched(false);
@@ -937,10 +1045,69 @@ export function CaptureReviewForm({
                     {extraction?.vendor_gstin && (
                       <ReadChip label="GSTIN" value={extraction.vendor_gstin} />
                     )}
+                    {/* The rest of the party master. Every one of these has a
+                        column on public.ledgers waiting for it, and every one
+                        of them is handed to the "+ New" popup as a prefill —
+                        the chips are here so a value can also be pasted
+                        somewhere the popup does not ask for it. */}
+                    {extraction?.vendor_pan && <ReadChip label="PAN" value={extraction.vendor_pan} />}
+                    {extraction?.vendor_address && (
+                      <ReadChip label="Address" value={extraction.vendor_address} />
+                    )}
+                    {extraction?.vendor_city && <ReadChip label="Town" value={extraction.vendor_city} />}
+                    {extraction?.vendor_pincode && (
+                      <ReadChip label="PIN" value={extraction.vendor_pincode} />
+                    )}
+                    {extraction?.vendor_phone && (
+                      <ReadChip label="Phone" value={extraction.vendor_phone} />
+                    )}
+                    {extraction?.vendor_email && (
+                      <ReadChip label="Email" value={extraction.vendor_email} />
+                    )}
+                    {extraction?.vendor_udyam_number && (
+                      <ReadChip label="Udyam" value={extraction.vendor_udyam_number} />
+                    )}
+                    {extraction?.vendor_bank_account_number && (
+                      <ReadChip label="A/c" value={extraction.vendor_bank_account_number} />
+                    )}
+                    {extraction?.vendor_bank_ifsc && (
+                      <ReadChip label="IFSC" value={extraction.vendor_bank_ifsc} />
+                    )}
+                    {extraction?.vendor_bank_name && (
+                      <ReadChip label="Bank" value={extraction.vendor_bank_name} />
+                    )}
                   </div>
+
+                  {/* What the reader had to reconcile or throw away. Machine
+                      warnings, not the model's own note — a PAN that
+                      disagrees with the PAN inside the GSTIN is exactly the
+                      thing to look at before a master record is created. */}
+                  {extraction?.party_warnings?.length ? (
+                    <ul className="mt-2 flex flex-col gap-1">
+                      {extraction.party_warnings.map((w) => (
+                        <li key={w} className="text-xs text-warning">
+                          {w}
+                        </li>
+                      ))}
+                    </ul>
+                  ) : null}
+
+                  {extraction?.vendor_udyam_number && (
+                    <p className="mt-2 text-xs text-ink-faint">
+                      The Udyam number proves this supplier is on the MSME register. It does{" "}
+                      <span className="text-ink-soft">not</span> say whether they are micro,
+                      small or medium — the number carries no category and neither does the
+                      invoice. Sec 43B(h) covers micro and small only, so until somebody sets
+                      the category on the ledgers screen this supplier stays out of the MSME
+                      dues report. The payment deadline is left unset too: 45 days needs a
+                      written agreement, 15 without one, and that is a fact about a contract,
+                      not about this bill.
+                    </p>
+                  )}
+
                   <p className="mt-2 text-xs text-ink-faint">
-                    Copy either one straight into the &ldquo;+ New&rdquo; popup — it covers this
-                    panel once it opens.
+                    All of this is carried into the &ldquo;+ New&rdquo; popup already — the chips
+                    are for pasting a value somewhere else.
                   </p>
                 </div>
 
@@ -969,24 +1136,90 @@ export function CaptureReviewForm({
                     ))}
                   </select>
 
-                  {extraction?.vendor_name && (
-                    <p className="text-xs text-ink-faint">
-                      {partyMatch && partyMatch.id === partyId ? (
+                  {/*
+                    WHICH SIGNAL MATCHED, said out loud. "Same GSTIN" and
+                    "similar name" are not the same claim and must not read
+                    like one: the first is the GST Network's own identifier for
+                    one registration, the second is a token-overlap heuristic
+                    over a shop name that half a district shares.
+                  */}
+                  {partyMatch && partyMatch.party.id === partyId && (
+                    <p
+                      className={
+                        "text-xs " +
+                        (partyMatch.signal === "gstin" ? "text-success" : "text-ink-faint")
+                      }
+                    >
+                      {partyMatch.signal === "gstin" ? (
                         <>
-                          Matched <span className="text-ink-soft">{partyMatch.name}</span> from the
-                          document&rsquo;s &ldquo;{extraction.vendor_name}&rdquo; — change it above if
-                          that is the wrong one.
-                        </>
-                      ) : partyId ? (
-                        <>
-                          Chosen by hand. The document reads &ldquo;{extraction.vendor_name}&rdquo;.
+                          Same GSTIN — this is{" "}
+                          <span className="font-medium">{partyMatch.party.name}</span>, already on
+                          file. A GSTIN identifies one registration of one business, so there is
+                          nothing to create here.
                         </>
                       ) : (
                         <>
+                          Matched <span className="text-ink-soft">{partyMatch.party.name}</span> by
+                          NAME only, from the document&rsquo;s &ldquo;
+                          {extraction?.vendor_name ?? draft.vendorHint}&rdquo; — the weakest signal
+                          on the page. Check it is the right one.
+                        </>
+                      )}
+                    </p>
+                  )}
+
+                  {/*
+                    A PAN match. Never selected for the preparer — see the file
+                    header — because two registrations of one business are two
+                    ledgers here, and picking the wrong one puts the wrong
+                    place of supply on the voucher and the wrong GSTIN in
+                    GSTR-1. Offered with the reason, and one click accepts it.
+                  */}
+                  {partyMatch && partyMatch.signal === "pan" && partyMatch.party.id !== partyId && (
+                    <div className="rounded-lg border border-warning/40 bg-warning-soft/40 px-3 py-2">
+                      <p className="text-xs text-ink-soft">
+                        <span className="font-medium text-ink">{partyMatch.party.name}</span> is on
+                        file under the same PAN. That is the same legal business — but{" "}
+                        {partyMatch.party.gstin && extraction?.vendor_gstin
+                          ? `a different GST registration (${partyMatch.party.gstin} on file, ${extraction.vendor_gstin} on this document), which normally means a different state.`
+                          : "probably a different state registration."}{" "}
+                        Use it only if this bill really belongs to that registration; otherwise
+                        create the second one with &ldquo;+ New&rdquo;.
+                      </p>
+                      <button
+                        type="button"
+                        onClick={() => selectParty(partyMatch.party.id)}
+                        className="mt-1.5 text-xs font-medium text-accent underline underline-offset-4"
+                      >
+                        Use {partyMatch.party.name}
+                      </button>
+                    </div>
+                  )}
+
+                  {crossRoleGstinLedger && (
+                    <p className="text-xs text-ink-faint">
+                      This GSTIN is already on file as{" "}
+                      <span className="text-ink-soft">{crossRoleGstinLedger.name}</span>, but under
+                      a group this document cannot be posted against — so it is not in the list
+                      above. A business you both buy from and sell to needs one ledger on each
+                      side; create the {cfg.partyLabel.toLowerCase()} one with &ldquo;+ New&rdquo;.
+                    </p>
+                  )}
+
+                  {(extraction?.vendor_name || draft.vendorHint) && (
+                    <p className="text-xs text-ink-faint">
+                      {partyMatch && partyMatch.party.id === partyId ? null : partyId ? (
+                        <>
+                          Chosen by hand. The document reads &ldquo;
+                          {extraction?.vendor_name ?? draft.vendorHint}&rdquo;.
+                        </>
+                      ) : partyMatch ? null : (
+                        <>
                           No {cfg.partyLabel.toLowerCase()} on file matches &ldquo;
-                          {extraction.vendor_name}&rdquo;. Create one with &ldquo;+ New&rdquo;, or
-                          pick an existing one — posting needs a real ledger id, so the name on its
-                          own can never be sent.
+                          {extraction?.vendor_name ?? draft.vendorHint}&rdquo; by GSTIN, PAN or
+                          name. Create one with &ldquo;+ New&rdquo; — everything read off the
+                          document is already filled in — or pick an existing one. Posting needs a
+                          real ledger id, so the name on its own can never be sent.
                         </>
                       )}
                     </p>
@@ -1571,8 +1804,10 @@ export function CaptureReviewForm({
         )}
       </form>
 
-      {/* The three popups, reused exactly as they stand — see the file header
-          on why neither takes the extracted values as a starting point. */}
+      {/* The three popups, reused as they stand. Only the PARTY one is
+          prefilled: the trading ledger is a purchase/expense or income
+          account of ours and nothing on the counterparty's letterhead
+          belongs on it, and QuickAddItemModal takes no prefill prop. */}
       <QuickAddLedgerModal
         open={partyModalOpen}
         onClose={() => setPartyModalOpen(false)}
@@ -1580,6 +1815,7 @@ export function CaptureReviewForm({
         title={`New ${cfg.partyLabel.toLowerCase()}`}
         description={cfg.quickAddDescription}
         roles={[cfg.quickAddRole]}
+        prefill={partyPrefill(extraction, draft.vendorHint)}
         onCreated={(created: QuickAddedLedger) => {
           setAddedLedgers((prev) => [
             ...prev,

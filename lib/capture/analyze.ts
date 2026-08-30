@@ -88,6 +88,75 @@ export type CaptureExtraction = {
   vendor_name: string | null;
   /** The counterparty's GSTIN — see vendor_name on whose it is. */
   vendor_gstin: string | null;
+
+  /* ---------------------------------------------------------------------- */
+  /* The rest of the party master, added by 0995's task                      */
+  /* ---------------------------------------------------------------------- */
+  /*
+   * 0740 read exactly two things about the counterparty — vendor_name and
+   * vendor_gstin — and discarded the rest of the page. A real Indian invoice
+   * prints a whole party master: postal address with PIN, telephone, email,
+   * PAN, UDYAM registration, and the supplier's bank block. public.ledgers
+   * has had a column for nearly all of it since 0006 (0995 added only the
+   * three bank ones), so what follows is not new storage, it is the reading
+   * that was missing.
+   *
+   * EVERY FIELD HERE IS OPTIONAL AND NULLABLE, and that is a compatibility
+   * contract, not carelessness: extracted_json rows stored before this change
+   * carry none of these keys, and both the review screen and the WhatsApp
+   * confirm screen must keep rendering them unchanged.
+   *
+   * The vendor_ prefix is kept for the same reason vendor_name itself was
+   * never renamed (see its own comment): read the prefix as "counterparty".
+   * A nested `party: {...}` block was considered and rejected — it would have
+   * left vendor_name and vendor_gstin outside it or duplicated inside it, and
+   * a shape where the same fact can live in two places is exactly what a
+   * stored-JSON contract must not have.
+   *
+   * Each field is normalised by parseExtractionResponse to what its
+   * public.ledgers column will actually accept, so anything surviving here is
+   * insertable. See normalizeParty for the 0735 reconciliation, which is the
+   * part that is not merely a regex.
+   */
+  /** PAN. Reconciled against vendor_gstin — see normalizeParty. */
+  vendor_pan?: string | null;
+  /** Street address as printed, newlines collapsed. Maps to ledgers.address. */
+  vendor_address?: string | null;
+  /** Town/city only, never the state. Maps to ledgers.city. */
+  vendor_city?: string | null;
+  /** Six digits, first non-zero — ledgers_pincode_check's own rule. */
+  vendor_pincode?: string | null;
+  /** Two-digit GST state code. Derived from the GSTIN whenever there is one. */
+  vendor_state_code?: string | null;
+  /** Telephone(s) as printed; an invoice routinely prints two. */
+  vendor_phone?: string | null;
+  /** Must satisfy ledgers_email_check or it is dropped. */
+  vendor_email?: string | null;
+  /**
+   * UDYAM registration number, UDYAM-XX-00-0000000 (app_private.is_valid_udyam).
+   * Proof of MSMED registration and NOT of the micro/small/medium tier — the
+   * number has no class field. Nothing in this module infers a tier or a
+   * payment period from it; see the 0995 header, section 3.
+   */
+  vendor_udyam_number?: string | null;
+  /** Bank and branch as printed. 0995: only storable with an account number. */
+  vendor_bank_name?: string | null;
+  /** 5-34 alphanumerics, separators stripped. */
+  vendor_bank_account_number?: string | null;
+  /** IFSC, shape-checked against app_private.is_valid_ifsc's own pattern. */
+  vendor_bank_ifsc?: string | null;
+  /**
+   * Plain sentences about the PARTY block that THIS MODULE worked out — never
+   * the model's. Populated by normalizeParty when a reading had to be
+   * reconciled or dropped: a PAN that disagrees with the PAN inside the
+   * GSTIN, a bank block with no account number to anchor it, an unusable
+   * UDYAM number. Kept out of `note` on purpose — `note` is the model's own
+   * voice and the review screen turns it into the voucher narration, so a
+   * machine-generated caveat appended there would end up printed on a
+   * voucher. Absent (not empty) when there is nothing to say.
+   */
+  party_warnings?: string[];
+
   /** Best-effort ISO 8601 (yyyy-mm-dd), or null if illegible/undeterminable. */
   bill_date: string | null;
   /**
@@ -248,6 +317,45 @@ STEP 2 — EXTRACT.
   the field names as "counterparty".
 - A GSTIN is exactly 15 characters: 2-digit state code, 10-character PAN,
   entity code, the letter Z, checksum. Never fabricate one.
+
+- THE REST OF THAT SAME PARTY'S DETAILS. Having named the counterparty in
+  vendor_name, read the rest of THAT party's own block — an Indian invoice
+  prints a full party master across its letterhead and its foot, and each of
+  these fields describes the party you have just named, not a second one.
+  Fill vendor_name and vendor_gstin FIRST and then work down. Never return an
+  address, a phone number or a bank account for a party while leaving
+  vendor_name null: if you can read their letterhead you can read their name,
+  and that combination is always a mistake. Each individual field is null
+  only when that particular line is not printed or not legible.
+
+  - vendor_address: their street address as printed, on one line, commas
+    kept, WITHOUT the town, state, PIN, phone or GSTIN — those have their own
+    fields.
+  - vendor_city: the town or city only. Not the state, not the district.
+  - vendor_pincode: the 6-digit PIN of that address. Digits only.
+  - vendor_state_code: the 2-digit GST state code where the document prints
+    one ("State: Gujarat, Code: 24"). Null if only the state's NAME is
+    printed and no code — do not look the code up from the name.
+  - vendor_phone: their telephone number(s) as printed. Many invoices print
+    two or three; return them separated by ", " in the order printed.
+  - vendor_email: their email address, exactly as printed.
+  - vendor_pan: their PAN where it is printed as its own field ("PAN:
+    AEMPB3576L"). Do NOT extract the PAN out of the middle of the GSTIN —
+    that is done afterwards, and reading it twice only creates a
+    disagreement. Null unless PAN is printed separately.
+  - vendor_udyam_number: their MSME/Udyam registration number, printed as
+    "UDYAM-GJ-22-0090672" and labelled Udyam / UAM / MSME Reg. No. Copy it
+    exactly, including the UDYAM- prefix and both hyphens. Do NOT return an
+    MSME "category" or a payment period — the number does not carry one and
+    neither does the invoice.
+  - vendor_bank_name, vendor_bank_account_number, vendor_bank_ifsc: the bank
+    block printed for THEM to be paid into ("Bank Details", "Our Bank
+    Details", "Payment to be made to"), which on a supplier's invoice is the
+    supplier's own account. bank_name is the bank and branch as printed
+    ("HDFC Bank Ltd - Kadodara"); the account number is letters and digits
+    with spaces and hyphens removed; the IFSC is 11 characters, 4 letters
+    then a 0 then 6 more.
+
 - Every date must be ISO 8601 (yyyy-mm-dd). Indian documents are written
   dd/mm/yyyy or dd-mm-yyyy — convert them; never read them as mm/dd/yyyy.
 - bill_date is the date printed on THIS document: the invoice date, or on a
@@ -294,8 +402,9 @@ confidence:
 - "low" — blurry, cropped, mostly unreadable, or you cannot tell what it is.
 Judge confidence ONLY on what you failed to read of what IS printed. A field
 the document legitimately does not carry — tax on a challan, a GSTIN for an
-unregistered party, a rate column the paper simply does not have — is not a
-failure and must not lower it.
+unregistered party, a rate column the paper simply does not have, a UDYAM
+number a supplier that is not MSME-registered has none of, a bank block the
+paper does not print — is not a failure and must not lower it.
 
 note: one or two plain sentences, beginning with what kind of document you
 decided this is and why, then anything you could not read and why (blur,
@@ -337,6 +446,23 @@ const RESPONSE_SCHEMA = {
     },
     vendor_name: { type: "STRING", nullable: true },
     vendor_gstin: { type: "STRING", nullable: true },
+    // The rest of the counterparty's master (0995's task). Placed directly
+    // after the two fields they extend, so the model reads the whole party
+    // block off the letterhead in one pass rather than returning to it after
+    // the line items. All nullable, none required: a document that prints
+    // none of them — a handwritten cash memo — is a complete extraction, not
+    // a failed one, and RESPONSE_SCHEMA's `required` list is what says so.
+    vendor_pan: { type: "STRING", nullable: true },
+    vendor_address: { type: "STRING", nullable: true },
+    vendor_city: { type: "STRING", nullable: true },
+    vendor_pincode: { type: "STRING", nullable: true },
+    vendor_state_code: { type: "STRING", nullable: true },
+    vendor_phone: { type: "STRING", nullable: true },
+    vendor_email: { type: "STRING", nullable: true },
+    vendor_udyam_number: { type: "STRING", nullable: true },
+    vendor_bank_name: { type: "STRING", nullable: true },
+    vendor_bank_account_number: { type: "STRING", nullable: true },
+    vendor_bank_ifsc: { type: "STRING", nullable: true },
     bill_date: { type: "STRING", nullable: true },
     challan_number: { type: "STRING", nullable: true },
     challan_date: { type: "STRING", nullable: true },
@@ -378,6 +504,23 @@ function fallback(note: string): CaptureExtraction {
     challan_date: null,
     vendor_name: null,
     vendor_gstin: null,
+    // 0995's task, spelled out for exactly the reason document_type above is:
+    // every CaptureExtraction this module returns carries the same key set, so
+    // no consumer has to tell "nothing was read" apart from "this extraction
+    // predates the field". party_warnings is the one exception and is absent
+    // rather than empty — it says something happened, and on a total failure
+    // nothing did.
+    vendor_pan: null,
+    vendor_address: null,
+    vendor_city: null,
+    vendor_pincode: null,
+    vendor_state_code: null,
+    vendor_phone: null,
+    vendor_email: null,
+    vendor_udyam_number: null,
+    vendor_bank_name: null,
+    vendor_bank_account_number: null,
+    vendor_bank_ifsc: null,
     bill_date: null,
     line_items: [],
     taxable_value: null,
@@ -508,6 +651,234 @@ function toDocumentTypeOrNull(v: unknown): CaptureDocumentType | null {
   return v === "sales_challan" || v === "purchase_invoice" || v === "other" ? v : null;
 }
 
+/* -------------------------------------------------------------------------- */
+/* The party master (0995's task)                                             */
+/* -------------------------------------------------------------------------- */
+
+/*
+ * Every pattern below is a copy of a CHECK constraint that public.ledgers
+ * already enforces, and each names the constraint it mirrors. That duplication
+ * is deliberate and bounded: these values exist to PREFILL a ledger insert, so
+ * a value the ledgers table would refuse is worse than no value at all — the
+ * preparer would meet a constraint error while creating a master out of a
+ * field they never typed. The database stays the authority; this is the door
+ * check, not the lock.
+ */
+
+/** ledgers_gstin_check's shape half. The check digit is Postgres's business. */
+const GSTIN_SHAPE = /^[0-9]{2}[A-Z]{5}[0-9]{4}[A-Z][1-9A-Z]Z[0-9A-Z]$/;
+/** app_private.is_valid_pan, verbatim. */
+const PAN_SHAPE = /^[A-Z]{5}[0-9]{4}[A-Z]$/;
+/** app_private.is_valid_udyam, verbatim. */
+const UDYAM_SHAPE = /^UDYAM-[A-Z]{2}-[0-9]{2}-[0-9]{7}$/;
+/** app_private.is_valid_ifsc, verbatim. */
+const IFSC_SHAPE = /^[A-Z]{4}0[A-Z0-9]{6}$/;
+/** ledgers_pincode_check, verbatim. */
+const PINCODE_SHAPE = /^[1-9][0-9]{5}$/;
+/** companies.print_bank_account_number's charset (0800), reused by 0995. */
+const ACCOUNT_NUMBER_SHAPE = /^[A-Za-z0-9]{5,34}$/;
+/** ledgers_email_check, verbatim. */
+const EMAIL_SHAPE = /^[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}$/;
+
+/** Newlines and runs of spaces to one space. A letterhead is multi-line. */
+function flatten(v: unknown, maxLength: number): string | null {
+  if (typeof v !== "string") return null;
+  const flat = v.replace(/\s+/g, " ").trim().replace(/[,;]+$/, "").trim();
+  return flat ? flat.slice(0, maxLength) : null;
+}
+
+/** Uppercase with every space and separator removed — for coded values. */
+function code(v: unknown): string | null {
+  if (typeof v !== "string") return null;
+  const c = v.replace(/[\s.]/g, "").toUpperCase();
+  return c || null;
+}
+
+/**
+ * The counterparty's master, normalised to what public.ledgers will accept,
+ * and internally reconciled so that the whole block can be inserted as one
+ * row without tripping migration 0735.
+ *
+ * THIS IS THE PART THAT IS NOT A REGEX. 0735 makes three of these fields a
+ * composite rather than three independent readings:
+ *
+ *   ledgers_gstin_matches_state — a non-null gstin FORCES
+ *                                 state_code = substr(gstin, 1, 2)
+ *   ledgers_gstin_matches_pan   — and, when pan is also present,
+ *                                 pan = substr(gstin, 3, 10)
+ *
+ * A GSTIN therefore GIVES the state and the PAN for free, and it is the
+ * stronger reading of all three: it is one fifteen-character token whose
+ * final character is a checksum over the other fourteen, so a misread digit
+ * anywhere in it usually fails the check digit and is caught, whereas a PAN
+ * printed on its own line has no such protection and a misread state code
+ * none at all.
+ *
+ * So where a GSTIN of the right shape was read, the state code and the PAN
+ * are DERIVED from it and the model's own separate readings of those two are
+ * discarded. That is the reconciliation the task asks for, and the discarded
+ * PAN is not silently dropped: a disagreement means one of the two numbers on
+ * the paper was misread, which is exactly the thing a human should look at
+ * before a master record is created, so it is reported in party_warnings and
+ * shown on the review screen.
+ *
+ * vendor_gstin itself is deliberately NOT gated on GSTIN_SHAPE here. That
+ * field shipped in 0740 as "trim and uppercase, whatever was read", the
+ * review screen prints it and compares it against the matched ledger's own
+ * number, and a human staring at a mis-shaped reading beside the real one is
+ * better served than by a blank. A mis-shaped GSTIN simply derives nothing
+ * and earns a warning.
+ */
+export function normalizeParty(p: Record<string, unknown>): {
+  fields: Pick<
+    CaptureExtraction,
+    | "vendor_pan"
+    | "vendor_address"
+    | "vendor_city"
+    | "vendor_pincode"
+    | "vendor_state_code"
+    | "vendor_phone"
+    | "vendor_email"
+    | "vendor_udyam_number"
+    | "vendor_bank_name"
+    | "vendor_bank_account_number"
+    | "vendor_bank_ifsc"
+  >;
+  warnings: string[];
+} {
+  const warnings: string[] = [];
+
+  const gstinRaw = code(p.vendor_gstin);
+  const gstinUsable = gstinRaw !== null && GSTIN_SHAPE.test(gstinRaw);
+  if (gstinRaw !== null && !gstinUsable) {
+    warnings.push(
+      `“${gstinRaw}” was read as the GSTIN but is not the right shape (15 characters: 2-digit state, 10-character PAN, entity code, Z, checksum), so the state and PAN could not be taken from it.`
+    );
+  }
+
+  // PAN. Derived from the GSTIN when there is a usable one, because the GSTIN
+  // contains it and is checksummed; only used as an independent reading when
+  // there is not.
+  const panRead = code(p.vendor_pan);
+  const panFromGstin = gstinUsable ? gstinRaw.slice(2, 12) : null;
+  let pan: string | null;
+  if (panFromGstin) {
+    pan = panFromGstin;
+    if (panRead && panRead !== panFromGstin) {
+      warnings.push(
+        `The PAN printed on the document (${panRead}) does not match the PAN inside its GSTIN (${panFromGstin}). The GSTIN's has been used, because its last character is a checksum over the whole number. Check the paper before creating the party.`
+      );
+    }
+  } else if (panRead && PAN_SHAPE.test(panRead)) {
+    pan = panRead;
+  } else {
+    pan = null;
+    if (panRead) {
+      warnings.push(
+        `“${panRead}” was read as the PAN but is not the right shape (5 letters, 4 digits, 1 letter), so it was not kept.`
+      );
+    }
+  }
+
+  // State code. Definitionally the first two characters of the GSTIN, so it
+  // is taken from there without comment when there is one — a disagreement
+  // with a separately printed "Code: 24" is not worth a warning, because the
+  // derived value cannot be the wrong one if the GSTIN is right.
+  const stateRead = code(p.vendor_state_code);
+  const stateCode = gstinUsable
+    ? gstinRaw.slice(0, 2)
+    : stateRead && /^[0-9]{2}$/.test(stateRead)
+      ? stateRead
+      : null;
+
+  const pincodeRead = code(p.vendor_pincode);
+  const pincode = pincodeRead && PINCODE_SHAPE.test(pincodeRead) ? pincodeRead : null;
+  if (pincodeRead && !pincode) {
+    warnings.push(
+      `“${pincodeRead}” was read as the PIN code but is not six digits starting with a non-zero, so it was not kept.`
+    );
+  }
+
+  const emailRead = flatten(p.vendor_email, 200);
+  const email = emailRead && EMAIL_SHAPE.test(emailRead) ? emailRead : null;
+  if (emailRead && !email) {
+    warnings.push(
+      `“${emailRead}” was read as the email address but is not a usable one, so it was not kept.`
+    );
+  }
+
+  // Phone is the one field with no constraint on its column, so the only job
+  // here is to stop a caption ("Mob.", "Ph. No.") being stored as if it were a
+  // number. Two or three numbers on one invoice is normal and they are kept
+  // together, as printed — splitting them would need a second column.
+  const phoneRead = flatten(p.vendor_phone, 80);
+  const phoneCleaned = phoneRead
+    ? phoneRead
+        .replace(/[^0-9+\-/(), ]/g, " ")
+        .replace(/\s+/g, " ")
+        .replace(/^[\s,/-]+|[\s,/-]+$/g, "")
+    : null;
+  const phone = phoneCleaned && /[0-9]{6,}/.test(phoneCleaned.replace(/[^0-9]/g, "")) ? phoneCleaned : null;
+
+  const udyamRead = code(p.vendor_udyam_number);
+  const udyam = udyamRead && UDYAM_SHAPE.test(udyamRead) ? udyamRead : null;
+  if (udyamRead && !udyam) {
+    warnings.push(
+      `“${udyamRead}” was read as a Udyam/MSME registration number but is not in the UDYAM-XX-00-0000000 form the register issues, so it was not kept.`
+    );
+  }
+
+  // The bank block. 0995 anchors it on the account number: a bank name or an
+  // IFSC with no account is not a fact about where to pay anybody, and the
+  // ledgers_bank_block_anchored constraint refuses the row outright — so it is
+  // dropped here rather than carried to an insert that cannot succeed.
+  const accountRead = typeof p.vendor_bank_account_number === "string"
+    ? p.vendor_bank_account_number.replace(/[\s-]/g, "")
+    : null;
+  const account = accountRead && ACCOUNT_NUMBER_SHAPE.test(accountRead) ? accountRead : null;
+  if (accountRead && !account) {
+    warnings.push(
+      `“${accountRead}” was read as the bank account number but is not 5 to 34 letters or digits, so it was not kept.`
+    );
+  }
+
+  const ifscRead = code(p.vendor_bank_ifsc);
+  const ifscValid = ifscRead && IFSC_SHAPE.test(ifscRead) ? ifscRead : null;
+  if (ifscRead && !ifscValid) {
+    warnings.push(
+      `“${ifscRead}” was read as the IFSC but is not 11 characters in the form ABCD0123456, so it was not kept.`
+    );
+  }
+
+  const bankNameRead = flatten(p.vendor_bank_name, 120);
+  const bankNameValid = bankNameRead && bankNameRead.trim().length >= 2 ? bankNameRead : null;
+
+  const bankName = account ? bankNameValid : null;
+  const ifsc = account ? ifscValid : null;
+  if (!account && (bankNameValid || ifscValid)) {
+    warnings.push(
+      `A bank was read off the document (${[bankNameValid, ifscValid].filter(Boolean).join(", ")}) but no account number was, so none of it was kept — an account is what the rest of a bank block hangs on.`
+    );
+  }
+
+  return {
+    fields: {
+      vendor_pan: pan,
+      vendor_address: flatten(p.vendor_address, 300),
+      vendor_city: flatten(p.vendor_city, 80),
+      vendor_pincode: pincode,
+      vendor_state_code: stateCode,
+      vendor_phone: phone,
+      vendor_email: email,
+      vendor_udyam_number: udyam,
+      vendor_bank_name: bankName,
+      vendor_bank_account_number: account,
+      vendor_bank_ifsc: ifsc,
+    },
+    warnings,
+  };
+}
+
 /**
  * A line survives on the strength of its DESCRIPTION ALONE.
  *
@@ -570,6 +941,11 @@ export function parseExtractionResponse(rawJsonText: string): CaptureExtraction 
     ? p.confidence
     : "low";
 
+  // 0995's task. Every field of the party master in one call, because they
+  // are not independent of each other: see normalizeParty on the 0735
+  // composite the GSTIN, the state code and the PAN form.
+  const party = normalizeParty(p);
+
   return {
     configured: true,
     // 0865. Still read defensively even though the schema now requires it:
@@ -581,6 +957,9 @@ export function parseExtractionResponse(rawJsonText: string): CaptureExtraction 
     challan_date: toIsoDateOrNull(p.challan_date),
     vendor_name: typeof p.vendor_name === "string" && p.vendor_name.trim() ? p.vendor_name.trim() : null,
     vendor_gstin: typeof p.vendor_gstin === "string" && p.vendor_gstin.trim() ? p.vendor_gstin.trim().toUpperCase() : null,
+    ...party.fields,
+    // Absent, not empty, when nothing needed saying — see the field's comment.
+    ...(party.warnings.length ? { party_warnings: party.warnings } : {}),
     // Shares toIsoDateOrNull with challan_date as of 0865, which tightened it
     // from a shape test to a real-calendar test; 0740's own inline regex
     // accepted "2026-02-31".
