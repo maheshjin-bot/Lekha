@@ -16,7 +16,25 @@
  * result — the route owns storage and the table row.
  */
 
-const MODEL = "gemini-flash-latest";
+// Ordered fallback, not a single model. Both entries are Google-MAINTAINED
+// ALIASES, never pinned snapshots: support-chat's own comment records that
+// "gemini-2.5-pro" was retired for new API keys and 404'd, which is exactly
+// why an alias is used here. That reasoning still holds — probing this key
+// today, the pinned "gemini-2.5-flash" 404s while every alias resolves — so
+// the fix for an overloaded model is a SECOND ALIAS, never a pin.
+//
+// Why a fallback at all: observed live in production, gemini-flash-latest
+// returned 503 "This model is currently experiencing high demand" on all
+// three retry attempts and on three further probes two minutes later, while
+// gemini-flash-lite-latest answered 200 throughout. A sustained overload on
+// one model is not something a few hundred milliseconds of backoff can ride
+// out, so once the retries are spent we move to the next model rather than
+// giving up and making the preparer type the whole bill in by hand.
+//
+// Lite is second, not first: it is a smaller model and this is OCR of a
+// document whose numbers get posted to a ledger, so the stronger model is
+// always tried first and lite only rescues an outage.
+const MODELS = ["gemini-flash-latest", "gemini-flash-lite-latest"] as const;
 
 /** Structured extraction for one uploaded/forwarded Indian purchase bill/invoice. */
 export type CaptureExtraction = {
@@ -136,24 +154,40 @@ function notConfigured(): CaptureExtraction {
 const RETRYABLE_STATUSES = new Set([429, 503]);
 const RETRY_DELAYS_MS = [400, 1000];
 
-async function fetchGeminiWithRetry(url: string, body: string): Promise<Response> {
-  for (let attempt = 0; attempt <= RETRY_DELAYS_MS.length; attempt++) {
-    const isLastAttempt = attempt === RETRY_DELAYS_MS.length;
-    try {
-      const res = await fetch(url, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body,
-      });
-      if (res.ok || !RETRYABLE_STATUSES.has(res.status) || isLastAttempt) {
-        return res;
+async function fetchGeminiWithRetry(urls: readonly string[], body: string): Promise<Response> {
+  let lastRetryable: Response | null = null;
+  let lastError: unknown = null;
+
+  // Each model gets the full backoff before we move on, so an ordinary blip
+  // is still ridden out on the preferred model rather than silently demoting
+  // every request to the weaker one.
+  for (const url of urls) {
+    for (let attempt = 0; attempt <= RETRY_DELAYS_MS.length; attempt++) {
+      const isLastAttempt = attempt === RETRY_DELAYS_MS.length;
+      try {
+        const res = await fetch(url, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body,
+        });
+        // A non-retryable status is this model's real answer — return it
+        // rather than asking another model the same question.
+        if (res.ok || !RETRYABLE_STATUSES.has(res.status)) return res;
+        lastRetryable = res;
+        if (isLastAttempt) break;
+      } catch (err) {
+        lastError = err;
+        if (isLastAttempt) break;
       }
-    } catch (err) {
-      if (isLastAttempt) throw err;
+      await new Promise((resolve) => setTimeout(resolve, RETRY_DELAYS_MS[attempt]));
     }
-    await new Promise((resolve) => setTimeout(resolve, RETRY_DELAYS_MS[attempt]));
   }
-  throw new Error("fetchGeminiWithRetry: exhausted attempts without returning");
+
+  // Every model exhausted. Hand back the last real response if there was one,
+  // so the caller logs Google's own status and message rather than a generic
+  // failure it would have to guess at.
+  if (lastRetryable) return lastRetryable;
+  throw lastError ?? new Error("fetchGeminiWithRetry: exhausted attempts without returning");
 }
 
 function isFiniteNumberOrNull(v: unknown): v is number | null {
@@ -246,7 +280,10 @@ export async function analyzeCaptureImage(
   let upstream: Response;
   try {
     upstream = await fetchGeminiWithRetry(
-      `https://generativelanguage.googleapis.com/v1beta/models/${MODEL}:generateContent?key=${apiKey}`,
+      MODELS.map(
+        (m) =>
+          `https://generativelanguage.googleapis.com/v1beta/models/${m}:generateContent?key=${apiKey}`
+      ),
       JSON.stringify({
         contents: [
           {
