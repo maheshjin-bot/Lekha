@@ -236,6 +236,18 @@ export type QueueRow = {
   vendorHint: string | null;
   /** What they typed about the document itself. */
   note: string | null;
+  /**
+   * Summary scalars lifted out of extracted_json server-side (migration 1000),
+   * so the LIST can name a document without the RPC shipping the whole
+   * extraction for every row. All text, never cast: a vision model reading a
+   * photograph can return "31-7-26" or nothing at all, and a caption is not
+   * worth a failed cast. `totalAmount` is legitimately null on a delivery
+   * challan, whose challan book carries no rates.
+   */
+  vendorName: string | null;
+  docNumber: string | null;
+  docDate: string | null;
+  totalAmount: string | null;
   rejectedReason: string | null;
   confirmedVoucherId: string | null;
 };
@@ -338,6 +350,10 @@ export function normalizeQueueRow(raw: Raw): QueueRow | null {
       (duplicateOf !== null || (duplicateCount !== null && duplicateCount > 0)),
     vendorHint: pickString(raw, ["vendor_hint"]),
     note: pickString(raw, ["note"]),
+    vendorName: pickString(raw, ["vendor_name"]),
+    docNumber: pickString(raw, ["doc_number", "document_number"]),
+    docDate: pickString(raw, ["doc_date", "document_date"]),
+    totalAmount: pickString(raw, ["total_amount"]),
     rejectedReason: pickString(raw, ["rejected_reason", "rejection_reason"]),
     confirmedVoucherId: pickString(raw, ["confirmed_voucher_id"]),
   };
@@ -377,11 +393,23 @@ export function normalizeQueue(rows: unknown): QueueRow[] {
  * report.
  */
 export function queueRowTitle(row: QueueRow): string {
-  const vendor = row.extraction?.vendor_name ?? row.vendorHint;
-  if (vendor) return vendor;
+  // `vendorName` (migration 1000) is what makes this work for a phone-captured
+  // document: the extraction itself is not returned for list rows, and the
+  // phone names EVERY page "page-001.jpg", so without it seven different
+  // documents all read the same. Found in production on a real challan.
+  const vendor = row.extraction?.vendor_name ?? row.vendorName ?? row.vendorHint;
+  if (vendor) {
+    // The party alone is not enough once the same supplier sends several
+    // bills — the document's own number is what tells them apart.
+    return row.docNumber ? `${vendor} · ${row.docNumber}` : vendor;
+  }
   if (row.note) return row.note;
   const fileName = row.storagePath ? fileNameOf(row.storagePath) : null;
-  if (fileName && fileName !== "document") return fileName;
+  // "page-001.jpg" is the phone's own name for every page it ever sends, so it
+  // identifies nothing. Better to say plainly that it has not been read yet.
+  if (fileName && fileName !== "document" && !/^page-\d+\.\w+$/i.test(fileName)) {
+    return fileName;
+  }
   return row.hasExtraction ? "Read — open to see the details" : "Not yet read";
 }
 

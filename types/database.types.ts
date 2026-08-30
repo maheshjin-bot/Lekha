@@ -3949,6 +3949,9 @@ export type Database = {
       ledgers: {
         Row: {
           address: string | null
+          bank_account_number: string | null
+          bank_ifsc: string | null
+          bank_name: string | null
           city: string | null
           company_id: string
           contact_person: string | null
@@ -3993,6 +3996,9 @@ export type Database = {
         }
         Insert: {
           address?: string | null
+          bank_account_number?: string | null
+          bank_ifsc?: string | null
+          bank_name?: string | null
           city?: string | null
           company_id: string
           contact_person?: string | null
@@ -4037,6 +4043,9 @@ export type Database = {
         }
         Update: {
           address?: string | null
+          bank_account_number?: string | null
+          bank_ifsc?: string | null
+          bank_name?: string | null
           city?: string | null
           company_id?: string
           contact_person?: string | null
@@ -7291,6 +7300,8 @@ export type Database = {
           company_id: string
           confirmed_voucher_id: string
           created_at: string
+          doc_date: string
+          doc_number: string
           document_type: string
           draft_id: string
           duplicate_of_draft_id: string
@@ -7307,7 +7318,9 @@ export type Database = {
           status: string
           storage_path: string
           submitted_at: string
+          total_amount: string
           vendor_hint: string
+          vendor_name: string
         }[]
       }
       get_cash_flow_statement: {
