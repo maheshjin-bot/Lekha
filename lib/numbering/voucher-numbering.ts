@@ -39,6 +39,17 @@ export type NumberingSettingsRow = {
   preview_number: string;
   preview_length: number;
   rule46b_ok: boolean;
+  /**
+   * Migration 1160. False when the company has more than one branch and this
+   * series' prefix carries no {BRANCH} token, so the series would issue the
+   * same number in each of them. The entry forms do not act on this — a
+   * series in that state still numbers correctly in the one branch that has
+   * been using it, and next_voucher_number refuses the draw with its own
+   * written message anywhere else — but the type describes the RPC's real
+   * shape, and the settings screen renders both fields.
+   */
+  branch_scope_ok: boolean;
+  branch_scope_note: string | null;
 };
 
 export type NumberingMode = "automatic" | "manual" | "series";

@@ -36,6 +36,16 @@ export type NumberingRow = {
   preview_number: string;
   preview_length: number;
   rule46b_ok: boolean;
+  /**
+   * False when this company has more than one branch and this series' prefix
+   * has no {BRANCH} token — the counter is per branch but the prefix is not,
+   * so the series issues the SAME number in every branch (migration 1160).
+   * True for a single-branch company, where there is no second counter and
+   * therefore nothing to collide.
+   */
+  branch_scope_ok: boolean;
+  /** The sentence to show when branch_scope_ok is false; null when it is true. */
+  branch_scope_note: string | null;
 };
 
 export type BranchOption = { id: string; code: string; name: string };
@@ -96,6 +106,22 @@ function previewOf(template: string, branchCode: string, fyLabel: string, next: 
 
 const PREFIX_RE = /^([A-Za-z0-9/-]|\{(BRANCH|FY|FYS|YY|YYYY)\})*$/;
 
+/**
+ * The client-side twin of app_private.prefix_names_the_branch (migration 1160).
+ *
+ * The counter behind a series is per branch; the prefix need not be. A prefix
+ * with no {BRANCH} token therefore issues the SAME number in every branch —
+ * proven live before it was fixed: one series, two branches, both handed
+ * PRF/26-27/0001, and public.vouchers' UNIQUE key accepted both because
+ * branch_id is part of it. CGST Rule 46(b) wants a serial number unique for
+ * the financial year, not per branch, so that is a real defect in a statutory
+ * series and the database now refuses it. This is the same question asked one
+ * round trip earlier, so the admin sees it while typing.
+ */
+function prefixNamesTheBranch(prefix: string): boolean {
+  return prefix.includes("{BRANCH}");
+}
+
 function LengthBadge({ length, gstFacing }: { length: number; gstFacing: boolean }) {
   if (length <= 16) return <Badge tone="ok">{length} characters</Badge>;
   return (
@@ -118,6 +144,14 @@ type Editor = {
   name: string;
   prefix: string;
   padding: string;
+  /**
+   * The prefix this series is stored with, or null when saving will CREATE a
+   * series rather than edit one. Migration 1160 holds a changed prefix to the
+   * branch rule and grandfathers an unchanged one, so that an admin can still
+   * rename or repad a series configured before the app refused the format.
+   * Mirroring that here keeps the button's enabled state honest.
+   */
+  originalPrefix: string | null;
 };
 
 export function NumberingSettings({
@@ -139,6 +173,15 @@ export function NumberingSettings({
   const [pendingManual, setPendingManual] = useState<{ voucherType: string; typeLabel: string } | null>(null);
 
   const supabase = createClient();
+
+  // Migration 1160. A prefix that does not name the branch is only a hazard
+  // where there is a second branch to collide with, so everything below is
+  // conditioned on this rather than applied to everybody.
+  const multiBranch = branches.length > 1;
+  const branchCodes = branches.map((b) => b.code).join(" and ");
+  const prefixChanging =
+    editor !== null && (editor.originalPrefix === null || editor.prefix !== editor.originalPrefix);
+  const prefixBranchOk = editor === null || !multiBranch || prefixNamesTheBranch(editor.prefix);
 
   async function reload(nextBranchId: string) {
     const { data, error } = await supabase
@@ -250,6 +293,9 @@ export function NumberingSettings({
       name: row.series_name,
       prefix: row.prefix,
       padding: String(row.padding),
+      // A synthetic row has no stored series, so saving CREATES one and the
+      // branch rule applies in full — there is nothing to grandfather.
+      originalPrefix: row.series_id === null ? null : row.prefix,
     });
   }
 
@@ -265,6 +311,7 @@ export function NumberingSettings({
       name: "",
       prefix: row.prefix,
       padding: String(row.padding),
+      originalPrefix: null,
     });
   }
 
@@ -284,6 +331,17 @@ export function NumberingSettings({
     }
     if (!Number.isInteger(padding) || padding < 1 || padding > 9) {
       toast.error("Padding must be a whole number of digits between 1 and 9.");
+      return;
+    }
+    // Migration 1160. Only when the prefix is actually being CHANGED, which is
+    // exactly the database's own grandfathering rule: a series that already
+    // exists with a branch-blind prefix keeps working, and an admin renaming
+    // it or widening its padding must not be blocked by a format decision
+    // taken before the app refused it.
+    if (prefixChanging && !prefixBranchOk) {
+      toast.error(
+        `This prefix has no {BRANCH} token, so it would issue the same number at ${branchCodes}. A document serial number has to be unique for the whole financial year, not per branch.`
+      );
       return;
     }
 
@@ -352,6 +410,16 @@ export function NumberingSettings({
   const exemplar =
     overLongGst.find((g) => g.type.voucher_type === "sales")?.type ?? overLongGst[0]?.type;
 
+  // Migration 1160. Active series whose prefix cannot tell this company's
+  // branches apart. Only ever non-empty for a multi-branch company holding a
+  // series configured before the app refused that format (or one whose second
+  // branch was opened afterwards) — the RPC returns branch_scope_ok true for
+  // every single-branch company, so nobody is warned about a non-problem.
+  const branchBlind = rows.filter(
+    (r) => r.is_active && !r.branch_scope_ok && r.series_id !== null
+  );
+  const branchBlindDefault = branchBlind.find((r) => r.is_default);
+
   const editorPreview = editor
     ? previewOf(
         editor.prefix,
@@ -381,14 +449,68 @@ export function NumberingSettings({
           <span className="font-mono">{exemplar.preview_number}</span> —{" "}
           {exemplar.preview_length} characters. The Invoice Registration Portal and the e-way bill
           portal both refuse a number that long, so an e-invoice cannot be generated against it.
-          Shorten the prefix below: <span className="font-mono">SAL/{"{FYS}"}/</span> with 4 digits
-          gives <span className="font-mono">SAL/26-27/0020</span>, fourteen characters. Nothing
-          already issued is renumbered — the change applies from the next voucher.
+          Shorten the prefix below:{" "}
+          {multiBranch ? (
+            // The single-branch advice ("drop the branch code") is the one
+            // thing a multi-branch company must NOT do — it is exactly how two
+            // branches end up printing the same number, which migration 1160
+            // now refuses. Dropping the slashes around {BRANCH} saves the same
+            // characters and keeps the branches distinguishable.
+            <>
+              <span className="font-mono">
+                {"{BRANCH}"}SAL/{"{YY}"}/
+              </span>{" "}
+              with 4 digits gives{" "}
+              <span className="font-mono">{branches[0]?.code ?? "HO"}SAL/26/0020</span>, thirteen
+              characters — and because it still carries {"{BRANCH}"}, each of this company&rsquo;s{" "}
+              {branches.length} branches keeps its own numbers.
+            </>
+          ) : (
+            <>
+              <span className="font-mono">SAL/{"{FYS}"}/</span> with 4 digits gives{" "}
+              <span className="font-mono">SAL/26-27/0020</span>, fourteen characters.
+            </>
+          )}{" "}
+          Nothing already issued is renumbered — the change applies from the next voucher.
         </Alert>
       ) : (
         <Alert tone="success">
           Every active series previews at 16 characters or fewer, which is what CGST Rule 46(b)
           allows on a document number.
+        </Alert>
+      )}
+
+      {branchBlind.length > 0 && (
+        <Alert tone={branchBlindDefault ? "error" : "warning"} className="leading-relaxed">
+          <span className="font-semibold">
+            {branchBlind.length === 1
+              ? `The series "${branchBlind[0].series_name}" cannot tell this company's branches apart.`
+              : `${branchBlind.length} series cannot tell this company's branches apart.`}
+          </span>{" "}
+          Their prefixes carry no <span className="font-mono">{"{BRANCH}"}</span> token, and each
+          branch keeps its own counter — so the same number would be issued once at{" "}
+          {branchCodes.replace(" and ", ", ").replace(/, ([^,]*)$/, " and $1")}. CGST Rule 46(b)
+          requires a document serial number to be unique for the{" "}
+          <span className="font-medium">whole financial year</span>, not per branch, and the
+          e-invoice portal refuses a second document with a number already registered against the
+          same GSTIN (error 2150, duplicate IRN).{" "}
+          {branchBlindDefault ? (
+            <>
+              <span className="font-semibold">
+                One of them is a default series, which every branch numbers from
+              </span>
+              , so the next {branchBlindDefault.type_label.toLowerCase()} raised outside the branch
+              already using it will be refused rather than issued a duplicate. Fix that one first.
+            </>
+          ) : (
+            <>
+              Nothing is broken yet — each of these has only ever been used at one branch, and it
+              keeps working there. Using one at another branch is refused rather than allowed to
+              duplicate a number.
+            </>
+          )}{" "}
+          Edit the prefix below to include <span className="font-mono">{"{BRANCH}"}</span>, or give
+          each branch a series of its own.
         </Alert>
       )}
 
@@ -504,6 +626,24 @@ export function NumberingSettings({
                                 {unusedInAutomatic &&
                                   " — not used while this type is numbered automatically"}
                               </p>
+                              {/* Migration 1160. Only ever shown for a series
+                                  configured BEFORE the app started refusing
+                                  this, or one whose company opened a second
+                                  branch afterwards. Both are grandfathered on
+                                  purpose — the series keeps working where it
+                                  has always been used — so this is the one
+                                  place the hazard has to be made visible
+                                  rather than prevented. */}
+                              {!s.branch_scope_ok && s.branch_scope_note && (
+                                <p className="mt-2 rounded-md border border-warning/30 bg-warning-soft/60 px-2.5 py-2 text-xs leading-relaxed text-ink-soft">
+                                  <span className="font-semibold text-ink">
+                                    {s.is_default
+                                      ? "This series cannot number the other branches."
+                                      : "This series can only be used at one branch."}
+                                  </span>{" "}
+                                  {s.branch_scope_note}
+                                </p>
+                              )}
                             </div>
 
                             <div className="flex flex-wrap items-center gap-2">
@@ -635,6 +775,23 @@ export function NumberingSettings({
             binds the number at the moment the document is raised, and rewriting history would be
             the worse mistake.
           </p>
+          <p>
+            <span className="font-medium text-ink">
+              With more than one branch, the prefix must contain {"{BRANCH}"}.
+            </span>{" "}
+            Each branch counts from 1 independently, so a prefix that is the same everywhere issues
+            the same number in every branch — and Rule 46(b) wants a serial number unique for the
+            financial year, not unique per branch. If that makes the number too long, drop the
+            slashes around the token rather than the token:{" "}
+            <span className="font-mono">
+              {"{BRANCH}"}SAL/{"{YY}"}/
+            </span>{" "}
+            with 4 digits gives <span className="font-mono">{branches[0]?.code ?? "HO"}SAL/26/0001</span>. The
+            alternative Rule 46(b) also allows is one series per branch, each with its own distinct
+            prefix.{" "}
+            {!multiBranch &&
+              `This company has one branch, so nothing here is restricted — the rule only starts to apply if a second branch is opened.`}
+          </p>
         </CardBody>
       </Card>
 
@@ -693,10 +850,49 @@ export function NumberingSettings({
               </div>
               <p className="mt-2 text-xs text-ink-soft">
                 {editorPreview.length > 16
-                  ? "Over the sixteen characters CGST Rule 46(b) allows. Drop the branch code, shorten the financial year to {FYS}, or use fewer counter digits."
+                  ? multiBranch
+                    ? // Never "drop the branch code" here, which is what this
+                      // line used to say: with more than one branch that is the
+                      // change that makes two branches print the same number.
+                      // Losing the slashes around {BRANCH} costs the same two
+                      // characters and keeps the branches apart.
+                      "Over the sixteen characters CGST Rule 46(b) allows. Shorten the financial year to {FYS} or {YY}, drop the slashes around {BRANCH}, or use fewer counter digits. Keep {BRANCH} itself — with more than one branch it is what stops two of them issuing the same number."
+                    : "Over the sixteen characters CGST Rule 46(b) allows. Drop the branch code, shorten the financial year to {FYS} or {YY}, or use fewer counter digits."
                   : "Within the sixteen characters CGST Rule 46(b) allows."}
               </p>
             </div>
+
+            {prefixChanging && !prefixBranchOk && (
+              <Alert tone="error">
+                <span className="font-semibold">
+                  This prefix would give two branches the same number.
+                </span>{" "}
+                It has no <span className="font-mono">{"{BRANCH}"}</span> token, and this company
+                has {branches.length} branches ({branchCodes}). Each branch keeps its own counter,
+                so both would start at 1 behind the same text and the next{" "}
+                {editor.typeLabel.toLowerCase()} raised in each would carry the identical number.
+                CGST Rule 46(b) requires a serial number to be unique for the{" "}
+                <span className="font-medium">whole financial year</span>, not per branch. Put{" "}
+                <span className="font-mono">{"{BRANCH}"}</span> in the prefix — e.g.{" "}
+                <span className="font-mono">
+                  {"{BRANCH}"}
+                  {editor.prefix.replace(/[^A-Za-z0-9]/g, "").slice(0, 3).toUpperCase() || "SAL"}/
+                  {"{YY}"}/
+                </span>{" "}
+                — or give each branch its own series with its own distinct prefix, which is the
+                &ldquo;one or multiple series&rdquo; Rule 46(b) expressly allows.
+              </Alert>
+            )}
+
+            {prefixChanging && !multiBranch && !prefixNamesTheBranch(editor.prefix) && (
+              <p className="text-xs text-ink-faint">
+                This prefix has no {"{BRANCH}"} token. That is fine while{" "}
+                {branches[0]?.code ?? "this company"} is the only branch — there is one counter, so
+                there is nothing to collide with. If a second branch is ever opened, this series
+                will need {"{BRANCH}"} adding, or a separate series of its own, before that branch
+                can use it.
+              </p>
+            )}
 
             {!editorPrefixOk && (
               <Alert tone="error">
@@ -728,7 +924,9 @@ export function NumberingSettings({
               <Button
                 type="button"
                 busy={busyKey === "save"}
-                disabled={!editorPrefixOk || editorPaddingTooSmall}
+                disabled={
+                  !editorPrefixOk || editorPaddingTooSmall || (prefixChanging && !prefixBranchOk)
+                }
                 onClick={() => void saveEditor()}
               >
                 {editor.seriesId || editor.synthetic ? "Save series" : "Create series"}
