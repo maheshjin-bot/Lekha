@@ -9,6 +9,7 @@ import {
   resolveMime,
   sha256Hex,
 } from "@/lib/capture/upload";
+import { logError } from "@/lib/errors/logError";
 
 export const dynamic = "force-dynamic";
 
@@ -43,6 +44,28 @@ export const dynamic = "force-dynamic";
  * bucket's RLS as this user and every table write goes through a SECURITY
  * DEFINER RPC that re-checks membership itself. A caller who is not a writing
  * member of `companyId` is refused by the database, not merely by this file.
+ *
+ * ERROR LOG (migration 0950, instrumented here afterwards). Three kinds of
+ * failure are recorded under the operation code `capture_upload`, attributed
+ * to the company named in the form:
+ *
+ *   * a page REFUSED for its type or its size — a warning, and the one an
+ *     owner is most likely to be asked about, because on a phone it looks like
+ *     the scanner simply "didn't work" on some documents and not others;
+ *   * a STORAGE write that failed — invisible to everyone today: the phone
+ *     shows a raw Supabase string and nothing durable is kept;
+ *   * a PAGE ROW that could not be written after the bytes landed — the path
+ *     with the compensating delete, and therefore the one where knowing
+ *     afterwards what happened matters most.
+ *
+ * Deliberately NOT instrumented: the missing-field validations (a client bug,
+ * and no company is known yet), the 401, the 403 (nothing was lost and the
+ * caller has no company to attribute it to), and a failing
+ * create_capture_draft — it fails before any bytes move, returns the
+ * database's own plain-English refusal, and a retry with the same dedupe key
+ * reuses the same draft, so there is nothing for a later reader to reconstruct.
+ * That line could be added later if it ever turns out to fire; the point of
+ * this list is that it was a decision rather than an oversight.
  */
 export async function POST(request: Request) {
   const supabase = await createClient();
@@ -83,19 +106,21 @@ export async function POST(request: Request) {
     );
   }
 
-  const mime = resolveMime(file.type, file.name);
-  if (!isAllowedMime(mime)) {
-    return NextResponse.json(
-      { error: "Only JPEG, PNG, WebP, HEIC/HEIF or PDF pages can be captured." },
-      { status: 400 }
-    );
-  }
-  if (file.size > MAX_BYTES) {
-    return NextResponse.json({ error: "This page is larger than the 10 MB limit." }, { status: 400 });
-  }
-
   // Fails before a single byte is stored if this caller cannot even see the
   // company they named — companies' own RLS filters to memberships.
+  //
+  // THIS CHECK MOVED AHEAD OF THE TYPE AND SIZE CHECKS when the error log was
+  // wired in, and the reason is attribution, not security. log_error RAISES if
+  // the caller is not a member of the company a row is written against, so a
+  // rejection logged before membership is known would either be dropped on the
+  // floor or recorded with no company at all — and a row with no company is,
+  // by 0950's read rule, invisible to the owner who needs it. Confirming
+  // membership first means every rejection below lands in the right company's
+  // log. Nothing is read from the request twice as a result: request.formData()
+  // above has already pulled the whole body into memory either way, so this
+  // costs one indexed lookup and no extra bytes. A non-member now sees 403
+  // where they previously saw 400 for an oversized file, which is if anything
+  // the more correct answer.
   const { data: company, error: companyError } = await supabase
     .from("companies")
     .select("id")
@@ -103,6 +128,53 @@ export async function POST(request: Request) {
     .maybeSingle();
   if (companyError || !company) {
     return NextResponse.json({ error: "You do not have access to this company." }, { status: 403 });
+  }
+
+  const mime = resolveMime(file.type, file.name);
+  if (!isAllowedMime(mime)) {
+    // A warning, not an error: nothing broke, a document was declined. Worth
+    // recording anyway, because from the phone this is indistinguishable from
+    // the scanner being broken — and the file NAME (the only part of it stored
+    // here) is usually enough to see that a whole folder of .gif screenshots,
+    // or one camera app writing an unexpected container, is behind it.
+    await logError({
+      operation: "capture_upload",
+      severity: "warning",
+      message: "A scanned page was refused because it is not a kind of file this app can read.",
+      detail: `filename ${file.name || "(none)"}, browser said "${file.type || "(nothing)"}", resolved to "${mime || "(unknown)"}"`,
+      companyId,
+      supabase,
+      context: {
+        route: "/api/capture/upload",
+        reason: "unsupported_type",
+        resolvedMime: mime,
+        declaredMime: file.type || null,
+        pageNo,
+      },
+    });
+    return NextResponse.json(
+      { error: "Only JPEG, PNG, WebP, HEIC/HEIF or PDF pages can be captured." },
+      { status: 400 }
+    );
+  }
+  if (file.size > MAX_BYTES) {
+    await logError({
+      operation: "capture_upload",
+      severity: "warning",
+      message: "A scanned page was refused for being over the 10 MB limit.",
+      detail: `filename ${file.name || "(none)"}, ${file.size} bytes against a ${MAX_BYTES}-byte limit`,
+      companyId,
+      supabase,
+      context: {
+        route: "/api/capture/upload",
+        reason: "over_size_limit",
+        bytes: file.size,
+        limitBytes: MAX_BYTES,
+        resolvedMime: mime,
+        pageNo,
+      },
+    });
+    return NextResponse.json({ error: "This page is larger than the 10 MB limit." }, { status: 400 });
   }
 
   // First page of a new document creates the draft; later pages name it. The
@@ -153,6 +225,25 @@ export async function POST(request: Request) {
     .from("documents")
     .upload(storagePath, buffer, { contentType: mime, upsert: true });
   if (uploadError) {
+    console.error("[capture/upload] storage write failed", uploadError);
+    // Nothing about this reaches anyone today: the phone shows whatever
+    // Storage said ("new row violates row-level security policy", "Payload too
+    // large") and the owner never learns a scan was lost at all.
+    await logError({
+      operation: "capture_upload",
+      message: "A scanned page could not be saved to storage.",
+      detail: uploadError,
+      companyId,
+      supabase,
+      context: {
+        route: "/api/capture/upload",
+        phase: "storage_upload",
+        draftId,
+        pageNo,
+        storagePath,
+        bytes: buffer.length,
+      },
+    });
     return NextResponse.json({ error: uploadError.message }, { status: 400 });
   }
 
@@ -175,6 +266,25 @@ export async function POST(request: Request) {
     // A draft this request created but could not put a page on is left in
     // place on purpose: it holds no pages, is not submitted, appears in
     // nobody's review queue, and a retry with the same dedupeKey reuses it.
+    console.error("[capture/upload] could not record the page", pageError);
+    // Recorded WITH whether the compensating delete ran, because that is the
+    // one fact nobody can recover afterwards: an orphaned object in the bucket
+    // and a page that was never ours to delete look identical from outside.
+    await logError({
+      operation: "capture_upload",
+      message: "A scanned page was saved but could not be attached to the document.",
+      detail: pageError,
+      companyId,
+      supabase,
+      context: {
+        route: "/api/capture/upload",
+        phase: "record_page",
+        draftId,
+        pageNo,
+        storagePath,
+        objectRemoved: !pageExistedBefore,
+      },
+    });
     return NextResponse.json(
       { error: pageError.message ?? "Could not record this page.", draftId },
       { status: 400 }

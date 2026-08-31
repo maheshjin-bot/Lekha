@@ -23,7 +23,11 @@
  *
  * DELIBERATELY NOT HERE: any database access, any Supabase import, any
  * knowledge of capture_drafts. This file takes bytes and returns a typed
- * result — the route owns storage and the table row.
+ * result — the route owns storage and the table row. That still holds after
+ * the error-log instrumentation added for migration 0950: failures are handed
+ * OUT through an optional caller-supplied reporter (see CaptureFailure), and
+ * the caller — which knows the company and holds the session — is the one that
+ * writes the row. Nothing here imports logError.
  */
 
 // Ordered fallback, not a single model. Both entries are Google-MAINTAINED
@@ -316,6 +320,93 @@ export type CaptureContext = {
   /** Every ACTIVE own-GSTIN — public.gst_registrations is one row per state. */
   companyGstins?: readonly string[] | null;
 };
+
+/* ========================================================================== */
+/* Reporting a vision failure to the error log — WITHOUT importing it here    */
+/* ========================================================================== */
+/*
+ * Migration 0950 built public.error_log for one incident in particular: a bill
+ * capture that failed with "the vision service could not process this file
+ * right now" while the real cause — Google answering 503 — was visible only in
+ * the server journal. 0950 could not instrument this file (it was being edited
+ * by a concurrent batch) and said so in its own header.
+ *
+ * This is that instrumentation, and it is deliberately a CALLBACK rather than
+ * a `logError` import. The header of this file promises no database access and
+ * no Supabase import, and that promise is worth keeping for two concrete
+ * reasons, not stylistic ones:
+ *
+ *   1. ATTRIBUTION. error_log rows are company-scoped, and log_error RAISES if
+ *      the caller is not a member of the company it is asked to write against.
+ *      This module does not know whose company the paper belongs to; every
+ *      caller does. A callback puts the company id, and the caller's own
+ *      Supabase session (so user_id and the membership check are the caller's,
+ *      exactly as lib/errors/logError.ts asks for), at the call site that has
+ *      them.
+ *   2. TESTABILITY. tests/unit/capture-analyze.test.ts exercises this module
+ *      with no Supabase anywhere. An import of the write helper would drag the
+ *      server client — and next/headers — into a pure parsing test.
+ *
+ * The reporter is OPTIONAL. The WhatsApp inbound path (0745) calls
+ * analyzeCaptureImage with two arguments and keeps working untouched; it
+ * simply records nothing, exactly as before.
+ */
+
+/** One vision failure, shaped for logError's arguments and nothing else. */
+export type CaptureFailure = {
+  /** Which failure this was. Goes into error_log.context.reason. */
+  reason:
+    | "not_configured"
+    | "unreachable"
+    | "upstream_error"
+    | "unreadable_response"
+    | "empty_response"
+    | "unusable_extraction";
+  /** Plain language, written for a non-technical owner. error_log.message. */
+  message: string;
+  /**
+   * The raw technical text or the caught Error. NOTHING here is safe to store
+   * as it stands: on the `unreachable` path this is a fetch failure whose
+   * message routinely carries the whole request URL, and this module puts the
+   * GOOGLE API KEY IN THAT URL'S QUERY STRING (see the fetch below). It is
+   * handed over raw ON PURPOSE — lib/errors/redact.ts is the single place that
+   * scrubs it, and logError runs it through that before anything is stored.
+   */
+  detail: unknown;
+  /** Safe structured context — status, models, phase. Never a credential. */
+  context: Record<string, unknown>;
+  severity: "warning" | "error";
+};
+
+/**
+ * What a caller passes to hear about a failure. May be async; may throw — the
+ * analyzer wraps every invocation, because a broken reporter must not become
+ * the reason an extraction failed.
+ */
+export type CaptureFailureReporter = (failure: CaptureFailure) => void | Promise<void>;
+
+/**
+ * "The model answered, and there is nothing on the page we can use." True for
+ * a response that could not be parsed at all AND for one that parsed fine but
+ * carried no counterparty, no number, no total and no lines — which from the
+ * preparer's chair are the same event: a blank review screen they must now
+ * type by hand.
+ *
+ * Pure and exported so it can be tested directly; deliberately NOT a string
+ * match on the fallback note, which would silently stop working the first time
+ * someone rewords one.
+ */
+export function isUnusableExtraction(e: CaptureExtraction): boolean {
+  return (
+    e.confidence === "low" &&
+    e.line_items.length === 0 &&
+    !e.vendor_name &&
+    !e.vendor_gstin &&
+    !e.bill_number &&
+    e.total_amount === null &&
+    e.taxable_value === null
+  );
+}
 
 /**
  * Company-supplied strings go into a prompt, so they are trimmed to one line
@@ -1431,14 +1522,51 @@ export function parseExtractionResponse(rawJsonText: string): CaptureExtraction 
  * `context` is optional and additive — the WhatsApp inbound route (0745)
  * calls this with two arguments and keeps working unchanged; it only makes
  * the classification better where the caller knows whose company this is.
+ *
+ * `onFailure` is optional in exactly the same way and for the same reason.
+ * When given, it is called ONCE on each of the failure paths below with the
+ * technical detail the returned CaptureExtraction deliberately does not carry
+ * — Google's status, Google's own wording, the caught error — so a caller with
+ * a database session can make a durable record of it. See CaptureFailure.
+ * Awaiting it cannot change what this function returns and cannot make it
+ * throw: `report` swallows everything.
  */
 export async function analyzeCaptureImage(
   fileBuffer: Buffer,
   mimeType: string,
-  context?: CaptureContext
+  context?: CaptureContext,
+  onFailure?: CaptureFailureReporter
 ): Promise<CaptureExtraction> {
+  // Every failure path below funnels through this. Wrapped twice over — the
+  // reporter may be absent, may throw synchronously, or may reject — because
+  // "the bill reader broke because its error logger broke" is strictly worse
+  // than a failure nobody recorded. Same promise lib/errors/logError.ts makes
+  // one level down; this is the belt to its braces, since the reporter here is
+  // an arbitrary caller-supplied function and not necessarily logError at all.
+  async function report(failure: CaptureFailure): Promise<void> {
+    if (!onFailure) return;
+    try {
+      await onFailure(failure);
+    } catch {
+      // Deliberately silent. The caller's own console.error has already
+      // recorded the ORIGINAL failure; a second-order one here would only
+      // confuse the journal, and logError already reports its own.
+    }
+  }
+
   const apiKey = process.env.GOOGLE_API_KEY;
   if (!apiKey) {
+    // A warning, not an error: nothing is broken, a setting was never made.
+    // Mirrors app/api/support-chat/route.ts's missing-key branch exactly — the
+    // two are the same fact about the same server and should read alike.
+    await report({
+      reason: "not_configured",
+      severity: "warning",
+      message: "The bill reader is not switched on for this server yet.",
+      detail:
+        "GOOGLE_API_KEY is not set in the server environment, so no request was made to the vision service at all.",
+      context: { reason: "missing_env" },
+    });
     return notConfigured();
   }
 
@@ -1469,7 +1597,21 @@ export async function analyzeCaptureImage(
       })
     );
   } catch (err) {
+    // Kept, not replaced. The durable record is added ALONGSIDE the journal
+    // line, never instead of it — see lib/errors/logError.ts's second promise.
     console.error("[capture/analyze] failed to reach Gemini", err);
+    // Only reached once BOTH models have spent BOTH retries, so this is not a
+    // blip being reported as an outage.
+    await report({
+      reason: "unreachable",
+      severity: "error",
+      message: "The bill reader could not reach the vision service at all.",
+      // `err` here routinely carries the request URL, and this app puts the
+      // API key IN that URL's query string — the redactor scrubs it before
+      // anything is stored. See lib/errors/redact.ts, and CaptureFailure.detail.
+      detail: err,
+      context: { phase: "fetch", models: MODELS, attemptsPerModel: RETRY_DELAYS_MS.length + 1 },
+    });
     return fallback(
       "Could not reach the vision service right now. Fill in the bill details manually below."
     );
@@ -1478,6 +1620,19 @@ export async function analyzeCaptureImage(
   if (!upstream.ok) {
     const errText = await upstream.text().catch(() => "");
     console.error("[capture/analyze] Gemini error", upstream.status, errText.slice(0, 500));
+    // THE INCIDENT MIGRATION 0950 EXISTS FOR. A bill capture failed with "the
+    // vision service could not process this file right now" — the sentence
+    // returned two lines below — while the real cause, a 503 "this model is
+    // currently experiencing high demand", was visible only in the server
+    // journal. The status and Google's own wording are what let the owner read
+    // "it was busy, try again in a minute" instead of guessing.
+    await report({
+      reason: "upstream_error",
+      severity: "error",
+      message: `The bill reader could not read this document — the vision service replied ${upstream.status}.`,
+      detail: errText.slice(0, 2000) || `HTTP ${upstream.status} with an empty body`,
+      context: { phase: "upstream", status: upstream.status, models: MODELS },
+    });
     return fallback(
       "The vision service could not process this file right now. Fill in the bill details manually below."
     );
@@ -1486,25 +1641,74 @@ export async function analyzeCaptureImage(
   let body: unknown;
   try {
     body = await upstream.json();
-  } catch {
+  } catch (err) {
+    await report({
+      reason: "unreadable_response",
+      severity: "error",
+      message: "The vision service answered, but its reply could not be read.",
+      detail: err,
+      context: { phase: "decode", status: upstream.status },
+    });
     return fallback(
       "The vision service's response could not be read. Fill in the bill details manually below."
     );
   }
 
-  const text = (
+  const candidate = (
     body as {
-      candidates?: { content?: { parts?: { text?: string }[] } }[];
+      candidates?: { finishReason?: string; content?: { parts?: { text?: string }[] } }[];
+      promptFeedback?: { blockReason?: string };
     }
-  )?.candidates?.[0]?.content?.parts?.[0]?.text;
+  )?.candidates?.[0];
+  const text = candidate?.content?.parts?.[0]?.text;
 
   if (typeof text !== "string" || !text.trim()) {
+    // A 200 with nothing in it. finishReason and blockReason are the whole
+    // diagnosis here and appear nowhere else: SAFETY or a promptFeedback block
+    // means the photo tripped a filter, MAX_TOKENS means a very long bill was
+    // truncated mid-JSON. "The image may be unclear" — the sentence the
+    // preparer gets — is a guess that is wrong in both of those cases.
+    await report({
+      reason: "empty_response",
+      severity: "warning",
+      message: "The bill reader got an empty answer back — nothing could be read off this page.",
+      detail: JSON.stringify({
+        finishReason: candidate?.finishReason ?? null,
+        blockReason: (body as { promptFeedback?: { blockReason?: string } })?.promptFeedback
+          ?.blockReason ?? null,
+        candidates: Array.isArray((body as { candidates?: unknown[] })?.candidates)
+          ? (body as { candidates: unknown[] }).candidates.length
+          : 0,
+      }),
+      context: { phase: "candidates", mimeType, finishReason: candidate?.finishReason ?? null },
+    });
     return fallback(
       "The vision service returned no readable content — the image may be unclear or not a bill. Fill in the bill details manually below."
     );
   }
 
   const parsed = parseExtractionResponse(text);
+
+  // The model answered and the parser accepted the answer, and there is still
+  // nothing on it a preparer can use — either the JSON was malformed (the
+  // parser degrades rather than throwing, by design) or it parsed cleanly with
+  // every field empty. Both land the reviewer on a blank form after paying for
+  // a vision call, which is worth a record even though nothing "failed".
+  // A warning, not an error: a genuinely blank or unreadable photograph is the
+  // likeliest cause and that is the owner's paper, not the app's fault.
+  if (isUnusableExtraction(parsed)) {
+    await report({
+      reason: "unusable_extraction",
+      severity: "warning",
+      message: "The bill reader could not find anything usable on this document.",
+      // The model's own note first — it is written to be read — then a short
+      // slice of the raw reply, which is what distinguishes "it replied with
+      // prose instead of JSON" from "it read the page and found it blank".
+      detail: `model note: ${parsed.note}\nraw reply (first 500 chars): ${text.slice(0, 500)}`,
+      context: { phase: "parse", mimeType, confidence: parsed.confidence },
+    });
+  }
+
   // Computed here rather than in the parser: this is the only place holding
   // both the reading and the company's own identity. parseExtractionResponse
   // stays a pure string-to-shape function, which is what its tests exercise.

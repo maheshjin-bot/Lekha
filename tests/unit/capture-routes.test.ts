@@ -17,16 +17,25 @@
  */
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-const { mockGetUser, mockRpc, mockUpload, mockRemove, mockDownload, mockFrom, mockAnalyze } =
-  vi.hoisted(() => ({
-    mockGetUser: vi.fn(),
-    mockRpc: vi.fn(),
-    mockUpload: vi.fn(),
-    mockRemove: vi.fn(),
-    mockDownload: vi.fn(),
-    mockFrom: vi.fn(),
-    mockAnalyze: vi.fn(),
-  }));
+const {
+  mockGetUser,
+  mockRpc,
+  mockUpload,
+  mockRemove,
+  mockDownload,
+  mockFrom,
+  mockAnalyze,
+  mockLogError,
+} = vi.hoisted(() => ({
+  mockGetUser: vi.fn(),
+  mockRpc: vi.fn(),
+  mockUpload: vi.fn(),
+  mockRemove: vi.fn(),
+  mockDownload: vi.fn(),
+  mockFrom: vi.fn(),
+  mockAnalyze: vi.fn(),
+  mockLogError: vi.fn(),
+}));
 
 vi.mock("@/lib/supabase/server", () => ({
   createClient: async () => ({
@@ -40,6 +49,14 @@ vi.mock("@/lib/supabase/server", () => ({
 }));
 
 vi.mock("@/lib/capture/analyze", () => ({ analyzeCaptureImage: mockAnalyze }));
+
+// The error-log write helper (migration 0950), mocked so these tests can
+// assert WHAT each route records without a database. What it records with —
+// the redaction — is lib/errors/redact.ts's own 23 tests and, for the capture
+// path specifically, tests/unit/capture-error-log.test.ts. The real helper
+// resolves void and never throws, so a mock returning undefined is a faithful
+// stand-in.
+vi.mock("@/lib/errors/logError", () => ({ logError: mockLogError }));
 
 import { POST as uploadPost } from "@/app/api/capture/upload/route";
 import { POST as extractPost } from "@/app/api/capture/extract/route";
@@ -91,6 +108,8 @@ beforeEach(() => {
   mockDownload.mockReset();
   mockFrom.mockReset();
   mockAnalyze.mockReset();
+  mockLogError.mockReset();
+  mockLogError.mockResolvedValue(undefined);
 
   mockGetUser.mockResolvedValue({ data: { user: { id: USER } } });
   mockUpload.mockResolvedValue({ error: null });
@@ -433,5 +452,262 @@ describe("POST /api/capture/extract", () => {
       saved: false,
       error: "permission denied",
     });
+  });
+});
+
+/* ========================================================================== */
+/* Error-log instrumentation (migration 0950, added to capture afterwards)    */
+/* ========================================================================== */
+/*
+ * 0950 built public.error_log for a bill capture that failed with "the vision
+ * service could not process this file right now" while the real cause was
+ * visible only in the server journal — and could not instrument these files,
+ * because they were being edited by a concurrent batch at the time.
+ *
+ * What is asserted here is the ROUTE's half: which failures get a durable
+ * record, that each is attributed to the right company, and — the assertion
+ * that stops this becoming noise — that nothing at all is written when a page
+ * uploads and reads cleanly. The redaction half is elsewhere; see the mock's
+ * own comment at the top of this file.
+ */
+describe("error-log instrumentation", () => {
+  function logged(operation: string) {
+    return mockLogError.mock.calls
+      .map((c) => c[0] as Record<string, unknown>)
+      .filter((a) => a.operation === operation);
+  }
+
+  function extractRequest(body: unknown) {
+    return new Request("http://localhost/api/capture/extract", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    });
+  }
+
+  it("records a page refused for its file type, against the right company", async () => {
+    const res = await uploadPost(
+      uploadRequest({ companyId: CO, pageNo: "1" }, jpeg([1], "screenshot.gif", "image/gif"))
+    );
+    expect(res.status).toBe(400);
+
+    const rows = logged("capture_upload");
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toMatchObject({
+      severity: "warning",
+      companyId: CO,
+      context: expect.objectContaining({
+        reason: "unsupported_type",
+        resolvedMime: "image/gif",
+        declaredMime: "image/gif",
+      }),
+    });
+    // The filename is the part that makes this actionable — one camera app, or
+    // a folder of screenshots, is visible from it and from nothing else.
+    expect(String(rows[0].detail)).toContain("screenshot.gif");
+  });
+
+  it("records a page refused for its size, with the actual byte count", async () => {
+    const big = new File([new Uint8Array(10 * 1024 * 1024 + 1)], "big.jpg", { type: "image/jpeg" });
+    const res = await uploadPost(uploadRequest({ companyId: CO, pageNo: "1" }, big));
+    expect(res.status).toBe(400);
+
+    const rows = logged("capture_upload");
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toMatchObject({
+      severity: "warning",
+      companyId: CO,
+      context: expect.objectContaining({ reason: "over_size_limit", bytes: 10 * 1024 * 1024 + 1 }),
+    });
+  });
+
+  it("does NOT record a rejection for a company the caller cannot see", async () => {
+    // The membership check runs first now, deliberately: log_error RAISES for
+    // a company the caller is not a member of, so a row written here would be
+    // dropped on the floor anyway — and a 403 is not this company's incident.
+    mockFrom.mockImplementation(tableResults({ companies: { data: null, error: null } }));
+    const res = await uploadPost(
+      uploadRequest({ companyId: CO, pageNo: "1" }, jpeg([1], "x.gif", "image/gif"))
+    );
+    expect(res.status).toBe(403);
+    expect(mockLogError).not.toHaveBeenCalled();
+  });
+
+  it("records a failed storage write — the failure nobody can see today", async () => {
+    mockUpload.mockResolvedValue({ error: { message: "new row violates row-level security policy" } });
+    const res = await uploadPost(
+      uploadRequest({ companyId: CO, pageNo: "1", draftId: DRAFT }, jpeg())
+    );
+    expect(res.status).toBe(400);
+
+    const rows = logged("capture_upload");
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toMatchObject({
+      companyId: CO,
+      context: expect.objectContaining({
+        phase: "storage_upload",
+        draftId: DRAFT,
+        storagePath: `${CO}/capture/${DRAFT}/page-001.jpg`,
+      }),
+    });
+    // No severity passed means logError's own default, "error" — this one is
+    // not a declined document, it is a write that should have worked.
+    expect(rows[0].severity).toBeUndefined();
+  });
+
+  it("records a page row that failed after the bytes landed, and whether they were cleaned up", async () => {
+    mockRpc.mockImplementation(async (name: string) => {
+      if (name === "create_capture_draft") return { data: DRAFT, error: null };
+      return { data: null, error: { message: "draft is already rejected" } };
+    });
+    const res = await uploadPost(uploadRequest({ companyId: CO, pageNo: "1" }, jpeg()));
+    expect(res.status).toBe(400);
+
+    const rows = logged("capture_upload");
+    expect(rows).toHaveLength(1);
+    // The one fact nobody can recover afterwards: an orphaned object and a
+    // page that was never ours to delete look identical from outside.
+    expect(rows[0]).toMatchObject({
+      context: expect.objectContaining({ phase: "record_page", objectRemoved: true }),
+    });
+  });
+
+  it("writes NOTHING when a page uploads cleanly", async () => {
+    const res = await uploadPost(uploadRequest({ companyId: CO, pageNo: "1" }, jpeg()));
+    expect(res.status).toBe(200);
+    expect(mockLogError).not.toHaveBeenCalled();
+  });
+
+  it("hands the analyzer a reporter that logs against the DRAFT's company", async () => {
+    const pagePath = `${CO}/capture/${DRAFT}/page-001.jpg`;
+    mockFrom.mockImplementation(
+      tableResults({
+        capture_drafts: {
+          data: { id: DRAFT, company_id: CO, storage_path: pagePath, status: "pending_review" },
+          error: null,
+        },
+        capture_draft_pages: { data: { storage_path: pagePath }, error: null },
+      })
+    );
+    mockDownload.mockResolvedValue({
+      data: new Blob([new Uint8Array([1, 2])], { type: "image/jpeg" }),
+      error: null,
+    });
+    // Answer as the real analyzer does on a 503: call the reporter it was
+    // given, then return a low-confidence extraction anyway.
+    mockAnalyze.mockImplementation(
+      async (
+        _buf: Buffer,
+        _mime: string,
+        _ctx: unknown,
+        onFailure?: (f: Record<string, unknown>) => void | Promise<void>
+      ) => {
+        await onFailure?.({
+          reason: "upstream_error",
+          severity: "error",
+          message: "The bill reader could not read this document — the vision service replied 503.",
+          detail: "The model is overloaded. Please try again later.",
+          context: { phase: "upstream", status: 503 },
+        });
+        return { configured: true, confidence: "low", note: "busy" };
+      }
+    );
+
+    const res = await extractPost(extractRequest({ draftId: DRAFT }));
+    expect(res.status).toBe(200);
+
+    const rows = logged("capture_vision");
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toMatchObject({
+      severity: "error",
+      // The company comes from the draft, not from the request body.
+      companyId: CO,
+      context: expect.objectContaining({
+        route: "/api/capture/extract",
+        draftId: DRAFT,
+        reason: "upstream_error",
+        status: 503,
+      }),
+    });
+    expect(String(rows[0].message)).toContain("503");
+  });
+
+  it("records a page that could not be fetched back out of the bucket", async () => {
+    const pagePath = `${CO}/capture/${DRAFT}/page-001.jpg`;
+    mockFrom.mockImplementation(
+      tableResults({
+        capture_drafts: {
+          data: { id: DRAFT, company_id: CO, storage_path: pagePath, status: "pending_review" },
+          error: null,
+        },
+        capture_draft_pages: { data: { storage_path: pagePath }, error: null },
+      })
+    );
+    mockDownload.mockResolvedValue({ data: null, error: { message: "Object not found" } });
+
+    const res = await extractPost(extractRequest({ draftId: DRAFT }));
+    expect(res.status).toBe(400);
+    expect(mockAnalyze).not.toHaveBeenCalled();
+
+    const rows = logged("capture_vision");
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toMatchObject({
+      companyId: CO,
+      context: expect.objectContaining({ phase: "download", path: pagePath }),
+    });
+  });
+
+  it("records a reading that was taken but could not be stored", async () => {
+    const pagePath = `${CO}/capture/${DRAFT}/page-001.jpg`;
+    mockFrom.mockImplementation(
+      tableResults({
+        capture_drafts: {
+          data: { id: DRAFT, company_id: CO, storage_path: pagePath, status: "pending_review" },
+          error: null,
+        },
+        capture_draft_pages: { data: { storage_path: pagePath }, error: null },
+      })
+    );
+    mockDownload.mockResolvedValue({
+      data: new Blob([new Uint8Array([1, 2])], { type: "image/jpeg" }),
+      error: null,
+    });
+    mockAnalyze.mockResolvedValue({ configured: true, confidence: "high", note: "read cleanly" });
+    mockRpc.mockResolvedValue({ data: null, error: { message: "permission denied" } });
+
+    const res = await extractPost(extractRequest({ draftId: DRAFT }));
+    // Unchanged: the reviewer still gets the reading back, and a 200.
+    expect(res.status).toBe(200);
+
+    const rows = logged("capture_vision");
+    expect(rows).toHaveLength(1);
+    // A warning: what was lost is durability, not the reading itself.
+    expect(rows[0]).toMatchObject({
+      severity: "warning",
+      companyId: CO,
+      context: expect.objectContaining({ phase: "save", draftId: DRAFT }),
+    });
+  });
+
+  it("writes NOTHING when a document is read and stored cleanly", async () => {
+    const pagePath = `${CO}/capture/${DRAFT}/page-001.jpg`;
+    mockFrom.mockImplementation(
+      tableResults({
+        capture_drafts: {
+          data: { id: DRAFT, company_id: CO, storage_path: pagePath, status: "pending_review" },
+          error: null,
+        },
+        capture_draft_pages: { data: { storage_path: pagePath }, error: null },
+      })
+    );
+    mockDownload.mockResolvedValue({
+      data: new Blob([new Uint8Array([1, 2])], { type: "image/jpeg" }),
+      error: null,
+    });
+    mockAnalyze.mockResolvedValue({ configured: true, confidence: "high", note: "read cleanly" });
+
+    const res = await extractPost(extractRequest({ draftId: DRAFT }));
+    expect(res.status).toBe(200);
+    expect(mockLogError).not.toHaveBeenCalled();
   });
 });

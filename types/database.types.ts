@@ -6477,6 +6477,7 @@ export type Database = {
           rate_source: string | null
           reference_date: string | null
           reference_number: string | null
+          self_approved: boolean
           sequence_number: number
           supply_type: string | null
           total_amount: number
@@ -6512,6 +6513,7 @@ export type Database = {
           rate_source?: string | null
           reference_date?: string | null
           reference_number?: string | null
+          self_approved?: boolean
           sequence_number: number
           supply_type?: string | null
           total_amount?: number
@@ -6547,6 +6549,7 @@ export type Database = {
           rate_source?: string | null
           reference_date?: string | null
           reference_number?: string | null
+          self_approved?: boolean
           sequence_number?: number
           supply_type?: string | null
           total_amount?: number
@@ -8873,6 +8876,18 @@ export type Database = {
           tds: number
         }[]
       }
+      get_pending_approvals: {
+        Args: { p_company_id: string }
+        Returns: {
+          created_by: string
+          creator_name: string
+          id: string
+          total_amount: number
+          voucher_date: string
+          voucher_number: string
+          voucher_type: string
+        }[]
+      }
       get_pending_email_notifications: {
         Args: { p_company_id: string }
         Returns: {
@@ -9425,12 +9440,26 @@ export type Database = {
           voucher_number: string
         }[]
       }
+      get_unbalanced_opening_balances: {
+        Args: { p_company_id: string }
+        Returns: {
+          company_total_imbalance: number
+          group_name: string
+          ledger_id: string
+          ledger_name: string
+          opening_balance_amount: number
+          opening_balance_type: string
+          opening_signed: number
+        }[]
+      }
       get_voucher_numbering_settings: {
         Args: { p_branch_id?: string; p_company_id: string; p_on_date?: string }
         Returns: {
           allows_manual: boolean
           branch_code: string
           branch_id: string
+          branch_scope_note: string
+          branch_scope_ok: boolean
           financial_year_label: string
           is_active: boolean
           is_default: boolean
