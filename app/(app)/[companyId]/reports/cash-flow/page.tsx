@@ -97,7 +97,25 @@ export default async function CashFlowStatementPage({
     d.setUTCDate(d.getUTCDate() - 1);
     return d.toISOString().slice(0, 10);
   })();
-  const firstYear = !!bookBeginning && openingAsAt < bookBeginning;
+  const opensBeforeBooksBegan = !!bookBeginning && openingAsAt < bookBeginning;
+  // This used to be the WHOLE test for the footnote below, on the assumption
+  // that no company could have ledger activity dated before its own declared
+  // book_beginning_date. That assumption is not enforced anywhere in this
+  // schema — there is no CHECK constraint or trigger tying voucher_date to
+  // book_beginning_date (confirmed live: 0003 only constrains lock_date
+  // against it), so a voucher dated before a company's declared book start
+  // is perfectly possible today, and get_balance_sheet (which
+  // get_cash_flow_statement's opening snapshot is built on) has never
+  // filtered by it either — by design, per 0089's own header, it reads every
+  // dated voucher unconditionally. Nexgen Softwares Private Limited hit
+  // exactly this: a receipt voucher dated 2025-12-15, before its 2026-04-01
+  // book-start date, left the opening cash figure genuinely non-zero (real
+  // money, really posted) while this footnote asserted "correctly zero"
+  // regardless — the report contradicting its own table directly above it.
+  // So the claim is now checked against the actual number the RPC returned,
+  // not assumed from the dates alone.
+  const openingCashAndBank = Number(byLineItem("opening_cash_and_bank"));
+  const openingCashIsActuallyZero = Math.abs(openingCashAndBank) < 0.005;
 
   return (
     <ReportShell
@@ -239,12 +257,29 @@ export default async function CashFlowStatementPage({
             <> This company is registered as a One Person Company, which this exemption names directly.</>
           )}
         </p>
-        {firstYear && (
+        {opensBeforeBooksBegan && openingCashIsActuallyZero && (
           <p>
             The opening balance sheet snapshot ({openingAsAt}) falls before
-            this company&rsquo;s books began ({bookBeginning}), so every
-            opening figure above is correctly zero — this is a first-year
-            statement, not a data gap.
+            this company&rsquo;s books began ({bookBeginning}), and the Cash
+            and cash equivalents figure at the beginning of the period above
+            is indeed zero — this is a first-year statement, not a data gap.
+          </p>
+        )}
+        {opensBeforeBooksBegan && !openingCashIsActuallyZero && (
+          <p>
+            The opening balance sheet snapshot ({openingAsAt}) falls before
+            this company&rsquo;s declared book-start date ({bookBeginning}),
+            but the Cash and cash equivalents figure at the beginning of the
+            period above is <strong>not</strong> zero. This company&rsquo;s
+            books already contain at least one voucher dated before its own
+            declared book-start date, and this report includes it exactly as
+            it includes every other dated voucher — LEKHA does not currently
+            restrict, warn on, or exclude vouchers dated before a
+            company&rsquo;s book-start date when computing any report
+            (a separate, deliberate gap, not something this statement
+            attempts to correct). The opening figures above reflect what is
+            actually posted, not what the declared book-start date alone
+            would imply.
           </p>
         )}
       </div>
