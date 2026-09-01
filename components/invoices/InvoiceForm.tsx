@@ -1065,7 +1065,7 @@ export function InvoiceForm({
               </div>
               <div className="flex flex-col gap-2.5">
                 <div className="flex items-end gap-1.5">
-                  <label className="flex flex-1 flex-col gap-1">
+                  <label className="flex min-w-0 flex-1 flex-col gap-1">
                     <span className="text-xs text-ink-faint">Item</span>
                     <select
                       aria-label={`Item on line ${i + 1}`}
