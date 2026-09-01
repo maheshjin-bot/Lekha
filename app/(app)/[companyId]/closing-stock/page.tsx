@@ -45,15 +45,20 @@ export default async function ClosingStockPage({
       .order("is_head_office", { ascending: false })
       .limit(1)
       .maybeSingle(),
-    // What the Stock-in-Hand ledger already carries at this date, read the
+    // What the inventory ledger already carries at this date, read the
     // same way every statement reads a closing balance.
     supabase.rpc("get_balance_sheet", { p_company_id: companyId, p_as_at: asAt }),
   ]);
 
   const rows = stockRows ?? [];
   const valuation = rows.reduce((n, r) => n + Number(r.closing_value), 0);
+  // Filter by ledger_role, exactly as post_closing_stock resolves it (1200).
+  // This used to filter on the GROUP name while the posting matched a LEDGER
+  // name, so the two could disagree about what the books carry — the screen
+  // showing "9,84,000.00 to post" beside a button answering "there is no
+  // movement to post" was that disagreement, and it left no way out.
   const carried = (ledgerRow ?? [])
-    .filter((r) => r.group_name === "Stock-in-Hand")
+    .filter((r) => r.ledger_role === "stock")
     .reduce((n, r) => n + Number(r.amount), 0);
   const delta = Math.round((valuation - carried) * 100) / 100;
 
