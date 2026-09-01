@@ -19,6 +19,11 @@ type Ledger = {
   id: string;
   name: string;
   group_name: string | null;
+  // From the ledger's GROUP, same convention as InvoiceForm's own
+  // ledger_role — used only to guess which line (if any) is "the party" for
+  // vouchers.party_ledger_id, since this generic form has no dedicated
+  // Party field the way InvoiceForm does.
+  ledger_role?: string | null;
   is_tds_deductee?: boolean;
   default_tds_section?: string | null;
   ldc_rate?: number | null;
@@ -302,6 +307,33 @@ export function VoucherForm({
     setBusy(true);
     const supabase = createClient();
 
+    // create_voucher/update_voucher have always accepted p_party_ledger_id
+    // (0007) — this generic screen just never passed it, so it defaulted to
+    // null on every single voucher ever created through it (Receipt,
+    // Payment, Contra, Journal have no dedicated Party field the way
+    // InvoiceForm does). Two real, distinct consequences: the Daybook's own
+    // Party column reads blank for every one of these voucher types, and
+    // get_taggable_receipt_vouchers (service advances, Sec 13(2)/GSTR-1
+    // Table 11) filters on party_ledger_id is not null — so its picker can
+    // never show a single voucher, no matter how the advance was recorded.
+    // Found live (wave 7, 1 Sep 2026).
+    //
+    // Guessed here the same way a bookkeeper would read the voucher: if
+    // exactly one line hits a debtor or creditor ledger, that is the party.
+    // Left undefined (not guessed) when zero or more than one line qualifies
+    // — a Contra between two bank accounts has no party at all, and a
+    // Journal touching two different customers has no single right answer,
+    // so this deliberately does not force one.
+    const partyCandidates = Array.from(
+      new Set(
+        filled
+          .map((l) => allLedgers.find((x) => x.id === l.ledgerId))
+          .filter((l): l is Ledger => l?.ledger_role === "debtor" || l?.ledger_role === "creditor")
+          .map((l) => l.id)
+      )
+    );
+    const partyLedgerId = partyCandidates.length === 1 ? partyCandidates[0] : undefined;
+
     // Omitted keys fall through to the SQL defaults. supabase-js drops
     // undefined from the body, and PostgREST matches the overload on exactly
     // the names it receives — so these must be genuinely optional in SQL.
@@ -320,6 +352,13 @@ export function VoucherForm({
           p_lines: payload,
           p_narration: narration.trim() || undefined,
           p_reference_number: reference.trim() || undefined,
+          // update_voucher's own coalesce(p_party_ledger_id, party_ledger_id)
+          // means leaving this undefined preserves whatever the voucher
+          // already had — passing a freshly-guessed id here only ever fills
+          // in a party this voucher didn't already have one for, including
+          // retroactively on an older voucher being edited for any other
+          // reason.
+          p_party_ledger_id: partyLedgerId,
         })
       : await supabase.rpc("create_voucher", {
           p_company_id: companyId,
@@ -329,6 +368,7 @@ export function VoucherForm({
           p_lines: payload,
           p_narration: narration.trim() || undefined,
           p_reference_number: reference.trim() || undefined,
+          p_party_ledger_id: partyLedgerId,
           // Exactly one of these, and only when the mode calls for it.
           // next_voucher_number REFUSES a series it was not asked for in
           // automatic mode, and resolve_manual_voucher_number refuses a typed

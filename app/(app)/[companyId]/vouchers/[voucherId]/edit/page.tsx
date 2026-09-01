@@ -30,7 +30,7 @@ export default async function EditVoucherPage({
       supabase
         .from("ledgers")
         .select(
-          "id, name, is_tds_deductee, default_tds_section, ldc_rate, ldc_valid_from, ldc_valid_to, ldc_amount_cap"
+          "id, name, account_groups(ledger_role), is_tds_deductee, default_tds_section, ldc_rate, ldc_valid_from, ldc_valid_to, ldc_amount_cap"
         )
         .eq("company_id", companyId)
         .eq("is_active", true)
@@ -80,6 +80,8 @@ export default async function EditVoucherPage({
           id: l.id,
           name: l.name,
           group_name: null,
+          // See the same field in components/vouchers/VoucherForm.tsx.
+          ledger_role: l.account_groups?.ledger_role ?? null,
           is_tds_deductee: l.is_tds_deductee,
           default_tds_section: l.default_tds_section,
           ldc_rate: l.ldc_rate,
