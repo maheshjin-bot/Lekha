@@ -70,6 +70,25 @@ describeDb(`accounting invariants (${hasDb ? "live" : noDbReason})`, () => {
     expect(rows, `total_amount out of step with the lines:\n${offenders(rows)}`).toEqual([]);
   });
 
+  it("self_approved (1030) is only ever true on a genuinely self-approved voucher", async () => {
+    // 1030's solo-admin exception writes self_approved=true only inside
+    // approve_voucher, and only on the branch where approved_by = created_by
+    // AND approval_status ends up 'approved'. If either of those ever
+    // decouples — a still-pending voucher marked self_approved, or a
+    // self_approved voucher approved by someone other than its own
+    // creator — the flag has stopped meaning what the audit trail needs it
+    // to mean.
+    const rows = await sql(`
+      select id, voucher_number, approval_status, created_by, approved_by
+        from public.vouchers
+       where self_approved = true
+         and (approval_status <> 'approved' or approved_by is distinct from created_by)
+    `);
+    expect(rows, `self_approved rows inconsistent with created_by/approved_by:\n${offenders(rows)}`).toEqual(
+      []
+    );
+  });
+
   it("branch_id is NOT NULL on voucher_entries", async () => {
     // Branch-wise reporting silently under-reports if a nullable branch ever
     // creeps back in, and no data-level check would notice until the column

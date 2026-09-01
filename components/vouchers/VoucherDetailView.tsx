@@ -74,6 +74,8 @@ export function VoucherDetailView({
   isDeleted,
   canApprove,
   disabledReason,
+  soloAdminApproval = false,
+  isSelfApproved = false,
   lines,
   items,
 }: {
@@ -93,6 +95,11 @@ export function VoucherDetailView({
   isDeleted: boolean;
   canApprove: boolean;
   disabledReason?: string;
+  /** Would clicking Approve right now use 1030's solo-admin exception? */
+  soloAdminApproval?: boolean;
+  /** Already approved THROUGH that exception (vouchers.self_approved, 1030) —
+   * distinct from soloAdminApproval, which describes a not-yet-taken action. */
+  isSelfApproved?: boolean;
   lines: Line[];
   /** Set for sales/purchase/credit-note/debit-note vouchers — what was
    * actually sold or bought, shown alongside (not instead of) the ledger
@@ -113,7 +120,13 @@ export function VoucherDetailView({
               {TYPE_LABEL[voucherType] ?? voucherType} · {voucherDate}
               {branchLabel && ` · ${branchLabel}`}
               <Badge tone={isDeleted ? "bad" : isPending ? "warn" : "ok"} className="print:hidden">
-                {isDeleted ? "Deleted" : isPending ? "Pending approval" : "Approved"}
+                {isDeleted
+                  ? "Deleted"
+                  : isPending
+                    ? "Pending approval"
+                    : isSelfApproved
+                      ? "Approved (solo admin)"
+                      : "Approved"}
               </Badge>
             </p>
           </div>
@@ -249,6 +262,7 @@ export function VoucherDetailView({
                 voucherId={voucherId}
                 canApprove={canApprove}
                 disabledReason={disabledReason}
+                soloAdminApproval={soloAdminApproval}
               />
             )}
           </>

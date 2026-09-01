@@ -10,20 +10,73 @@ export default async function VoucherDetailPage({
   const { companyId, voucherId } = await params;
   const supabase = await createClient();
 
-  const { data: voucher } = await supabase
+  type VoucherRow = {
+    id: string;
+    voucher_number: string;
+    voucher_type: string;
+    voucher_date: string;
+    narration: string | null;
+    reference_number: string | null;
+    total_amount: number;
+    financial_year_label: string;
+    txn_currency: string;
+    exchange_rate: number;
+    branch_id: string;
+    approval_status: string;
+    created_by: string | null;
+    is_deleted: boolean;
+  };
+  const BASE_COLUMNS =
+    "id, voucher_number, voucher_type, voucher_date, narration, reference_number, total_amount, financial_year_label, txn_currency, exchange_rate, branch_id, approval_status, created_by, is_deleted";
+
+  // self_approved (migration 1030) may not exist yet on whatever database
+  // this is pointed at — this repo is applied to asynchronously by whoever
+  // next has a live connector, not necessarily by the session that wrote
+  // the migration. Selecting a column Postgres doesn't have errors the
+  // WHOLE query (PostgREST doesn't partially fail), which — with the error
+  // silently discarded, as this query originally did — turned into every
+  // voucher on the page 404ing, not just this one field coming back empty.
+  // Try the enriched select first; fall back to the base columns the
+  // instant it errors, so this page works against either schema and
+  // upgrades itself automatically once 1030 is actually live, no code
+  // change needed then.
+  let voucher: VoucherRow | null = null;
+  let selfApproved = false;
+
+  const enriched = await supabase
     .from("vouchers")
-    .select(
-      "id, voucher_number, voucher_type, voucher_date, narration, reference_number, total_amount, financial_year_label, txn_currency, exchange_rate, branch_id, approval_status, created_by, is_deleted"
-    )
+    .select(`${BASE_COLUMNS}, self_approved`)
     .eq("id", voucherId)
     .eq("company_id", companyId)
     .maybeSingle();
+
+  if (!enriched.error && enriched.data) {
+    const { self_approved, ...rest } = enriched.data;
+    voucher = rest as VoucherRow;
+    selfApproved = Boolean(self_approved);
+  } else {
+    const base = await supabase
+      .from("vouchers")
+      .select(BASE_COLUMNS)
+      .eq("id", voucherId)
+      .eq("company_id", companyId)
+      .maybeSingle();
+    voucher = base.data as VoucherRow | null;
+  }
 
   if (!voucher) notFound();
 
   const isInvoice = isInvoiceType(voucher.voucher_type);
 
-  const [{ data: entries }, { data: branch }, { data: user }, { data: membership }, { data: items }] =
+  // Needed before the Promise.all below, not inside it — company_members_read
+  // (0003) is `is_company_member(company_id)`, which lets any active member
+  // read every member row for the company, not just their own; without an
+  // explicit `.eq("user_id", user.id)` the row returned for "my role here"
+  // could belong to a co-worker instead of the signed-in user.
+  const { data: userData } = await supabase.auth.getUser();
+  const user = userData.user;
+
+  const [{ data: entries }, { data: branch }, { data: membership }, { data: activeAdmins }, { data: items }] =
     await Promise.all([
       supabase
         .from("voucher_entries")
@@ -35,12 +88,22 @@ export default async function VoucherDetailPage({
         .select("code, name")
         .eq("id", voucher.branch_id)
         .maybeSingle(),
-      supabase.auth.getUser().then((r) => ({ data: r.data.user })),
+      user
+        ? supabase
+            .from("company_members")
+            .select("role")
+            .eq("company_id", companyId)
+            .eq("user_id", user.id)
+            .maybeSingle()
+        : Promise.resolve({ data: null }),
+      // How many active admins this company has RIGHT NOW — the same live
+      // count approve_voucher (1030) recomputes on every call.
       supabase
         .from("company_members")
-        .select("role")
+        .select("id")
         .eq("company_id", companyId)
-        .then((r) => ({ data: r.data })),
+        .eq("role", "admin")
+        .eq("status", "active"),
       // Invoices carry item lines alongside their ledger entries — shown as
       // its own table, since "what was sold" and "how it posted" are both
       // real information and neither substitutes for the other.
@@ -55,18 +118,22 @@ export default async function VoucherDetailPage({
 
   // Maker-checker: only an admin who didn't create this voucher can approve
   // it — the RPC (0028) enforces this server-side too, this just decides
-  // what to show. company_members RLS already scopes rows to the caller's
-  // own membership, so a single-row select for "my role here" needs no
-  // extra user_id filter.
-  const myRole = membership?.[0]?.role ?? null;
+  // what to show. EXCEPTION (1030): a company with fewer than 2 active
+  // admins has no possible second checker, so its sole admin may approve
+  // their own voucher — recomputed live from company_members here, exactly
+  // as the RPC recomputes it on every call.
+  const myRole = membership?.role ?? null;
+  const isAdmin = myRole === "admin";
   const isCreator = user?.id === voucher.created_by;
   const isPending = voucher.approval_status === "pending";
-  const canApprove = isPending && myRole === "admin" && !isCreator;
+  const activeAdminCount = activeAdmins?.length ?? 0;
+  const soloSelfApprove = isPending && isAdmin && isCreator && activeAdminCount < 2;
+  const canApprove = isPending && isAdmin && (!isCreator || soloSelfApprove);
   const disabledReason = !isPending
     ? undefined
-    : isCreator
+    : isCreator && !soloSelfApprove
       ? "You created this voucher — a different admin must approve it."
-      : myRole !== "admin"
+      : !isAdmin
         ? "Only a company admin can approve vouchers."
         : undefined;
 
@@ -96,6 +163,8 @@ export default async function VoucherDetailPage({
         isDeleted={voucher.is_deleted}
         canApprove={canApprove}
         disabledReason={disabledReason}
+        soloAdminApproval={soloSelfApprove}
+        isSelfApproved={selfApproved}
         lines={entries ?? []}
         items={items ?? undefined}
       />
