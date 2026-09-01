@@ -7,7 +7,8 @@ export default async function ManufacturingPage({
   const { companyId } = await params;
   const supabase = await createClient();
 
-  const [{ data: boms }, { data: items }, { data: branches }, { data: godowns }] = await Promise.all([
+  const [{ data: modules }, { data: boms }, { data: items }, { data: branches }, { data: godowns }] = await Promise.all([
+    supabase.rpc("get_company_modules", { p_company_id: companyId }),
     supabase.rpc("get_boms", { p_company_id: companyId }),
     supabase
       .from("items")
@@ -64,6 +65,8 @@ export default async function ManufacturingPage({
     uom: (o.items as { name: string; uom: string } | null)?.uom ?? "",
   }));
 
+  const manufacturingOn = (modules ?? []).some((m) => m.code === "manufacturing" && m.active);
+
   return (
     <main className="mx-auto max-w-6xl px-6 py-10">
       <header className="mb-8">
@@ -80,15 +83,22 @@ export default async function ManufacturingPage({
         </p>
       </header>
 
-      <ManufacturingManager
-        companyId={companyId}
-        boms={(boms ?? []) as never}
-        components={componentRows}
-        outputs={outputRows}
-        items={items ?? []}
-        branches={branches ?? []}
-        godowns={godowns ?? []}
-      />
+      {!manufacturingOn ? (
+        <p className="rounded-lg border border-dashed border-border-strong px-5 py-8 text-center text-sm text-ink-faint">
+          Manufacturing and BOM is not active for this company. Turn it on in
+          Settings → Modules to define recipes and record production.
+        </p>
+      ) : (
+        <ManufacturingManager
+          companyId={companyId}
+          boms={(boms ?? []) as never}
+          components={componentRows}
+          outputs={outputRows}
+          items={items ?? []}
+          branches={branches ?? []}
+          godowns={godowns ?? []}
+        />
+      )}
     </main>
   );
 }
