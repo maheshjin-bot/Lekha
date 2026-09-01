@@ -42,7 +42,7 @@ export default async function NewInvoicePage({
     supabase
       .from("ledgers")
       .select(
-        "id, name, state_code, pan, address, city, pincode, gstin, account_groups(ledger_role)"
+        "id, name, state_code, pan, address, city, pincode, gstin, gst_registration_type, account_groups(ledger_role)"
       )
       .eq("company_id", companyId)
       .eq("is_active", true)
@@ -100,6 +100,11 @@ export default async function NewInvoicePage({
     city: l.city,
     pincode: l.pincode,
     gstin: l.gstin,
+    // Read by InvoiceForm's own tax preview to zero CGST/SGST/IGST on a
+    // purchase/debit-note from an unregistered or composition supplier —
+    // mirroring create_invoice's own 1230 rule, which the preview did not
+    // (found live, wave 7, 1 Sep 2026).
+    gst_registration_type: l.gst_registration_type,
   }));
 
   const flatBranches = (branches ?? []).map((b) => ({

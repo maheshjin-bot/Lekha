@@ -45,7 +45,7 @@ export default async function EditInvoicePage({
     supabase
       .from("ledgers")
       .select(
-        "id, name, state_code, pan, address, city, pincode, gstin, account_groups(ledger_role)"
+        "id, name, state_code, pan, address, city, pincode, gstin, gst_registration_type, account_groups(ledger_role)"
       )
       .eq("company_id", companyId)
       .eq("is_active", true)
@@ -156,6 +156,8 @@ export default async function EditInvoicePage({
     city: l.city,
     pincode: l.pincode,
     gstin: l.gstin,
+    // See the same field in invoices/new/page.tsx for why.
+    gst_registration_type: l.gst_registration_type,
   }));
 
   const flatBranches = (branches ?? []).map((b) => ({

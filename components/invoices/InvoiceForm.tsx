@@ -46,6 +46,11 @@ type Ledger = {
   city?: string | null;
   pincode?: string | null;
   gstin?: string | null;
+  // Read by the tax preview: a purchase/debit-note from an
+  // unregistered or composition supplier carries no input tax at all
+  // (Sec 32(1)/Sec 10(4) — such a supplier cannot lawfully charge GST),
+  // mirroring create_invoice's own 1230 rule.
+  gst_registration_type?: string | null;
 };
 type Branch = { id: string; code: string; name: string; registeredState: string | null };
 type Godown = { id: string; code: string; name: string };
@@ -188,6 +193,7 @@ function toLedger(l: QuickAddedLedger): Ledger {
     ledger_role: l.ledger_role,
     state_code: l.state_code,
     pan: l.pan,
+    gst_registration_type: l.gst_registration_type,
   };
 }
 
@@ -384,8 +390,23 @@ export function InvoiceForm({
   // Mirrors create_invoice's per-line rounding exactly — computed here only
   // to show the user what the server will post, not as the figure that gets
   // submitted. The database is still the one that actually decides.
+  //
+  // Also mirrors 1230's rule that a purchase or debit note carries no
+  // input tax at all when the supplier is unregistered or composition —
+  // neither may lawfully charge GST (Sec 32(1)/Sec 10(4)), so there is
+  // nothing to preview. Before this, the preview showed a full tax split
+  // for exactly this case, disagreeing with what actually got posted (found
+  // live, wave 7, 1 Sep 2026 — every purchase from Rao Innovations OPC's two
+  // real, both-unregistered suppliers hit this).
   const tax = useMemo(() => {
     if (!supplyType) return { cgst: 0, sgst: 0, igst: 0 };
+    const party = allLedgers.find((l) => l.id === partyId);
+    if (
+      !isSale &&
+      (party?.gst_registration_type === "unregistered" || party?.gst_registration_type === "composition")
+    ) {
+      return { cgst: 0, sgst: 0, igst: 0 };
+    }
     let cgst = 0, sgst = 0, igst = 0;
     for (const l of lines) {
       const item = allItems.find((x) => x.id === l.itemId);
@@ -400,7 +421,7 @@ export function InvoiceForm({
       }
     }
     return { cgst, sgst, igst };
-  }, [lines, allItems, supplyType]);
+  }, [lines, allItems, supplyType, allLedgers, partyId, isSale]);
 
   // Mirrors create_invoice's TCS math exactly, for the same display-only
   // reason as `tax` above. Only sales and credit notes ever carry TCS, only
