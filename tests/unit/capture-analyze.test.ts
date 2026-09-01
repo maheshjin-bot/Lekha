@@ -177,6 +177,43 @@ describe("parseExtractionResponse", () => {
     expect(result.challan_number).toBeNull();
     expect(result.challan_date).toBeNull();
   });
+
+  it("nulls bill_number when the model echoes the challan number into it too", () => {
+    // Found live (wave 6, 1 Sep 2026): a real captured sales challan with only
+    // one printed number came back with bill_number === challan_number, so
+    // the review screen's "Their PO no." and "Our challan no." fields both
+    // silently autofilled with the same value — despite the prompt itself
+    // telling the model bill_number is "never a challan number". The two
+    // fields are defined to never legitimately agree; when they do, the
+    // duplicate is dropped from bill_number rather than trusted.
+    const result = parseExtractionResponse(
+      JSON.stringify({
+        document_type: "sales_challan",
+        challan_number: "379",
+        bill_number: "379",
+        line_items: [],
+        confidence: "high",
+        note: "x",
+      })
+    );
+    expect(result.challan_number).toBe("379");
+    expect(result.bill_number).toBeNull();
+  });
+
+  it("keeps both bill_number and challan_number when the model genuinely reads two different numbers", () => {
+    const result = parseExtractionResponse(
+      JSON.stringify({
+        document_type: "purchase_invoice",
+        challan_number: "DC/26-27/188",
+        bill_number: "INV-1300",
+        line_items: [],
+        confidence: "high",
+        note: "x",
+      })
+    );
+    expect(result.challan_number).toBe("DC/26-27/188");
+    expect(result.bill_number).toBe("INV-1300");
+  });
 });
 
 /**

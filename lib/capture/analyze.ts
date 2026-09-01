@@ -1467,6 +1467,23 @@ export function parseExtractionResponse(rawJsonText: string): CaptureExtraction 
   // composite the GSTIN, the state code and the PAN form.
   const party = normalizeParty(p);
 
+  // The two fields are defined to never legitimately agree — the prompt
+  // itself tells the model bill_number is "never a challan number" — but a
+  // flaky free-tier model does not always obey that, and when a document
+  // prints only one number at all, echoing it into both is exactly the kind
+  // of plausible-looking mistake that survives review unnoticed: two labels
+  // that read as different things ("Their PO no." / "Our challan no." on a
+  // sales challan) silently carrying the same value. Caught live (wave 6,
+  // 1 Sep 2026) on a real captured document. This is a deterministic
+  // backstop, not a replacement for the prompt instruction above — if the
+  // model ever legitimately reads two DIFFERENT numbers, both still come
+  // through untouched.
+  const challanNumber = toTrimmedStringOrNull(p.challan_number);
+  const billNumberRaw =
+    typeof p.bill_number === "string" && p.bill_number.trim() ? p.bill_number.trim() : null;
+  const billNumber =
+    challanNumber && billNumberRaw && billNumberRaw === challanNumber ? null : billNumberRaw;
+
   return {
     configured: true,
     // 0865. Still read defensively even though the schema now requires it:
@@ -1474,7 +1491,7 @@ export function parseExtractionResponse(rawJsonText: string): CaptureExtraction 
     // enum, must degrade to "no guess" rather than to a value the
     // capture_drafts CHECK constraint would refuse.
     document_type: toDocumentTypeOrNull(p.document_type),
-    challan_number: toTrimmedStringOrNull(p.challan_number),
+    challan_number: challanNumber,
     challan_date: toIsoDateOrNull(p.challan_date),
     vendor_name: typeof p.vendor_name === "string" && p.vendor_name.trim() ? p.vendor_name.trim() : null,
     vendor_gstin: typeof p.vendor_gstin === "string" && p.vendor_gstin.trim() ? p.vendor_gstin.trim().toUpperCase() : null,
@@ -1487,8 +1504,8 @@ export function parseExtractionResponse(rawJsonText: string): CaptureExtraction 
     bill_date: toIsoDateOrNull(p.bill_date),
     // The document's own printed number. Trimmed only — an invoice number is
     // whatever the issuer chose to print, so there is no shape to enforce.
-    bill_number:
-      typeof p.bill_number === "string" && p.bill_number.trim() ? p.bill_number.trim() : null,
+    // Nulled above when it is indistinguishable from challan_number.
+    bill_number: billNumber,
     // Compared against this company's own name and GSTINs by the review
     // screen. Reported there, never enforced — see the type comment.
     recipient_name:
