@@ -165,17 +165,43 @@ export default async function IsdDistributionPage({
   const isdModuleOn = (modules ?? []).some((m) => m.code === "gst_isd" && m.active);
 
   if (!isdModuleOn) {
+    // gst_isd (0004_module_engine.sql) is a CONDITIONAL module — the system
+    // decides, based on gstin_count_min: 2 (via its gst_multistate
+    // dependency, same rule). There is no manual toggle for it, unlike an
+    // Optional-tier module, so telling someone to "turn it on in Settings"
+    // sends them to a screen with no lever to pull. The real, actionable
+    // prerequisite is a second GST registration under this PAN — found live
+    // (wave 7, 1 Sep 2026) as a genuine dead end for every single-
+    // registration company, which today is all of them.
+    const registrationCount = (registrations ?? []).length;
     return (
       <ReportShell title="ISD distribution" period={label}>
         <div className="m-4 rounded-md bg-blue-50 px-4 py-3 text-sm text-blue-900">
-          <p className="font-semibold">Not turned on for this company</p>
+          <p className="font-semibold">Not applicable for this company yet</p>
           <p className="mt-1">
-            Input Service Distributor (GSTR-6 / Rule 39) is a separate
-            module from GST itself.{" "}
-            <Link href={`/${companyId}/settings/modules`} className="underline">
-              Turn it on in Settings → Modules
-            </Link>
-            .
+            Input Service Distributor (GSTR-6 / Rule 39) only applies once a
+            PAN holds two or more GST registrations to distribute credit
+            across. This company currently has {registrationCount} —{" "}
+            {registrationCount < 2 ? (
+              <>
+                add a second one under{" "}
+                <Link href={`/${companyId}/registrations`} className="underline">
+                  Registrations
+                </Link>{" "}
+                and this switches on automatically; there is no manual
+                toggle for it in Settings, since the system decides based on
+                registration count, not the other way round.
+              </>
+            ) : (
+              <>
+                check{" "}
+                <Link href={`/${companyId}/registrations`} className="underline">
+                  Registrations
+                </Link>{" "}
+                and Settings → Modules for what else this depends on
+                (multi-branch GST must also be active).
+              </>
+            )}
           </p>
         </div>
       </ReportShell>
