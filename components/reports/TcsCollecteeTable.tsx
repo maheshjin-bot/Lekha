@@ -26,6 +26,11 @@ export type TcsCollecteeRow = {
   section_code: string | null;
   section_description: string | null;
   section_rate_percent: number | null;
+  // 1280. True when this rate is ref_tcs_sections.no_pan_rate_percent, not
+  // the base rate_percent — the collectee has no PAN on file, so Sec 206CC
+  // applied the higher rate. Surfaced explicitly rather than left for the
+  // reader to notice the amount doesn't reconcile against the rate shown.
+  no_pan_rate_applied: boolean;
   voucher_count: number;
   tcs_collected: number;
   party_ledger_movement: number;
@@ -64,7 +69,12 @@ export function TcsCollecteeTable({ rows }: { rows: TcsCollecteeRow[] }) {
             </td>
             <td className={td + " font-mono text-xs text-ink-faint"}>{r.pan ?? "—"}</td>
             <td className={td + " font-mono text-xs"}>{r.section_code ?? "—"}</td>
-            <td className={num}>{r.section_rate_percent != null ? `${Number(r.section_rate_percent)}%` : "—"}</td>
+            <td className={num}>
+              {r.section_rate_percent != null ? `${Number(r.section_rate_percent)}%` : "—"}
+              {r.no_pan_rate_applied && (
+                <div className="text-[10px] font-normal uppercase text-warning">No PAN, Sec 206CC</div>
+              )}
+            </td>
             <td className={num}>{r.voucher_count}</td>
             <td className={num}>{formatINR(Number(r.party_ledger_movement), { showZero: true })}</td>
             <td className={num + " font-medium"}>{formatINR(Number(r.tcs_collected), { showZero: true })}</td>
