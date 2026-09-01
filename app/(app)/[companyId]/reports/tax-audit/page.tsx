@@ -180,16 +180,27 @@ export default async function TaxAuditPage({
               <td className={td}>Threshold applied</td>
               <td className={num}>{formatINR(threshold, { showZero: true })}</td>
             </tr>
-            <tr className="border-b border-border last:border-0">
-              <td className={td}>Report form</td>
-              <td className={td + " text-right"}>
-                {REPORT_FORM_LABEL[result.report_form as string] ?? result.report_form}
-              </td>
-            </tr>
-            <tr>
-              <td className={td}>Report due date</td>
-              <td className={num}>{result.due_date}</td>
-            </tr>
+            {/* No audit required means no Form 3CA/3CB/3CD is due at all —
+                showing a specific form and a live date here read as an
+                active filing obligation even when the banner above already
+                says none exists. Found live (wave 7, 1 Sep 2026): the
+                underlying function computes these unconditionally, but
+                there is nothing to file when Sec 44AB doesn't apply, so
+                they are only shown when it does. */}
+            {auditRequired && (
+              <>
+                <tr className="border-b border-border last:border-0">
+                  <td className={td}>Report form</td>
+                  <td className={td + " text-right"}>
+                    {REPORT_FORM_LABEL[result.report_form as string] ?? result.report_form}
+                  </td>
+                </tr>
+                <tr>
+                  <td className={td}>Report due date</td>
+                  <td className={num}>{result.due_date}</td>
+                </tr>
+              </>
+            )}
           </tbody>
         </table>
         <p className="mt-3 text-xs text-ink-faint">{result.reason}</p>
