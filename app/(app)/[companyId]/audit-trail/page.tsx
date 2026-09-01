@@ -18,6 +18,8 @@ const TABLE_FILTERS = [
   { value: "voucher_items", label: "Voucher stock lines" },
   { value: "ledgers", label: "Ledgers" },
   { value: "account_groups", label: "Account groups" },
+  { value: "employees", label: "Employees" },
+  { value: "employee_salary_structures", label: "Salary structures" },
   { value: "companies", label: "Company settings" },
   { value: "company_members", label: "Users and roles" },
   { value: "company_modules", label: "Modules" },
