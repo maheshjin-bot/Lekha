@@ -54,6 +54,20 @@ export default async function SettingsPage({
       </Link>
 
       <Link
+        href={`/${companyId}/branches`}
+        className="mt-3 flex items-center justify-between rounded-lg border border-border bg-surface p-5 transition-colors hover:bg-surface-2"
+      >
+        <span>
+          <span className="block font-semibold text-ink">Branches</span>
+          <span className="mt-0.5 block text-sm text-ink-soft">
+            Each place of business&rsquo; own address — required before an e-invoice or e-way
+            bill can be generated from it.
+          </span>
+        </span>
+        <span aria-hidden className="text-ink-faint">→</span>
+      </Link>
+
+      <Link
         href={`/${companyId}/settings/numbering`}
         className="mt-3 flex items-center justify-between rounded-lg border border-border bg-surface p-5 transition-colors hover:bg-surface-2"
       >

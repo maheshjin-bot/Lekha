@@ -185,6 +185,7 @@ export function NavRail({
     { href: `${base}/year-end`, label: "Year-end" },
     { href: `${base}/settings`, label: "Settings" },
     { href: `${base}/settings/team`, label: "Team" },
+    { href: `${base}/branches`, label: "Branches" },
     { href: `${base}/settings/employer-registrations`, label: "Employer registrations" },
     { href: `${base}/settings/numbering`, label: "Voucher numbering" },
     { href: `${base}/whatsapp-numbers`, label: "WhatsApp numbers" },
