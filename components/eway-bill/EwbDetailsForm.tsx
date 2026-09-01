@@ -115,6 +115,13 @@ export function EwbDetailsForm({
   const [busy, setBusy] = useState(false);
   const [building, setBuilding] = useState(false);
   const [payload, setPayload] = useState<string | null>(null);
+  // 1310. build_ewb_json silently null'd fromAddr1/fromPlace/fromPincode
+  // when the branch has no address on file, with nothing to tell the
+  // preparer why — a real NIC submission would likely reject this exact
+  // payload (the e-invoice build refuses outright for the identical gap;
+  // this one still builds the JSON, but now says so via a new
+  // meta.warnings array).
+  const [payloadWarnings, setPayloadWarnings] = useState<string[]>([]);
 
   const [newVehicleNumber, setNewVehicleNumber] = useState("");
   const [newReasonCode, setNewReasonCode] = useState<"breakdown" | "transhipment" | "other">("transhipment");
@@ -194,6 +201,8 @@ export function EwbDetailsForm({
       return;
     }
     setPayload(JSON.stringify(data, null, 2));
+    const warnings = (data as { meta?: { warnings?: string[] } })?.meta?.warnings;
+    setPayloadWarnings(Array.isArray(warnings) ? warnings : []);
   }
 
   function copyJson() {
@@ -467,6 +476,16 @@ export function EwbDetailsForm({
             Build EWB JSON
           </Button>
         </div>
+
+        {payload && payloadWarnings.length > 0 && (
+          <Alert tone="warning" className="mt-4">
+            <ul className="list-disc space-y-1 pl-4">
+              {payloadWarnings.map((w, i) => (
+                <li key={i}>{w}</li>
+              ))}
+            </ul>
+          </Alert>
+        )}
 
         {payload && (
           <div className="mt-4">
