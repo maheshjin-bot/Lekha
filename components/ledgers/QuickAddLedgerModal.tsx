@@ -4,6 +4,7 @@ import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { createClient } from "@/lib/supabase/client";
 import { Modal } from "@/components/ui/Modal";
+import { friendlyLedgerError } from "@/lib/ledgers/friendlyError";
 
 /**
  * The minimum a ledger needs to be transacted against, created without
@@ -500,16 +501,11 @@ export function QuickAddLedgerModal({
       .single();
 
     if (insertError || !data) {
+      // Shared with LedgerManager.tsx's own "New ledger" form — see
+      // lib/ledgers/friendlyError.ts's header for why this moved out of
+      // being written inline here a second time.
       setError(
-        insertError?.code === "23505"
-          ? `This company already has a ledger called "${trimmed}".`
-          : insertError?.message?.includes("ledgers_gstin_check")
-            ? "That GSTIN failed its check digit — re-read the last character from the certificate."
-            : insertError?.message?.includes("ledgers_bank_block_anchored")
-              ? "A bank name or IFSC can only be saved together with the account number they belong to."
-              : insertError?.message?.includes("ledgers_state_code_fkey")
-                ? "That state code is not one the GST system issues — pick the state from the list."
-                : insertError?.message ?? "The ledger could not be created."
+        insertError ? friendlyLedgerError(insertError, trimmed) : "The ledger could not be created."
       );
       setBusy(false);
       return;

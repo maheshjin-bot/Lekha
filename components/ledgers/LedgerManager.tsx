@@ -4,6 +4,7 @@ import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
 import { formatINR } from "@/lib/utils/currency";
+import { friendlyLedgerError } from "@/lib/ledgers/friendlyError";
 
 type Ledger = {
   id: string;
@@ -200,7 +201,11 @@ export function LedgerManager({
     });
 
     if (error) {
-      setError(error.message);
+      // See lib/ledgers/friendlyError.ts's own header: this used to be a
+      // bare `setError(error.message)`, which surfaced Postgres's raw
+      // constraint-violation text verbatim (e.g. a mistyped GSTIN's check
+      // digit). Found live (wave 7, 1 Sep 2026).
+      setError(friendlyLedgerError(error, name.trim()));
       setBusy(false);
       return;
     }
