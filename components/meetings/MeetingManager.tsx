@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { Fragment, useState } from "react";
 import { useRouter } from "next/navigation";
 import { toast } from "sonner";
 import { createClient } from "@/lib/supabase/client";
@@ -281,8 +281,8 @@ export function MeetingManager({
               </tr>
             )}
             {meetings.map((m) => (
-              <>
-                <tr key={m.id} className="border-b border-border last:border-0">
+              <Fragment key={m.id}>
+                <tr className="border-b border-border last:border-0">
                   <td className={td}>{minutesBadge(m)}</td>
                   <td className={td}>{TYPE_LABEL[m.meeting_type] ?? m.meeting_type}</td>
                   <td className={td + " whitespace-nowrap"}>{m.meeting_date}</td>
@@ -323,7 +323,7 @@ export function MeetingManager({
                     </td>
                   </tr>
                 )}
-              </>
+              </Fragment>
             ))}
           </tbody>
         </table>
