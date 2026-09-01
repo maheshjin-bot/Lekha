@@ -33,9 +33,8 @@ export default async function MeetingsPage({
         </h1>
         <p className="mt-1 text-sm text-ink-soft">
           AGMs, EGMs and board meetings actually held — the real dates this app never used to
-          record. The compliance calendar still assumes every AGM happens by 30 September until
-          it is wired to read the dates recorded here; that is tracked as separate follow-on
-          work, not done by this screen.
+          record. Logging an AGM here shifts its AOC-4 and MGT-7 due dates on the compliance
+          calendar to be computed from the actual date held, instead of the 30 September default.
         </p>
       </header>
 
