@@ -2,6 +2,7 @@
 
 import { useRef, useState } from "react";
 import { useRouter } from "next/navigation";
+import { createClient } from "@/lib/supabase/client";
 
 /**
  * Upload a document from THIS machine into the capture inbox.
@@ -21,6 +22,16 @@ import { useRouter } from "next/navigation";
  * Multi-page works the way the phone's does: page 1 is posted with no
  * draftId and the route mints one, pages 2..n are posted against that same
  * draftId in order, so a two-page bill is one document rather than two.
+ *
+ * After every page lands, this calls submit_capture_draft on the resulting
+ * draft — the same RPC lib/scan/uploadQueue.ts calls once the phone's own
+ * multi-page capture is done. The upload route itself never does this (it
+ * cannot know a desk upload is finished the way a phone session does), so
+ * without it a document uploaded here would sit with submitted_at still
+ * null forever — created, page attached, but permanently excluded from
+ * get_capture_review_queue's own submitted_at is not null filter. Found
+ * live: every document uploaded through this exact panel vanished from the
+ * inbox with no error and no trace in the error log.
  */
 
 const ALLOWED = ["application/pdf", "image/png", "image/jpeg", "image/webp"];
@@ -28,6 +39,7 @@ const MAX_BYTES = 10 * 1024 * 1024;
 
 export function CaptureUploadPanel({ companyId }: { companyId: string }) {
   const router = useRouter();
+  const supabase = createClient();
   const inputRef = useRef<HTMLInputElement>(null);
   const [busy, setBusy] = useState(false);
   const [progress, setProgress] = useState<string | null>(null);
@@ -71,6 +83,25 @@ export function CaptureUploadPanel({ companyId }: { companyId: string }) {
         }
         draftId = json.draftId ?? draftId;
       }
+
+      // /api/capture/upload only creates the draft and attaches pages — it
+      // deliberately leaves submitted_at null (see its own header: the phone
+      // scanner assembles several pages before deciding it is done). Without
+      // this call the draft sits in "still capturing" forever: not reviewable,
+      // not visible in the inbox, not anywhere — get_capture_review_queue
+      // filters on submitted_at is not null. The phone flow reaches this same
+      // RPC from lib/scan/uploadQueue.ts once its own multi-page capture ends;
+      // this is the one-shot equivalent for a single "Choose a file" upload.
+      if (draftId) {
+        setProgress("Finishing…");
+        const { error: submitError } = await supabase.rpc("submit_capture_draft", {
+          p_draft_id: draftId,
+        });
+        if (submitError) {
+          throw new Error(submitError.message);
+        }
+      }
+
       setProgress(null);
       if (inputRef.current) inputRef.current.value = "";
       // The document is in; the inbox below is server-rendered, so refresh
