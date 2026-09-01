@@ -460,10 +460,10 @@ export default async function BalanceSheetPage({
                     </div>
                   </td>
                   <td className={num}>
-                    {formatINR(Math.abs(profitBroughtForward), { showZero: true })}
+                    {formatINR(profitBroughtForward, { showZero: true })}
                   </td>
                   <td className={num + " text-ink-faint"}>
-                    {hasComparative ? formatINR(Math.abs(profitBroughtForward2), { showZero: true }) : "—"}
+                    {hasComparative ? formatINR(profitBroughtForward2, { showZero: true }) : "—"}
                   </td>
                 </tr>
               )}
@@ -471,9 +471,17 @@ export default async function BalanceSheetPage({
               (profitThisYear !== 0 || (hasComparative && profitThisYear2 !== 0)) && (
                 <tr>
                   <td className={td}>{profitThisYear >= 0 ? "Profit for the period" : "Loss for the period"}</td>
-                  <td className={num}>{formatINR(Math.abs(profitThisYear), { showZero: true })}</td>
+                  {/* Signed, not Math.abs — a loss must print with the same visible
+                      minus sign Input CGST/SGST and every other reducing row on this
+                      side already carry (ledgerRow above), because that is what this
+                      figure actually does to the liabilities total (it is added in
+                      signed, i.e. subtracted for a loss — see the `total` closure).
+                      Printing it as a bare positive here would make a reader's own
+                      manual addition of the visible rows come out double the loss too
+                      high, even though the total cell itself was always correct. */}
+                  <td className={num}>{formatINR(profitThisYear, { showZero: true })}</td>
                   <td className={num + " text-ink-faint"}>
-                    {hasComparative ? formatINR(Math.abs(profitThisYear2), { showZero: true }) : "—"}
+                    {hasComparative ? formatINR(profitThisYear2, { showZero: true }) : "—"}
                   </td>
                 </tr>
               )}
@@ -485,11 +493,11 @@ export default async function BalanceSheetPage({
                     {profit >= 0 ? "Profit and Loss Account" : "Profit and Loss Account (debit)"}
                   </td>
                   <td className={num + " font-semibold"}>
-                    {formatINR(Math.abs(profit), { showZero: true })}
+                    {formatINR(profit, { showZero: true })}
                   </td>
                   <td className={num + " font-semibold text-ink-faint"}>
                     {hasComparative && profitBroughtForward2 !== 0 && profitThisYear2 !== 0
-                      ? formatINR(Math.abs(profit2), { showZero: true })
+                      ? formatINR(profit2, { showZero: true })
                       : "—"}
                   </td>
                 </tr>
