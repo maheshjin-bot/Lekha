@@ -27,7 +27,7 @@ function monthLabel(ym: string): string {
 }
 
 type MatchRow = {
-  bucket: "matched" | "missing_from_register" | "missing_from_2b";
+  bucket: "matched" | "missing_from_register" | "missing_from_2b" | "no_gstin_on_file";
   supplier_gstin: string | null;
   supplier_name: string | null;
   invoice_number: string | null;
@@ -107,6 +107,7 @@ export default async function Gstr2bMatchPage({
   const matched = rows.filter((r) => r.bucket === "matched");
   const missingFromRegister = rows.filter((r) => r.bucket === "missing_from_register");
   const missingFrom2b = rows.filter((r) => r.bucket === "missing_from_2b");
+  const noGstin = rows.filter((r) => r.bucket === "no_gstin_on_file");
   const noReference = missingFrom2b.filter((r) => r.invoice_number === "(no reference number entered)");
   const genuinelyMissing = missingFrom2b.filter((r) => r.invoice_number !== "(no reference number entered)");
 
@@ -254,6 +255,21 @@ export default async function Gstr2bMatchPage({
               {noReference.length === 1 ? "has" : "have"} no supplier reference number entered — they
               can never be matched by invoice number and are excluded above rather than shown as a false
               gap. Add the reference number on the voucher to make them checkable.
+            </p>
+          )}
+          {noGstin.length > 0 && (
+            <p className="border-b border-border bg-surface-2 px-4 py-2 text-xs text-ink-faint">
+              {noGstin.length} more purchase{noGstin.length === 1 ? "" : "s"} this month{" "}
+              {noGstin.length === 1 ? "is" : "are"} against a party with no GSTIN on file — an
+              unregistered supplier can never appear in a GSTR-2B, so {noGstin.length === 1 ? "it isn't" : "these aren't"}{" "}
+              counted as ITC at risk. Shown here only so nothing silently disappears from the report:{" "}
+              {noGstin.map((r, i) => (
+                <span key={`ng-${i}`}>
+                  {i > 0 && ", "}
+                  {r.supplier_name} ({formatINR(Number(r.tax_register ?? 0), { showZero: true })} tax)
+                </span>
+              ))}
+              .
             </p>
           )}
 
