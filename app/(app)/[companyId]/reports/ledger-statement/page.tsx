@@ -34,17 +34,36 @@ export default async function LedgerStatementPage({
     typeof sp.ledger === "string" ? sp.ledger : (ledgers?.[0]?.id ?? null);
   const ledgerName = ledgers?.find((l) => l.id === ledgerId)?.name;
 
-  const { data: rows } = ledgerId
-    ? await supabase.rpc("get_ledger_statement", {
-        p_company_id: companyId,
-        p_ledger_id: ledgerId,
-        p_from: period.from,
-        p_to: period.to,
-      })
-    : { data: [] };
+  const [{ data: rows }, { data: openingBalance, error: openingError }] = await Promise.all([
+    ledgerId
+      ? supabase.rpc("get_ledger_statement", {
+          p_company_id: companyId,
+          p_ledger_id: ledgerId,
+          p_from: period.from,
+          p_to: period.to,
+        })
+      : Promise.resolve({ data: [] }),
+    ledgerId
+      ? supabase.rpc("get_ledger_opening_balance", {
+          p_company_id: companyId,
+          p_ledger_id: ledgerId,
+          p_before: period.from,
+        })
+      : Promise.resolve({ data: null, error: null }),
+  ]);
 
   const lines = rows ?? [];
-  const closing = lines.length ? Number(lines[lines.length - 1].running_balance) : 0;
+  // When the period has real transactions, the last row's own running
+  // balance already has the opening baked in and is authoritative. When it
+  // has none, fall back to the opening balance itself (a ledger's true
+  // balance doesn't reset to zero just because nothing moved this period —
+  // see 1270's header) rather than assuming zero.
+  const closing = lines.length
+    ? Number(lines[lines.length - 1].running_balance)
+    : !openingError && openingBalance !== null
+      ? Number(openingBalance)
+      : 0;
+  const hasBalance = lines.length > 0 || (!openingError && openingBalance !== null);
 
   return (
     <>
@@ -59,7 +78,7 @@ export default async function LedgerStatementPage({
         title={ledgerName ? `Ledger — ${ledgerName}` : "Ledger Statement"}
         period={period.label}
         status={
-          lines.length
+          hasBalance
             ? {
                 label: `Closing ${formatINR(Math.abs(closing), { showZero: true })} ${closing >= 0 ? "Dr" : "Cr"}`,
                 tone: "ok",
@@ -82,9 +101,11 @@ export default async function LedgerStatementPage({
             {lines.length === 0 && (
               <tr>
                 <td colSpan={6} className="px-4 py-12 text-center text-ink-faint">
-                  {ledgerId
-                    ? "No entries for this ledger in the period."
-                    : "Create a ledger first."}
+                  {!ledgerId
+                    ? "Create a ledger first."
+                    : hasBalance && closing !== 0
+                      ? `No entries for this ledger in the period — balance brought forward is ${formatINR(Math.abs(closing), { showZero: true })} ${closing >= 0 ? "Dr" : "Cr"}.`
+                      : "No entries for this ledger in the period."}
                 </td>
               </tr>
             )}

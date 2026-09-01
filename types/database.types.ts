@@ -8671,6 +8671,15 @@ export type Database = {
           excess_over_cap: number
         }[]
       }
+      get_ledger_opening_balance: {
+        Args: {
+          p_before: string
+          p_branch_id?: string
+          p_company_id: string
+          p_ledger_id: string
+        }
+        Returns: number
+      }
       get_ledger_statement: {
         Args: {
           p_branch_id?: string
