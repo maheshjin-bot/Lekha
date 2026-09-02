@@ -1,6 +1,7 @@
 "use client";
 
-import { useState } from "react";
+import { Fragment, useState } from "react";
+import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { toast } from "sonner";
 import { createClient } from "@/lib/supabase/client";
@@ -27,6 +28,14 @@ type Order = {
 type Item = { id: string; name: string; uom: string; sale_rate: number | null; purchase_rate: number | null };
 type Ledger = { id: string; name: string };
 type Branch = { id: string; code: string; name: string };
+/** A voucher this order could be linked to as the one that fulfilled it. */
+type Voucher = {
+  id: string;
+  voucher_number: string;
+  voucher_date: string;
+  voucher_type: string;
+  total_amount: number;
+};
 
 type DraftLine = { description: string; item_id: string; quantity: string; uom: string; rate: string };
 
@@ -47,6 +56,7 @@ export function OrderManager({
   items,
   ledgers,
   branches,
+  vouchers,
   orderType,
 }: {
   companyId: string;
@@ -54,6 +64,7 @@ export function OrderManager({
   items: Item[];
   ledgers: Ledger[];
   branches: Branch[];
+  vouchers: Voucher[];
   orderType: "sales" | "purchase";
 }) {
   const router = useRouter();
@@ -69,6 +80,9 @@ export function OrderManager({
 
   const [fulfillNoteFor, setFulfillNoteFor] = useState<string | null>(null);
   const [fulfillNote, setFulfillNote] = useState("");
+
+  const [linkFor, setLinkFor] = useState<string | null>(null);
+  const [linkVoucherId, setLinkVoucherId] = useState("");
 
   function updateLine(i: number, patch: Partial<DraftLine>) {
     setLines((prev) => prev.map((l, idx) => (idx === i ? { ...l, ...patch } : l)));
@@ -147,6 +161,45 @@ export function OrderManager({
     setFulfillNote("");
     router.refresh();
   }
+
+  /**
+   * Points an order at the voucher that actually fulfilled it —
+   * mark_order_converted (migration 0061). Deliberately a MANUAL link, not an
+   * automation: 0061's own header settles that an order's quoted price, terms
+   * or item mix commonly differ from what ships, so nothing here creates,
+   * pre-fills or drives a voucher. It records, after the fact, which
+   * separately-raised voucher answered which order — which is what makes
+   * get_orders.fulfilled_voucher_number resolve and the "Fulfilled via"
+   * column show a real document instead of free text.
+   *
+   * Status is untouched on purpose, for the same reason 0061 kept the two
+   * functions apart: being fulfilled and having a voucher on file are two
+   * facts a business learns at two different moments.
+   */
+  async function linkVoucher(orderId: string) {
+    if (!linkVoucherId) {
+      toast.error("Pick the voucher that fulfilled this order.");
+      return;
+    }
+    setBusy(true);
+    const { error } = await createClient().rpc("mark_order_converted", {
+      p_company_id: companyId,
+      p_order_id: orderId,
+      p_voucher_id: linkVoucherId,
+    });
+    setBusy(false);
+    if (error) {
+      toast.error(error.message);
+      return;
+    }
+    toast.success("Voucher linked to this order");
+    setLinkFor(null);
+    setLinkVoucherId("");
+    router.refresh();
+  }
+
+  const voucherLabel = (v: Voucher) =>
+    `${v.voucher_number} · ${v.voucher_date} · ${formatINR(v.total_amount, { showZero: true })}`;
 
   const field =
     "rounded-lg border border-border-strong bg-surface px-3 py-2 text-sm text-ink outline-none focus-visible:border-accent focus-visible:ring-2 focus-visible:ring-accent/30";
@@ -287,8 +340,12 @@ export function OrderManager({
               </tr>
             )}
             {orders.map((o) => (
-              <>
-                <tr key={o.id} className="border-b border-border last:border-0">
+              // Fragment, keyed: the fulfil and link panels below are sibling
+              // <tr>s of the order's own row, so the key belongs on the
+              // wrapper React actually gets back from the map, not on the
+              // first row inside it.
+              <Fragment key={o.id}>
+                <tr className="border-b border-border last:border-0">
                   <td className={td}>
                     <Badge tone={STATUS_TONE[o.status] ?? "neutral"}>{o.status}</Badge>
                   </td>
@@ -298,8 +355,24 @@ export function OrderManager({
                   <td className={td + " whitespace-nowrap"}>{o.expected_date ?? "—"}</td>
                   <td className={num}>{o.item_count}</td>
                   <td className={num}>{formatINR(Number(o.total_amount), { showZero: true })}</td>
+                  {/* A linked voucher and a fulfilment note are two different
+                      facts and both can be on file, so the note is no longer
+                      merely a fallback for a link that never got written —
+                      it shows underneath the one that did. */}
                   <td className={td + " text-xs text-ink-soft"}>
-                    {o.fulfilled_voucher_number ?? o.fulfilled_note ?? "—"}
+                    {o.fulfilled_voucher_id && o.fulfilled_voucher_number ? (
+                      <Link
+                        href={`/${companyId}/vouchers/${o.fulfilled_voucher_id}`}
+                        className="font-mono text-accent underline underline-offset-2"
+                      >
+                        {o.fulfilled_voucher_number}
+                      </Link>
+                    ) : o.fulfilled_note ? null : (
+                      "—"
+                    )}
+                    {o.fulfilled_note && (
+                      <span className="block text-ink-faint">{o.fulfilled_note}</span>
+                    )}
                   </td>
                   <td className={td}>
                     {o.status === "draft" && (
@@ -341,15 +414,76 @@ export function OrderManager({
                         </button>
                       </div>
                     )}
+                    {/* Available on a confirmed order as well as a fulfilled
+                        one: the voucher may be raised before anyone gets
+                        round to moving the order's status, and the link does
+                        not depend on the status (nor change it). */}
+                    {(o.status === "confirmed" || o.status === "fulfilled") && (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setLinkFor(linkFor === o.id ? null : o.id);
+                          setLinkVoucherId(o.fulfilled_voucher_id ?? "");
+                        }}
+                        className="mt-1 block text-xs text-accent underline underline-offset-2"
+                      >
+                        {o.fulfilled_voucher_id ? "Change linked voucher" : "Link voucher"}
+                      </button>
+                    )}
                   </td>
                 </tr>
+                {linkFor === o.id && (
+                  <tr className="border-b border-border bg-bg">
+                    <td colSpan={9} className="px-4 py-3">
+                      <div className="flex flex-wrap items-end gap-3">
+                        <label className="flex min-w-[18rem] flex-1 flex-col gap-1">
+                          <span className="text-xs font-medium">
+                            Which voucher fulfilled this order?{" "}
+                            <span className="font-normal text-ink-faint">
+                              — raise it on the invoice screen as normal, then point the order at it here
+                            </span>
+                          </span>
+                          <select
+                            value={linkVoucherId}
+                            onChange={(e) => setLinkVoucherId(e.target.value)}
+                            className={field}
+                          >
+                            <option value="">Select…</option>
+                            {vouchers.map((v) => (
+                              <option key={v.id} value={v.id}>
+                                {voucherLabel(v)}
+                              </option>
+                            ))}
+                          </select>
+                        </label>
+                        <button
+                          type="button"
+                          disabled={busy}
+                          onClick={() => linkVoucher(o.id)}
+                          className="rounded-lg bg-accent px-3 py-2 text-sm font-semibold text-accent-ink hover:opacity-90 disabled:opacity-50"
+                        >
+                          Link this voucher
+                        </button>
+                      </div>
+                      <p className="mt-2 max-w-3xl text-xs text-ink-faint">
+                        {vouchers.length === 0
+                          ? `No ${orderType === "sales" ? "sales invoice or outward delivery challan" : "purchase bill"} exists in this company yet — raise one first, then come back.`
+                          : `The ${vouchers.length} most recent ${
+                              orderType === "sales"
+                                ? "sales invoices and outward delivery challans"
+                                : "purchase bills"
+                            } in this company, newest first. Linking changes nothing in the ledger and does not move the order's status. You can repoint the link at a different voucher later, but there is no way to clear it once set.`}
+                      </p>
+                    </td>
+                  </tr>
+                )}
                 {fulfillNoteFor === o.id && (
                   <tr className="border-b border-border bg-bg">
                     <td colSpan={9} className="px-4 py-3">
                       <div className="flex flex-wrap items-end gap-3">
                         <label className="flex flex-1 flex-col gap-1">
                           <span className="text-xs font-medium">
-                            How was it fulfilled? <span className="font-normal text-ink-faint">— e.g. the invoice number, once raised</span>
+                            How was it fulfilled? <span className="font-normal text-ink-faint">— free text; to point at a real voucher use “Link voucher”</span>
                           </span>
                           <input value={fulfillNote} onChange={(e) => setFulfillNote(e.target.value)} className={field} />
                         </label>
@@ -365,7 +499,7 @@ export function OrderManager({
                     </td>
                   </tr>
                 )}
-              </>
+              </Fragment>
             ))}
           </tbody>
         </table>

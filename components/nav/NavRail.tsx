@@ -195,6 +195,7 @@ export function NavRail({
     // Not under /[companyId]: a second factor belongs to the person, not to a
     // company, so someone working across six companies enrols once.
     { href: `/security`, label: "Account security" },
+    { href: `/statutory-updates`, label: "Statutory updates" },
   ];
 
   const [openGroup, setOpenGroup] = useState<string | null>(() => {

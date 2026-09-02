@@ -13,7 +13,16 @@ export default async function OrdersPage({
   const orderType: "sales" | "purchase" = sp.type === "purchase" ? "purchase" : "sales";
   const ledgerRole = orderType === "sales" ? "debtor" : "creditor";
 
-  const [{ data: orders }, { data: items }, { data: ledgers }, { data: branches }] = await Promise.all([
+  // The voucher types that can actually FULFIL an order, which is a narrower
+  // set than mark_order_converted itself accepts (it takes any voucher of the
+  // company). A sale is fulfilled by the invoice, or by the delivery challan
+  // the goods moved out on ahead of it under Rule 55(4); a purchase order by
+  // the supplier's bill. Money vouchers are not fulfilment — a receipt against
+  // a sales order settles the invoice, it does not deliver the goods.
+  const fulfilmentTypes =
+    orderType === "sales" ? ["sales", "delivery_challan_out"] : ["purchase"];
+
+  const [{ data: orders }, { data: items }, { data: ledgers }, { data: branches }, { data: vouchers }] = await Promise.all([
     supabase.rpc("get_orders", { p_company_id: companyId, p_order_type: orderType }),
     supabase
       .from("items")
@@ -28,6 +37,18 @@ export default async function OrdersPage({
       .eq("account_groups.ledger_role", ledgerRole)
       .order("name"),
     supabase.from("branches").select("id, code, name").eq("company_id", companyId).eq("is_active", true),
+    // Candidates for the "Fulfilled via" link. Capped and most-recent-first
+    // because an order is linked to a voucher raised around the same time —
+    // the screen says so, so a preparer hunting an older one knows why it is
+    // not on offer rather than assuming the link is broken.
+    supabase
+      .from("vouchers")
+      .select("id, voucher_number, voucher_date, voucher_type, total_amount")
+      .eq("company_id", companyId)
+      .eq("is_deleted", false)
+      .in("voucher_type", fulfilmentTypes)
+      .order("voucher_date", { ascending: false })
+      .limit(200),
   ]);
 
   const ledgerRows = (ledgers ?? []).map((l) => ({ id: l.id, name: l.name }));
@@ -40,7 +61,7 @@ export default async function OrdersPage({
         </h1>
         <p className="mt-1 text-sm text-ink-soft">
           A quotation or commitment — nothing here touches the ledger. Once you raise the
-          actual invoice separately, mark the order fulfilled and note its number.
+          actual invoice separately, mark the order fulfilled and link that voucher to it.
         </p>
         <div className="mt-3 flex gap-2 text-sm">
           <Link
@@ -74,6 +95,13 @@ export default async function OrdersPage({
         items={items ?? []}
         ledgers={ledgerRows}
         branches={branches ?? []}
+        vouchers={(vouchers ?? []).map((v) => ({
+          id: v.id,
+          voucher_number: v.voucher_number,
+          voucher_date: v.voucher_date,
+          voucher_type: v.voucher_type,
+          total_amount: Number(v.total_amount),
+        }))}
         orderType={orderType}
       />
     </main>

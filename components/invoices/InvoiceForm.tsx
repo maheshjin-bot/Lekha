@@ -1,6 +1,7 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
+import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { toast } from "sonner";
 import { createClient } from "@/lib/supabase/client";
@@ -157,6 +158,14 @@ export type ExistingInvoice = {
   shipTo: ShipTo | null;
 };
 
+/** One bill already on file under this supplier and this bill number. */
+type DuplicateBill = {
+  id: string;
+  voucher_number: string;
+  voucher_date: string;
+  total_amount: number;
+};
+
 function todayLocal(): string {
   const d = new Date();
   const p = (n: number) => String(n).padStart(2, "0");
@@ -268,6 +277,18 @@ export function InvoiceForm({
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
+  // Duplicate-bill check (find_duplicate_bills, migration 0007). Purchases
+  // only — see the effect below for why. Both the answer and the
+  // acknowledgement are stored WITH the question they belong to and read back
+  // derived, so a supplier or bill-number change can never leave last
+  // question's answer on screen, nor last question's tick standing in for
+  // this one's.
+  const [dupResult, setDupResult] = useState<{
+    key: string;
+    rows: DuplicateBill[];
+  } | null>(null);
+  const [ackKey, setAckKey] = useState<string | null>(null);
+
   // Ship-to (migration 0805). Collapsed by default and gated behind one
   // checkbox: the overwhelming majority of invoices deliver to the billing
   // address, and five more always-visible fields would tax every preparer to
@@ -324,6 +345,73 @@ export function InvoiceForm({
   const partyRole = config.roles[0];
 
   const branch = branches.find((b) => b.id === branchId);
+
+  /**
+   * Have we already booked a bill from this supplier carrying this bill
+   * number? find_duplicate_bills (migration 0007) has answered that question
+   * since the voucher engine was written and had never been asked.
+   *
+   * Entering the same purchase bill twice claims its input tax credit twice,
+   * which is the department's single easiest reconciliation catch: GSTR-2B
+   * carries the supplier's document number, so a second copy of one bill
+   * shows up as ITC with no counterpart. Sec 16 allows the credit once.
+   *
+   * PURCHASES AND DEBIT NOTES ONLY. `reference` means different things on the
+   * two sides: on a purchase it is the SUPPLIER'S bill number, which is
+   * unique per supplier and is exactly the duplicate key; on a sale it is the
+   * customer's PO number, and several invoices against one purchase order is
+   * ordinary trade, not a mistake. Warning there would train people to
+   * dismiss the warning here.
+   *
+   * Supplier + bill number, not amount. The database's own check is
+   * party + normalised reference (case and punctuation folded, so
+   * "VIS-4417", "vis/4417" and "VIS 4417" are one number), and that is the
+   * right key: a re-keyed bill often differs slightly in amount — a rounding
+   * difference, one line missed — and keying on the amount too would let
+   * exactly the sloppiest re-entry through. The amount is shown in the
+   * warning instead, so the preparer can see for themselves whether it is
+   * the same bill or a genuine clash of numbering.
+   *
+   * On the edit screen the invoice excludes itself, which is what
+   * p_exclude_voucher_id exists for.
+   */
+  // The question currently worth asking, or null when there is none: a sale,
+  // no supplier picked yet, or an empty bill number.
+  const dupKey = !isSale && partyId && reference.trim() ? `${partyId}|${reference.trim()}` : null;
+
+  useEffect(() => {
+    if (!dupKey) return;
+    const [party, ref] = [dupKey.slice(0, dupKey.indexOf("|")), dupKey.slice(dupKey.indexOf("|") + 1)];
+    let abandoned = false;
+    // Debounced: this would otherwise fire once per keystroke in the bill
+    // number box. The setState is inside the timer's own callback, never in
+    // the effect body — see react-hooks/set-state-in-effect.
+    const timer = setTimeout(async () => {
+      const { data } = await createClient().rpc("find_duplicate_bills", {
+        p_company_id: companyId,
+        p_party_ledger_id: party,
+        p_reference_number: ref,
+        p_exclude_voucher_id: existing?.id,
+      });
+      if (abandoned) return;
+      setDupResult({
+        key: dupKey,
+        rows: (data ?? []).map((d) => ({
+          id: d.id,
+          voucher_number: d.voucher_number,
+          voucher_date: d.voucher_date,
+          total_amount: Number(d.total_amount),
+        })),
+      });
+    }, 400);
+    return () => {
+      abandoned = true;
+      clearTimeout(timer);
+    };
+  }, [companyId, dupKey, existing?.id]);
+
+  const duplicates = dupKey && dupResult?.key === dupKey ? dupResult.rows : [];
+  const duplicatesAcknowledged = ackKey !== null && ackKey === dupKey;
 
   // Place of supply defaults to the party's state on file — the same rule
   // create_invoice applies server-side — but only until the user picks one
@@ -546,6 +634,15 @@ export function InvoiceForm({
     if (!tradingId) return setError(`Select a ${config.trading.toLowerCase()}.`);
     if (taxable <= 0) return setError("The invoice must come to more than zero.");
     if (gstOn && !placeOfSupply) return setError("Select a place of supply.");
+    // Stops the save once, rather than warning and letting it through: the
+    // warning panel is already on screen by the time anyone presses Save, so
+    // a preparer who has genuinely looked at it can tick the box and press
+    // Save again. Claiming one bill's ITC twice is not worth saving a click.
+    if (duplicates.length > 0 && !duplicatesAcknowledged) {
+      return setError(
+        `A bill numbered “${reference.trim()}” from this ${config.party.toLowerCase()} is already on file. Check the box above if this really is a different bill.`
+      );
+    }
     // The same rule app_private.assert_rule46b_number applies, checked here so
     // the preparer reads a sentence rather than waiting for a round trip that
     // fails — and, on a tax invoice, so a number the IRP would reject never
@@ -736,6 +833,77 @@ export function InvoiceForm({
             className={field}
           />
         </label>
+
+        {/* Duplicate purchase bill — find_duplicate_bills. Placed here, one
+            row under the bill-number box that produced the answer, rather
+            than saved for a dialog at Save: the preparer is still looking at
+            the field they can correct. */}
+        {duplicates.length > 0 && (
+          <div className="rounded-lg border border-warning/40 bg-warning-soft p-4 sm:col-span-3">
+            <p className="text-sm font-medium text-ink">
+              This bill number is already on file for this{" "}
+              {config.party.toLowerCase()}
+            </p>
+            <p className="mt-1 text-xs text-ink-soft">
+              Booking one supplier bill twice claims its input tax credit
+              twice, and GSTR-2B carries the supplier&rsquo;s own document
+              number — so the second copy shows up as credit with nothing
+              behind it. Sec 16 allows it once.
+            </p>
+            <ul className="mt-3 flex flex-col gap-1">
+              {duplicates.map((d) => (
+                <li key={d.id} className="text-sm">
+                  <Link
+                    href={`/${companyId}/vouchers/${d.id}`}
+                    className="font-mono text-accent underline underline-offset-2"
+                  >
+                    {d.voucher_number}
+                  </Link>{" "}
+                  <span className="tabular-nums font-mono text-ink-faint">{d.voucher_date}</span>{" "}
+                  <span className="tabular-nums font-mono">
+                    {formatINR(d.total_amount, { showZero: true })}
+                  </span>
+                  {/* The amount is deliberately NOT part of the match, so say
+                      which way this one falls rather than leaving the
+                      preparer to compare two numbers by eye. Suppressed until
+                      there is something to compare against: the warning fires
+                      as soon as the bill number is typed, which is normally
+                      before any line has been entered, and "a different total
+                      from this one (0.00)" was both true and useless (seen
+                      live while verifying this). */}
+                  {taxable <= 0 ? null : Math.abs(d.total_amount - grandTotal) < 0.005 ? (
+                    <span className="text-ink-soft"> — same total as this one</span>
+                  ) : (
+                    <span className="text-ink-soft">
+                      {" "}
+                      — a different total from this one (
+                      {formatINR(grandTotal, { showZero: true })})
+                    </span>
+                  )}
+                </li>
+              ))}
+            </ul>
+            <label className="mt-3 flex items-start gap-2.5">
+              <input
+                type="checkbox"
+                checked={duplicatesAcknowledged}
+                onChange={(e) => {
+                  setAckKey(e.target.checked ? dupKey : null);
+                  // The refusal message says to tick this box, so it has to
+                  // stop saying it the moment the box is ticked — otherwise
+                  // the instruction and the screen disagree until the next
+                  // Save (seen live while verifying this).
+                  if (e.target.checked) setError(null);
+                }}
+                className="mt-0.5 h-4 w-4 accent-[var(--color-accent)]"
+              />
+              <span className="text-sm text-ink">
+                I have checked — this is a different bill that happens to carry
+                the same number
+              </span>
+            </label>
+          </div>
+        )}
 
         {/* Migration 0865. A separate field from Reference above, not a
             rewording of it: Reference is the counterparty's document number
