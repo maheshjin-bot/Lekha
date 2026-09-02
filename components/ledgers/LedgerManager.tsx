@@ -6,6 +6,7 @@ import { createClient } from "@/lib/supabase/client";
 import { formatINR } from "@/lib/utils/currency";
 import { friendlyLedgerError } from "@/lib/ledgers/friendlyError";
 import {
+  EMAIL_PATTERN,
   GSTIN_PATTERN,
   PAN_PATTERN,
   PINCODE_PATTERN,
@@ -162,6 +163,18 @@ export function LedgerManager({
   const [address, setAddress] = useState("");
   const [city, setCity] = useState("");
   const [pincode, setPincode] = useState("");
+  // Who to ring, and on what terms. Also never collected here before.
+  const [contactPerson, setContactPerson] = useState("");
+  const [phone, setPhone] = useState("");
+  const [email, setEmail] = useState("");
+  // credit_days had NO setter anywhere in the app, on any screen, while
+  // get_overdue_receivables (0031) and get_bill_wise_outstanding both compute
+  // a due date as voucher_date + coalesce(ledgers.credit_days, 30). So every
+  // party in every company has silently been on 30-day terms, and a customer
+  // genuinely on 15 or 60 days was reported overdue on the wrong date with no
+  // way to correct it. Confirmed live: two readers, both with that fallback,
+  // zero writers.
+  const [creditDays, setCreditDays] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -172,6 +185,11 @@ export function LedgerManager({
   const panLooksValid = blankOrMatches(PAN_PATTERN, pan);
   const gstinLooksValid = blankOrMatches(GSTIN_PATTERN, gstin);
   const pincodeLooksValid = blankOrMatches(PINCODE_PATTERN, pincode);
+  const emailLooksValid = blankOrMatches(EMAIL_PATTERN, email);
+  // smallint, and negative credit terms are not a thing. An empty box means
+  // "not stated", which is what leaves the readers on their 30-day fallback.
+  const creditDaysLooksValid =
+    creditDays.trim().length === 0 || /^[0-9]{1,4}$/.test(creditDays.trim());
   // "" here means "Regular / not set" in this screen's own dropdown, which is
   // stored as null and stays permissive — so only an explicit registered type
   // demands a number.
@@ -186,6 +204,14 @@ export function LedgerManager({
     // for GSTIN on this form.
     if (!pincodeLooksValid) {
       setError("A PIN code is six digits and cannot start with a zero.");
+      return;
+    }
+    if (!emailLooksValid) {
+      setError("That doesn't look like an email address.");
+      return;
+    }
+    if (!creditDaysLooksValid) {
+      setError("Credit days is a whole number of days — leave it blank if the party has no agreed terms.");
       return;
     }
 
@@ -217,6 +243,13 @@ export function LedgerManager({
       address: address.trim() || null,
       city: city.trim() || null,
       pincode: pincode.trim() || null,
+      contact_person: contactPerson.trim() || null,
+      phone: phone.trim() || null,
+      email: email.trim() || null,
+      // Left null rather than defaulted to 30 here on purpose: null is what
+      // the readers' own coalesce(..., 30) means by "no agreed terms", and
+      // writing 30 would turn a blank box into an assertion nobody made.
+      credit_days: creditDays.trim() ? Number(creditDays.trim()) : null,
       // ledgers_gstin_matches_state (0735) requires state_code to be the
       // GSTIN's own first two characters. This screen has never had a State
       // control, so the number is the only place it can come from — deriving
@@ -253,6 +286,10 @@ export function LedgerManager({
     setAddress("");
     setCity("");
     setPincode("");
+    setContactPerson("");
+    setPhone("");
+    setEmail("");
+    setCreditDays("");
     setBusy(false);
     router.refresh();
   }
@@ -540,6 +577,70 @@ export function LedgerManager({
                   for this party at all.
                 </span>
               )}
+
+              <label className="mt-1 flex flex-col gap-1.5">
+                <span className="text-xs text-ink-faint">Contact person</span>
+                <input
+                  value={contactPerson}
+                  onChange={(e) => setContactPerson(e.target.value)}
+                  className={field}
+                />
+              </label>
+              <div className="grid gap-2 sm:grid-cols-2">
+                <label className="flex flex-col gap-1.5">
+                  <span className="text-xs text-ink-faint">Phone</span>
+                  <input
+                    value={phone}
+                    onChange={(e) => setPhone(e.target.value)}
+                    inputMode="tel"
+                    className={field}
+                  />
+                </label>
+                <label className="flex flex-col gap-1.5">
+                  <span className="text-xs text-ink-faint">Email</span>
+                  <input
+                    value={email}
+                    onChange={(e) => setEmail(e.target.value)}
+                    inputMode="email"
+                    className={
+                      field + (emailLooksValid ? "" : " border-error focus-visible:border-error")
+                    }
+                  />
+                </label>
+              </div>
+              {email.length > 0 && !emailLooksValid && (
+                <span className="text-xs text-warning">
+                  That is not a usable address.
+                </span>
+              )}
+
+              <label className="mt-1 flex flex-col gap-1.5">
+                <span className="text-xs text-ink-faint">
+                  Credit days{" "}
+                  <span className="text-ink-faint">
+                    — blank means no agreed terms
+                  </span>
+                </span>
+                <input
+                  value={creditDays}
+                  onChange={(e) =>
+                    setCreditDays(e.target.value.replace(/[^0-9]/g, "").slice(0, 4))
+                  }
+                  inputMode="numeric"
+                  placeholder="30"
+                  className={
+                    field +
+                    " w-28 text-right tabular-nums" +
+                    (creditDaysLooksValid ? "" : " border-error focus-visible:border-error")
+                  }
+                />
+              </label>
+              <span className="text-xs text-ink-faint">
+                What the overdue-receivables and bill-wise outstanding reports
+                measure this party&rsquo;s invoices against. Left blank they
+                assume 30 days — which is what every party has silently been
+                on, because until now there was nowhere to say otherwise.
+              </span>
             </div>
           </div>
 
