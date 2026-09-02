@@ -2,6 +2,8 @@ import { createClient } from "@/lib/supabase/server";
 import { formatINR } from "@/lib/utils/currency";
 import { defaultPeriod } from "@/lib/utils/period";
 import { ReportShell, th, td, num } from "@/components/reports/ReportShell";
+import { EquityCarriedNote, OpeningBalanceGap } from "@/components/reports/OpeningBalanceGap";
+import type { OpeningGapRow } from "@/lib/reports/openingBalanceGap";
 
 export default async function TrialBalancePage({
   params,
@@ -40,6 +42,43 @@ export default async function TrialBalancePage({
 
   const tallied = Math.abs(totals.cdr - totals.ccr) < 0.005;
 
+  // Why the difference, and what to do about it (0755 / 1350). Until now this
+  // page printed a bare "Out by ₹X" and stopped there, even though
+  // get_unbalanced_opening_balances has been able to name the contributing
+  // ledgers since August — it had no caller anywhere in the app.
+  //
+  // The trial balance is the cleanest place to make the claim: closing debits
+  // minus closing credits equals the sum of every ledger's opening balance
+  // whenever the period columns themselves net out, so an exact match against
+  // company_total_imbalance proves the difference is opening balances and
+  // nothing else. The Opening Balance Equity lookup runs either way — a
+  // balanced company with a figure sitting on that ledger has its own thing to
+  // say (EquityCarriedNote), and it is one indexed row.
+  const [{ data: gapRows }, { data: equity }, { data: membership }, { count: voucherCount }] =
+    await Promise.all([
+      tallied
+        ? Promise.resolve({ data: null })
+        : supabase.rpc("get_unbalanced_opening_balances", { p_company_id: companyId }),
+      supabase
+        .from("ledgers")
+        .select("id, opening_balance_amount, opening_balance_type")
+        .eq("company_id", companyId)
+        .ilike("name", "opening balance equity")
+        .maybeSingle(),
+      tallied
+        ? Promise.resolve({ data: null })
+        : supabase.from("company_members").select("role").eq("company_id", companyId),
+      tallied
+        ? Promise.resolve({ count: null })
+        : supabase
+            .from("vouchers")
+            .select("id", { count: "exact", head: true })
+            .eq("company_id", companyId)
+            .eq("is_deleted", false),
+    ]);
+
+  const isAdmin = (membership?.[0]?.role ?? null) === "admin";
+
   return (
     <ReportShell
       title="Trial Balance"
@@ -55,6 +94,17 @@ export default async function TrialBalancePage({
         <p className="m-4 rounded-lg bg-error-soft px-3 py-2 text-sm text-error">
           {error.message}
         </p>
+      )}
+      {!tallied && (
+        <OpeningBalanceGap
+          companyId={companyId}
+          statement="Trial Balance"
+          reportGap={totals.cdr - totals.ccr}
+          rows={(gapRows ?? []) as OpeningGapRow[]}
+          equity={equity ?? null}
+          isAdmin={isAdmin}
+          voucherCount={voucherCount ?? 0}
+        />
       )}
       <table className="w-full min-w-[720px] text-sm">
         <thead>
@@ -100,6 +150,7 @@ export default async function TrialBalancePage({
           </tfoot>
         )}
       </table>
+      {tallied && <EquityCarriedNote companyId={companyId} equity={equity ?? null} />}
     </ReportShell>
   );
 }
