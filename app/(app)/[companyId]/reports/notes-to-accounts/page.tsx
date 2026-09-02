@@ -249,6 +249,17 @@ export default async function NotesToAccountsPage({
           money logged separately. Disputed/undisputed classification and commitments (Note (ii)) are
           not tracked by this schema and are not represented here.
         </p>
+        <p className="mt-1.5 text-xs text-ink-faint print:hidden">
+          Every line below is a deliberate disclosure decision, not something this app can infer.
+          Both halves are maintained on{" "}
+          <a href={`/${companyId}/notices`} className="text-accent underline underline-offset-4">
+            Notices &amp; assessments
+          </a>{" "}
+          — tick or untick a tax demand there as it is disputed, paid or dropped, and record
+          guarantees given and non-tax claims under &ldquo;other contingent liabilities&rdquo; on the
+          same screen. A demand already paid is a recognised liability in the books: leaving it here
+          discloses it twice.
+        </p>
       </div>
       <table className="w-full min-w-[900px] text-sm">
         <thead>

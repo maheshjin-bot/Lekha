@@ -3377,6 +3377,20 @@ describeDb(`notes to accounts (${hasDb ? "live" : noDbReason})`, () => {
     expect(rows, `ageing schedule receivable total doesn't match get_party_outstanding:\n${offenders(rows)}`).toEqual([]);
   });
 
+  it("a contingent liability's status and resolved_date agree — or the note discloses it forever", async () => {
+    // get_contingent_liabilities_note (0105) decides membership of the note
+    // from resolved_date alone, which is right for an as-at disclosure and
+    // means status='closed' with a null resolved_date keeps the item in every
+    // note at every date while the screen calls it closed. 1540 makes both
+    // contradictory states unrepresentable; this is the standing check.
+    const rows = await sql(`
+      select id, company_id, category, description, status, raised_date, resolved_date
+        from contingent_liabilities
+       where (status = 'closed') <> (resolved_date is not null)
+    `);
+    expect(rows, `a contingent liability whose status and resolved_date disagree:\n${offenders(rows)}`).toEqual([]);
+  });
+
   it("no ageing schedule bucket is ever negative, for either receivables or payables", async () => {
     const rows = await sql(`
       select c.name, r.segment as party_type, s.bucket_label, s.amount

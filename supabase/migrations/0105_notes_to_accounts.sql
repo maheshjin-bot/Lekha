@@ -280,6 +280,17 @@ alter table public.contingent_liabilities
   foreign key (related_ledger_id, company_id) references public.ledgers(id, company_id)
   on delete set null;
 
+-- status and resolved_date must agree, because get_contingent_liabilities_note
+-- (below) filters on resolved_date alone: status='closed' with a null
+-- resolved_date would keep the item in the note at every as-at date forever
+-- while the screen calls it closed, and the mirror state is the same
+-- contradiction reversed. Added to the live database after the fact by 1540
+-- and folded back here under the same constraint name — 1540 drops-if-exists
+-- before adding, so both running in order is idempotent.
+alter table public.contingent_liabilities
+  add constraint contingent_liabilities_resolved_date_matches_status_check
+  check ((status = 'closed') = (resolved_date is not null));
+
 create index contingent_liabilities_company_status_idx
   on public.contingent_liabilities(company_id, status, raised_date);
 
