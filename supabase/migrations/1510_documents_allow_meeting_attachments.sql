@@ -1,5 +1,5 @@
 -- ============================================================================
--- 1430 — Attaching a document to a meeting has never worked: 'meeting' was
+-- 1510 — Attaching a document to a meeting has never worked: 'meeting' was
 -- missing from documents_entity_type_check
 -- ============================================================================
 -- CONFIRMED LIVE before writing this:
@@ -56,4 +56,4 @@ alter table public.documents
      'signature_request','signature_request_signer','meeting'));
 
 comment on constraint documents_entity_type_check on public.documents is
-  'signature_request = the document(s) routed for signature (entity_id = signature_requests.id); signature_request_signer = one signer''s signed-back copy (entity_id = signature_request_signers.id). Added by 0175. meeting = minutes / notice of meeting / attendance sheet for one board or general meeting (entity_id = meetings.id) — the Meetings screen has passed this value since it shipped, but the constraint did not allow it until 1430.';
+  'signature_request = the document(s) routed for signature (entity_id = signature_requests.id); signature_request_signer = one signer''s signed-back copy (entity_id = signature_request_signers.id). Added by 0175. meeting = minutes / notice of meeting / attendance sheet for one board or general meeting (entity_id = meetings.id) — the Meetings screen has passed this value since it shipped, but the constraint did not allow it until 1510.';
