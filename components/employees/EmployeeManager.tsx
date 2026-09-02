@@ -1,9 +1,19 @@
 "use client";
 
-import { useState } from "react";
+import { Fragment, useState } from "react";
+import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
 import { formatINR } from "@/lib/utils/currency";
+import { Badge } from "@/components/ui/Badge";
+import { EmployeeEditRow } from "@/components/employees/EmployeeEditRow";
+import {
+  monthLabel,
+  nextScheduledStructure,
+  structureGross,
+  structureInForceOn,
+  type SalaryStructure,
+} from "@/lib/employees/salaryStructures";
 
 type Employee = {
   id: string;
@@ -14,8 +24,7 @@ type Employee = {
   date_of_joining: string;
   date_of_leaving: string | null;
   is_active: boolean;
-  current_basic: number | null;
-  current_gross: number | null;
+  branch_id: string | null;
 };
 
 type TaxDeclaration = {
@@ -33,17 +42,37 @@ const FY_LABEL_PATTERN = /^\d{4}-\d{2}$/;
 export function EmployeeManager({
   companyId,
   employees,
+  structures,
   branches,
   taxDeclarations,
   currentFinancialYearLabel,
+  fnfExitDates,
+  postedMonths,
+  today,
 }: {
   companyId: string;
   employees: Employee[];
+  /** Every structure row for the company, newest first. */
+  structures: SalaryStructure[];
   taxDeclarations: TaxDeclaration[];
   currentFinancialYearLabel: string;
   branches: { id: string; code: string; name: string; state_code: string | null }[];
+  /** employee_id -> exit_date, for employees with a finalized F&F settlement. */
+  fnfExitDates: Record<string, string>;
+  /** First-of-month dates this company has already posted payroll for. */
+  postedMonths: string[];
+  /** Today in Asia/Kolkata, resolved on the server so both sides agree. */
+  today: string;
 }) {
   const router = useRouter();
+  const [manageId, setManageId] = useState<string | null>(null);
+
+  const structuresByEmployee = new Map<string, SalaryStructure[]>();
+  for (const s of structures) {
+    const list = structuresByEmployee.get(s.employee_id);
+    if (list) list.push(s);
+    else structuresByEmployee.set(s.employee_id, [s]);
+  }
   const [name, setName] = useState("");
   const [pan, setPan] = useState("");
   const [uan, setUan] = useState("");
@@ -213,7 +242,7 @@ export function EmployeeManager({
     <div className="mt-8 grid gap-8 lg:grid-cols-[1fr_360px]">
       <section className="min-w-0">
         <div className="overflow-x-auto rounded-lg border border-border bg-surface">
-          <table className="w-full min-w-[640px] text-sm">
+          <table className="w-full min-w-[760px] text-sm">
             <thead>
               <tr className="border-b border-border text-left text-[11px] uppercase tracking-wide text-ink-faint">
                 <th className="px-4 py-2.5 font-medium">Employee</th>
@@ -223,31 +252,57 @@ export function EmployeeManager({
                 <th className="px-4 py-2.5 font-medium">
                   Regime {currentFinancialYearLabel}
                 </th>
-                <th className="px-4 py-2.5 text-right font-medium">Current gross</th>
+                <th className="px-4 py-2.5 text-right font-medium">Gross now</th>
+                <th className="px-4 py-2.5 font-medium" />
               </tr>
             </thead>
             <tbody>
               {employees.length === 0 && (
                 <tr>
-                  <td colSpan={6} className="px-4 py-10 text-center text-ink-faint">
+                  <td colSpan={7} className="px-4 py-10 text-center text-ink-faint">
                     No employees yet. Add one on the right.
                   </td>
                 </tr>
               )}
               {employees.map((emp) => {
                 const declared = declarationByEmployee.get(emp.id);
+                const mine = structuresByEmployee.get(emp.id) ?? [];
+                // "In force TODAY", not "the newest row" — a revision can
+                // legitimately be recorded ahead of the month it starts, and
+                // before 1380 there was never a second row for the difference
+                // between the two to show up in.
+                const inForce = structureInForceOn(mine, today);
+                const upcoming = nextScheduledStructure(mine, today);
+                const fnfExitDate = fnfExitDates[emp.id] ?? null;
+                const missingUan = !emp.uan;
                 return (
-                <tr key={emp.id} className="border-b border-border last:border-0">
+                <Fragment key={emp.id}>
+                <tr className="border-b border-border last:border-0">
                   <td className="px-4 py-2.5 font-medium">{emp.name}</td>
                   <td className="px-4 py-2.5 font-mono text-xs text-ink-soft">
                     {emp.pan ?? <span className="text-ink-faint">—</span>}
                   </td>
                   <td className="px-4 py-2.5 text-ink-soft">{emp.date_of_joining}</td>
-                  <td className="px-4 py-2.5 text-ink-soft">
-                    {!emp.is_active || emp.date_of_leaving ? (
-                      <span className="text-xs text-ink-faint">
-                        Left{emp.date_of_leaving ? ` ${emp.date_of_leaving}` : ""}
-                      </span>
+                  <td className="px-4 py-2.5">
+                    {emp.date_of_leaving ? (
+                      <>
+                        <div className="text-xs text-ink-soft">
+                          Left {emp.date_of_leaving}
+                        </div>
+                        {!fnfExitDate && (
+                          <Link
+                            href={`/${companyId}/fnf-settlement`}
+                            className="text-[11px] text-warning hover:underline"
+                          >
+                            No full &amp; final settled →
+                          </Link>
+                        )}
+                      </>
+                    ) : !emp.is_active ? (
+                      // Inactive with no date cannot be placed in time at all —
+                      // 1240 hardened the reports against it and nothing writes
+                      // it any more, but say so rather than render "Left".
+                      <Badge tone="bad">Inactive, no date</Badge>
                     ) : (
                       <span className="text-xs text-success">Active</span>
                     )}
@@ -261,14 +316,46 @@ export function EmployeeManager({
                       <span className="text-xs text-ink-faint">Not declared — defaults to new</span>
                     )}
                   </td>
-                  <td className="px-4 py-2.5 text-right tabular-nums font-mono">
-                    {emp.current_gross != null ? (
-                      formatINR(emp.current_gross)
+                  <td className="px-4 py-2.5 text-right font-mono tabular-nums">
+                    {inForce ? (
+                      formatINR(structureGross(inForce))
                     ) : (
                       <span className="text-ink-faint">—</span>
                     )}
+                    {upcoming && (
+                      <div className="text-[11px] font-sans text-warning">
+                        {formatINR(structureGross(upcoming))} from{" "}
+                        {monthLabel(upcoming.effective_from)}
+                      </div>
+                    )}
+                  </td>
+                  <td className="px-4 py-2.5 text-right">
+                    <button
+                      type="button"
+                      onClick={() => setManageId(manageId === emp.id ? null : emp.id)}
+                      className="text-xs font-medium text-accent hover:underline"
+                    >
+                      {manageId === emp.id ? "Cancel" : missingUan ? "Add UAN / edit" : "Edit"}
+                    </button>
                   </td>
                 </tr>
+                {manageId === emp.id && (
+                  <tr className="border-b border-border bg-surface-2 last:border-0">
+                    <td colSpan={7} className="p-0">
+                      <EmployeeEditRow
+                        companyId={companyId}
+                        employee={emp}
+                        structures={mine}
+                        branches={branches}
+                        fnfExitDate={fnfExitDate}
+                        postedMonths={postedMonths}
+                        today={today}
+                        onDone={() => setManageId(null)}
+                      />
+                    </td>
+                  </tr>
+                )}
+                </Fragment>
                 );
               })}
             </tbody>
@@ -280,8 +367,9 @@ export function EmployeeManager({
         <h2 className="font-semibold">New employee</h2>
         <p className="mt-1 text-xs text-ink-faint">
           Creates the employee and their starting salary structure together,
-          effective from the date of joining. Editing a salary later needs a
-          new structure row — not yet a form here.
+          effective from the date of joining. An increment later is recorded
+          against the employee itself, under Edit — as a new row effective from
+          a month, so past months keep computing on the old salary.
         </p>
         <form onSubmit={onSubmit} className="mt-4 flex flex-col gap-3">
           <label className="flex flex-col gap-1.5">

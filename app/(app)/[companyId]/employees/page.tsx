@@ -2,6 +2,7 @@ import Link from "next/link";
 import { createClient } from "@/lib/supabase/server";
 import { EmployeeManager } from "@/components/employees/EmployeeManager";
 import { financialYearLabel } from "@/lib/utils/period";
+import { todayInIndia } from "@/lib/employees/salaryStructures";
 
 export default async function EmployeesPage({
   params,
@@ -16,15 +17,22 @@ export default async function EmployeesPage({
     { data: branches },
     { data: company },
     { data: taxDeclarations },
+    { data: exitSettlements },
+    { data: postings },
   ] = await Promise.all([
     supabase
       .from("employees")
       .select("id, name, pan, uan, esi_number, date_of_joining, date_of_leaving, is_active, branch_id")
       .eq("company_id", companyId)
       .order("name"),
+    // Every structure row, not just the newest per employee: the edit panel
+    // shows the whole revision history, which is the only thing that makes
+    // effective dating visible to the person relying on it.
     supabase
       .from("employee_salary_structures")
-      .select("employee_id, effective_from, basic, dearness_allowance, hra, special_allowance, other_allowance")
+      .select(
+        "employee_id, effective_from, basic, dearness_allowance, hra, special_allowance, other_allowance, pf_applicable, pf_wage_ceiling_applies, esi_applicable, professional_tax_monthly"
+      )
       .eq("company_id", companyId)
       .order("effective_from", { ascending: false }),
     supabase.rpc("get_company_modules", { p_company_id: companyId }),
@@ -46,31 +54,28 @@ export default async function EmployeesPage({
       .select("employee_id, financial_year_label, regime")
       .eq("company_id", companyId)
       .order("financial_year_label", { ascending: false }),
+    // A finalized settlement owns the exit date once it exists — the edit
+    // panel offers the Full & Final screen instead of its own date field, and
+    // set_employee_leaving_date (1380) refuses either way.
+    supabase
+      .from("employee_exit_settlements")
+      .select("employee_id, exit_date")
+      .eq("company_id", companyId),
+    // Months already posted, paid and remitted: a salary revision or a leaving
+    // date may not reach back into one. The RPCs enforce it; this is only so
+    // the form can say so before the round trip.
+    supabase
+      .from("payroll_postings")
+      .select("period_month")
+      .eq("company_id", companyId),
   ]);
 
   const payrollOn = (modules ?? []).some((m) => m.code === "payroll" && m.active);
 
-  // First row per employee, since structures are ordered newest-first —
-  // that is this employee's CURRENT structure as of today.
-  const latestByEmployee = new Map<string, { basic: number; gross: number }>();
-  for (const s of structures ?? []) {
-    if (latestByEmployee.has(s.employee_id)) continue;
-    latestByEmployee.set(s.employee_id, {
-      basic: Number(s.basic),
-      gross:
-        Number(s.basic) +
-        Number(s.dearness_allowance) +
-        Number(s.hra) +
-        Number(s.special_allowance) +
-        Number(s.other_allowance),
-    });
+  const fnfExitDates: Record<string, string> = {};
+  for (const s of exitSettlements ?? []) {
+    if (s.exit_date) fnfExitDates[s.employee_id] = s.exit_date;
   }
-
-  const rows = (employees ?? []).map((e) => ({
-    ...e,
-    current_basic: latestByEmployee.get(e.id)?.basic ?? null,
-    current_gross: latestByEmployee.get(e.id)?.gross ?? null,
-  }));
 
   return (
     <main className="mx-auto max-w-5xl px-6 py-10">
@@ -100,7 +105,22 @@ export default async function EmployeesPage({
       )}
       <EmployeeManager
         companyId={companyId}
-        employees={rows}
+        employees={employees ?? []}
+        structures={(structures ?? []).map((s) => ({
+          ...s,
+          // numeric comes back as a string over PostgREST.
+          basic: Number(s.basic),
+          dearness_allowance: Number(s.dearness_allowance),
+          hra: Number(s.hra),
+          special_allowance: Number(s.special_allowance),
+          other_allowance: Number(s.other_allowance),
+          professional_tax_monthly: Number(s.professional_tax_monthly),
+        }))}
+        fnfExitDates={fnfExitDates}
+        postedMonths={(postings ?? []).map((p) => p.period_month)}
+        // Resolved on the server so the list and the edit panel agree on which
+        // structure is "in force now" — see todayInIndia for why not UTC.
+        today={todayInIndia()}
         branches={branches ?? []}
         // regime is a checked text column ('old' | 'new'), not a generated
         // enum, so Supabase's typegen widens it to `string` — the CHECK
