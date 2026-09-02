@@ -111,8 +111,11 @@ export default async function TdsThresholdStatusPage({
       <div className="border-b border-border p-4">
         <h2 className="font-semibold">Every deductee with payment history this financial year</h2>
         <p className="mt-0.5 text-xs text-ink-faint">
-          Checked against each deductee ledger&rsquo;s own current TDS section (Settings →
-          Ledgers). Cumulative figures are real credit-side voucher postings this FY up to the
+          Checked against each deductee ledger&rsquo;s own current TDS section, set under{" "}
+          <Link href={`/${companyId}/ledgers`} className="underline">
+            Ledgers
+          </Link>
+          . Cumulative figures are real credit-side voucher postings this FY up to the
           date above — not a computed &ldquo;gross invoice&rdquo; estimate. See the note below
           the table for exactly what is and isn&rsquo;t counted.
         </p>
@@ -190,8 +193,12 @@ export default async function TdsThresholdStatusPage({
         excluded (it is not a second amount), but a credit note/return is also excluded rather
         than netted, and a pure advance paid before any invoice exists is not counted at all —
         both stated gaps, not silent ones. Each deductee is checked against its OWN current
-        default TDS section (Settings → Ledgers) — a deductee genuinely liable under more than
-        one section in the same year needs a manual check. &ldquo;Basis for TDS&rdquo; is the
+        default TDS section, set on the party&rsquo;s own record under{" "}
+        <Link href={`/${companyId}/ledgers`} className="underline">
+          Ledgers
+        </Link>{" "}
+        — a deductee genuinely liable under more than one section in the same year needs a
+        manual check. &ldquo;Basis for TDS&rdquo; is the
         FULL cumulative amount for every section except 194Q, where the law taxes only the
         amount above the Rs 50 lakh limit — shown separately, not blended into the same column
         as the others. Sec 194Q&rsquo;s own buyer-turnover eligibility (&gt; Rs 10 crore in the

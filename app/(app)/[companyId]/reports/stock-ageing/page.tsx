@@ -109,8 +109,13 @@ export default async function StockAgeingPage({
         to this date — no separate cost-layer ledger exists yet, so this is
         derived fresh each time, not stored. Value is each bucket&rsquo;s
         quantity at the item&rsquo;s own weighted-average rate (Stock
-        Summary), not a fabricated per-layer FIFO cost — this app values
-        stock only one way (see Settings → Inventory). An item whose
+        Summary), not a fabricated per-layer FIFO cost. Which method this
+        company&rsquo;s official stock value uses is stated in the{" "}
+        <Link href={`/${companyId}/reports/stock`} className="underline">
+          Stock Summary
+        </Link>{" "}
+        heading; no screen in LEKHA changes it, so treat it as fixed for the
+        life of the books unless a migration moves it. An item whose
         recorded sales exceed its recorded receipts (a data problem, not an
         ageing one) may show a smaller total here than Stock Summary for the
         same item; that gap is never invented an age for.
