@@ -190,7 +190,9 @@ export default async function EsiMcPage({
         confirmed upload-ready file</strong> — the field list is taken from ESIC&rsquo;s published
         template description, but the exact .xls layout, cell formatting and reason-code list have
         not been verified byte-for-byte against the employer portal&rsquo;s own upload validator (no
-        sandbox exists to test that against). Rows are the same employees Payroll register marks
+        sandbox exists to test that against). The CSV button above exports this table as a plain
+        spreadsheet — it is not the ESIC .xls bulk-upload file itself, which still has to be
+        assembled and uploaded on the employer portal. Rows are the same employees Payroll register marks
         ESI-applicable — the flag on the salary structure <em>and</em> a full month&rsquo;s gross at
         or under ₹21,000, tested the same way Payroll register tests it, so someone who becomes
         ineligible partway through the year by crossing that ceiling drops off this list the month

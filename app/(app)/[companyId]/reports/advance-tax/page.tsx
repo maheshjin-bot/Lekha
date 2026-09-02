@@ -234,6 +234,8 @@ export default async function AdvanceTaxPage({
           Tax payments
         </Link>
         — record a new instalment there, this screen only reads what has already been entered.
+        LEKHA does not pay advance tax or talk to the e-filing portal: the instalment itself is paid
+        on the income tax portal, and recorded here afterwards.
       </p>
 
       <p className="border-t border-border px-4 py-3 text-xs text-ink-faint">{summary.notes}</p>

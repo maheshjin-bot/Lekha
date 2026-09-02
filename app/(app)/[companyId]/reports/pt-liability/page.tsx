@@ -130,7 +130,7 @@ export default async function PtLiabilityPage({
   return (
     <ReportShell
       title="Professional tax — liability by State"
-      period={`${label} · split by State and branch, not computed from a slab table`}
+      period={`${label} · split by State and branch, not computed from a slab table — not a filing`}
       status={{
         label: `${formatINR(total, { showZero: true })} across ${liability.length} state${liability.length === 1 ? "" : "s"}`,
         tone: "ok",
@@ -278,6 +278,11 @@ export default async function PtLiabilityPage({
           still opens it, in case you want to keep a note there in the meantime, but this is a known
           limitation, not an oversight — adding a Professional Tax category to that shared table is
           a small change intentionally left for its own, single-owner migration.
+        </p>
+        <p>
+          Nothing on this screen is filed or paid anywhere. Professional tax is a State levy, filed
+          and paid on each State&rsquo;s own portal — LEKHA has access to none of them, so this is a
+          computation to file from, not a return.
         </p>
       </div>
     </ReportShell>
