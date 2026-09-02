@@ -30,13 +30,14 @@ export default async function BranchesPage({
       </p>
 
       <div className="mt-8">
-        <BranchesManager branches={branches ?? []} states={states ?? []} />
+        <BranchesManager companyId={companyId} branches={branches ?? []} states={states ?? []} />
       </div>
 
       <p className="mt-8 text-xs text-ink-faint">
-        Admin only. A branch&rsquo;s code, name and GST registration are set elsewhere and
-        aren&rsquo;t editable here — GST registrations, including attaching one to a branch, live
-        under{" "}
+        Admin only. A branch&rsquo;s code, name and state are set when it&rsquo;s created and
+        can&rsquo;t be changed afterwards — the code prefixes every voucher number raised from
+        the branch, so changing it would make already-printed numbers lie about what they
+        name. A GST registration is attached to a branch under{" "}
         <Link href={`/${companyId}/registrations`} className="underline">
           Registrations
         </Link>
