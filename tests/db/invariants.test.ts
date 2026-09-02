@@ -4989,3 +4989,177 @@ describe.skip("resolve_conditional_modules [needs seed]", () => {
   // day per module_active(). Assert whichever behaviour is decided to be right.
   it("a module activated and deactivated on the same day is not active", async () => {});
 });
+
+// ---------------------------------------------------------------------------
+// Branch-scoped statements (1520)
+// ---------------------------------------------------------------------------
+// Read-only, so these are safe against the live project and are meant to be
+// pointed at it. Both would have failed before 1520.
+describeDb(`branch-scoped statements (${hasDb ? "live" : noDbReason})`, () => {
+  it("the per-branch balance sheets add up to the consolidated one, for every company", async () => {
+    // The property that makes a per-branch breakdown mean anything, and the
+    // one app_private.ledger_opening_signed broke: it branch-filtered the
+    // voucher-entry movements but added the ledger's whole opening balance to
+    // every branch, so with N branches the openings were counted N times.
+    // Sharma Textiles (Head Office + Mumbai) was out by 57,500.00 on the
+    // asset side. Every other company has one branch, which is exactly why
+    // this went unseen — and why the assertion is written over all of them
+    // rather than over the one that could show it.
+    const rows = await sql(`
+      with con as (
+        select c.id,
+               coalesce(sum(bs.amount) filter (where bs.side = 'assets'), 0) as assets,
+               coalesce(sum(bs.amount) filter (where bs.side = 'liabilities'), 0) as liabs
+          from public.companies c
+          left join lateral public.get_balance_sheet(c.id, current_date, null) bs on true
+         group by c.id
+      ),
+      per_branch as (
+        select c.id,
+               coalesce(sum(bs.amount) filter (where bs.side = 'assets'), 0) as assets,
+               coalesce(sum(bs.amount) filter (where bs.side = 'liabilities'), 0) as liabs
+          from public.companies c
+          join public.branches b on b.company_id = c.id
+          left join lateral public.get_balance_sheet(c.id, current_date, b.id) bs on true
+         group by c.id
+      )
+      select c.name,
+             round(con.assets - pb.assets, 2) as assets_gap,
+             round(con.liabs  - pb.liabs, 2)  as liabilities_gap
+        from con
+        join per_branch pb on pb.id = con.id
+        join public.companies c on c.id = con.id
+       where round(con.assets - pb.assets, 2) <> 0
+          or round(con.liabs  - pb.liabs, 2)  <> 0
+    `);
+    expect(
+      rows,
+      `companies whose per-branch balance sheets do not sum to the consolidated one:\n${offenders(rows)}`
+    ).toEqual([]);
+  });
+
+  it("a ledger's opening balance lands on exactly one branch, the head office", async () => {
+    // The narrower statement of the same rule, asserted directly on the
+    // helper's public wrapper (1270) so a regression is reported against the
+    // opening balance itself rather than as a balance-sheet total that is off
+    // by an unexplained amount.
+    const rows = await sql(`
+      select c.name as company, l.name as ledger,
+             public.get_ledger_opening_balance(c.id, l.id, current_date, null) as consolidated,
+             sum(public.get_ledger_opening_balance(c.id, l.id, current_date, b.id)) as branch_sum
+        from public.companies c
+        join public.ledgers l on l.company_id = c.id
+        join public.branches b on b.company_id = c.id
+       where l.opening_balance_amount <> 0
+       group by c.id, c.name, l.id, l.name
+      having public.get_ledger_opening_balance(c.id, l.id, current_date, null)
+             <> sum(public.get_ledger_opening_balance(c.id, l.id, current_date, b.id))
+    `);
+    expect(
+      rows,
+      `ledgers whose per-branch opening balances do not sum to the company figure:\n${offenders(rows)}`
+    ).toEqual([]);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// The period lock reaches the lines, not just the header (1520)
+// ---------------------------------------------------------------------------
+describeDb(`period lock coverage (${hasDb ? "live" : noDbReason})`, () => {
+  it("every table carrying a voucher's own amounts has the period-lock trigger", async () => {
+    // enforce_period_open was attached to public.vouchers alone from 0007
+    // until 1520, while voucher_entries and voucher_items — both directly
+    // INSERT/UPDATE/DELETE-able by `authenticated` — consulted no lock at all.
+    // Listing the tables explicitly means a new voucher-line table shipping
+    // without the lock fails here instead of shipping.
+    const mustBeLocked = ["voucher_entries", "voucher_items", "vouchers"];
+    const rows = await sql<{ table_name: string }>(
+      `
+      select c.relname as table_name
+        from pg_class c
+        join pg_namespace n on n.oid = c.relnamespace
+        join pg_trigger t on t.tgrelid = c.oid and not t.tgisinternal
+        join pg_proc p on p.oid = t.tgfoid
+       where n.nspname = 'public'
+         and c.relname = any($1)
+         and p.proname in ('enforce_period_open', 'enforce_period_open_voucher_line')
+       group by c.relname
+       order by 1
+    `,
+      [mustBeLocked]
+    );
+    expect(rows.map((r) => r.table_name)).toEqual(mustBeLocked);
+  });
+
+  it("the period-lock trigger fires on insert, update and delete on each of them", async () => {
+    // A trigger that only covered UPDATE would pass the test above and still
+    // leave a closed period's lines deletable. tgtype bits: 2 = BEFORE,
+    // 4 = INSERT, 8 = DELETE, 16 = UPDATE.
+    const rows = await sql(`
+      select c.relname as table_name, t.tgname,
+             (t.tgtype & 4) <> 0 as on_insert,
+             (t.tgtype & 8) <> 0 as on_delete,
+             (t.tgtype & 16) <> 0 as on_update,
+             (t.tgtype & 2) <> 0 as is_before
+        from pg_class c
+        join pg_namespace n on n.oid = c.relnamespace
+        join pg_trigger t on t.tgrelid = c.oid and not t.tgisinternal
+        join pg_proc p on p.oid = t.tgfoid
+       where n.nspname = 'public'
+         and c.relname in ('vouchers', 'voucher_entries', 'voucher_items')
+         and p.proname in ('enforce_period_open', 'enforce_period_open_voucher_line')
+         and not ((t.tgtype & 4) <> 0 and (t.tgtype & 8) <> 0
+                  and (t.tgtype & 16) <> 0 and (t.tgtype & 2) <> 0)
+    `);
+    expect(
+      rows,
+      `period-lock triggers that are not BEFORE INSERT OR UPDATE OR DELETE:\n${offenders(rows)}`
+    ).toEqual([]);
+  });
+
+  it("enforce_period_open tests the voucher's old date as well as its new one", async () => {
+    // Deliberately a source assertion: proving it behaviourally needs a
+    // company with a lock_date and a voucher inside it, which is a write
+    // fixture this read-only lane does not have. From 0007 until 1520 the
+    // function computed coalesce(new.voucher_date, old.voucher_date), and
+    // voucher_date is NOT NULL, so on UPDATE the old date was never consulted
+    // — a voucher sitting inside the lock could simply be given a date outside
+    // it, which is a complete bypass whenever the lock is mid-year. Checked
+    // live against a rolled-back restore of 0007's body: it allowed exactly
+    // that move, and the current body refuses it.
+    const rows = await sql<{ prosrc: string }>(`
+      select p.prosrc
+        from pg_proc p
+        join pg_namespace n on n.oid = p.pronamespace
+       where n.nspname = 'app_private' and p.proname = 'enforce_period_open'
+    `);
+    expect(rows.length, "app_private.enforce_period_open does not exist").toBe(1);
+    expect(
+      rows[0].prosrc,
+      "enforce_period_open never reads old.voucher_date, so an UPDATE can move a voucher out of a closed period"
+    ).toContain("old.voucher_date");
+  });
+
+  it("the child-table lock trigger returns early when its parent voucher is gone", async () => {
+    // The cascade bug this repo has shipped three times: a guard that blocks
+    // its own teardown. voucher_entries and voucher_items both reference
+    // vouchers ON DELETE CASCADE, so by the time RI reaches a child row its
+    // parent is already out of the snapshot. Without the early return,
+    // deleting a voucher — and delete_company (0010) with it, since that RPC
+    // deletes public.vouchers explicitly first — would raise instead of
+    // cascading. Checked live on a throwaway company inside a rolled-back
+    // transaction; asserted on the source here for the same reason as above.
+    const rows = await sql<{ prosrc: string }>(`
+      select p.prosrc
+        from pg_proc p
+        join pg_namespace n on n.oid = p.pronamespace
+       where n.nspname = 'app_private'
+         and p.proname = 'enforce_period_open_voucher_line'
+    `);
+    expect(rows.length, "app_private.enforce_period_open_voucher_line does not exist").toBe(1);
+    expect(
+      rows[0].prosrc,
+      "the child lock trigger has no not-found escape, so ON DELETE CASCADE from vouchers or companies will be blocked"
+    ).toContain("not found");
+  });
+});
