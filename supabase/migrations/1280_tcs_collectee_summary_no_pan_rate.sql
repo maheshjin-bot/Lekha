@@ -22,6 +22,20 @@
 -- screen can call it out explicitly rather than leave a reader to notice
 -- the number doesn't add up on their own.
 -- ============================================================================
+-- WHY THE DROP BELOW. This migration adds a column (no_pan_rate_applied) to
+-- the function's OUT parameter list, and Postgres refuses that outright:
+-- "cannot change return type of existing function ... Use DROP FUNCTION
+-- first". Without the drop this file cannot be applied at all — which is
+-- exactly what happened: it sat committed-but-unapplied while
+-- components/reports/TcsCollecteeTable.tsx (line 33) already declared
+-- no_pan_rate_applied and line 74 rendered a badge from it, so the live
+-- report silently never showed the higher-rate flag and kept displaying the
+-- base rate this migration exists to correct. Found 2 Sep 2026 by applying
+-- it. The revoke/grant pair below re-establishes the privileges the drop
+-- discards, which is why they must stay immediately after the definition.
+-- ============================================================================
+
+drop function if exists public.get_tcs_collectee_summary(uuid, text, integer);
 
 create or replace function public.get_tcs_collectee_summary(
   p_company_id uuid,

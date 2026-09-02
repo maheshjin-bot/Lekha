@@ -5,6 +5,17 @@ import { useRouter } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
 import { formatINR } from "@/lib/utils/currency";
 import { friendlyLedgerError } from "@/lib/ledgers/friendlyError";
+import {
+  GSTIN_PATTERN,
+  PAN_PATTERN,
+  PINCODE_PATTERN,
+  UDYAM_PATTERN,
+  blankOrMatches,
+  forbidsGstin,
+  needsGstin,
+  panFromGstin,
+  stateFromGstin,
+} from "@/lib/ledgers/fieldPatterns";
 
 type Ledger = {
   id: string;
@@ -37,25 +48,11 @@ type Group = {
 
 type TdsSection = { section_code: string; description: string; rate_percent: number };
 
-// Mirrors app_private.is_valid_udyam exactly.
-const UDYAM_PATTERN = /^UDYAM-[A-Z]{2}-[0-9]{2}-[0-9]{7}$/;
-// Mirrors app_private.is_valid_pan exactly.
-const PAN_PATTERN = /^[A-Z]{5}[0-9]{4}[A-Z]$/;
-
-// The shape half of app_private.is_valid_gstin. The check digit stays the
-// database's job — a drifting second copy would reject numbers it accepts.
-const GSTIN_PATTERN = /^[0-9]{2}[A-Z]{5}[0-9]{4}[A-Z][1-9A-Z]Z[0-9A-Z]$/;
-
-// Registration types that mean "this party holds a GSTIN", mirroring
-// ledgers_registered_has_gstin (0735).
-const GST_TYPES_NEEDING_GSTIN = [
-  "regular",
-  "composition",
-  "sez",
-  "sez_developer",
-  "uin",
-  "deemed_export",
-];
+// UDYAM_PATTERN, PAN_PATTERN, GSTIN_PATTERN, PINCODE_PATTERN and
+// GST_TYPES_NEEDING_GSTIN used to be declared here AND, separately, in
+// QuickAddLedgerModal.tsx — two hand-maintained copies of the same CHECK
+// constraints, which is how the two forms drifted apart on their field set.
+// They now live in lib/ledgers/fieldPatterns.ts; see that file's header.
 
 // Short labels for the sec43b_category check-constraint values.
 const SEC43B_LABEL: Record<string, string> = {
@@ -155,22 +152,43 @@ export function LedgerManager({
   const [sec43bCategory, setSec43bCategory] = useState("");
   const [gstRegType, setGstRegType] = useState("");
   const [gstin, setGstin] = useState("");
+  // Address, town and PIN. Collected here since 1 Sep 2026 — this form had
+  // never asked for any of the three, while QuickAddLedgerModal (the popup the
+  // invoice and voucher screens open) had collected all three for months. The
+  // consequence was not cosmetic: build_einvoice_json (0230) refuses outright
+  // with 'Buyer (%) is missing a required address field (address, city or PIN
+  // code)', so every B2B customer created on THIS screen was permanently
+  // ineligible for an e-invoice with nothing on the page to say why.
+  const [address, setAddress] = useState("");
+  const [city, setCity] = useState("");
+  const [pincode, setPincode] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   const groupName = (id: string) => groups.find((g) => g.id === id)?.name ?? "—";
   const sectionRate = (code: string | null) =>
     tdsSections.find((s) => s.section_code === code)?.rate_percent;
-  const udyamLooksValid = udyam.length === 0 || UDYAM_PATTERN.test(udyam);
-  const panLooksValid = pan.length === 0 || PAN_PATTERN.test(pan);
-  const gstinLooksValid = gstin.length === 0 || GSTIN_PATTERN.test(gstin);
+  const udyamLooksValid = blankOrMatches(UDYAM_PATTERN, udyam);
+  const panLooksValid = blankOrMatches(PAN_PATTERN, pan);
+  const gstinLooksValid = blankOrMatches(GSTIN_PATTERN, gstin);
+  const pincodeLooksValid = blankOrMatches(PINCODE_PATTERN, pincode);
   // "" here means "Regular / not set" in this screen's own dropdown, which is
   // stored as null and stays permissive — so only an explicit registered type
   // demands a number.
-  const gstinRequired = GST_TYPES_NEEDING_GSTIN.includes(gstRegType);
+  const gstinRequired = needsGstin(gstRegType);
 
   async function onSubmit(e: React.FormEvent) {
     e.preventDefault();
+
+    // ledgers_pincode_check said in words before the round trip, the same way
+    // QuickAddLedgerModal already does — otherwise a mistyped PIN comes back
+    // as a constraint name, which is the exact failure commit 7080e88 fixed
+    // for GSTIN on this form.
+    if (!pincodeLooksValid) {
+      setError("A PIN code is six digits and cannot start with a zero.");
+      return;
+    }
+
     setBusy(true);
     setError(null);
 
@@ -193,11 +211,17 @@ export function LedgerManager({
       sec43b_category: sec43bCategory || null,
       gst_registration_type: gstRegType || null,
       gstin: gstin.trim() || null,
+      // The three fields build_einvoice_json (0230) hard-blocks on. Nothing
+      // cross-validates them — an address is an address — so they are plain
+      // trimmed text, exactly as QuickAddLedgerModal writes them.
+      address: address.trim() || null,
+      city: city.trim() || null,
+      pincode: pincode.trim() || null,
       // ledgers_gstin_matches_state (0735) requires state_code to be the
       // GSTIN's own first two characters. This screen has never had a State
       // control, so the number is the only place it can come from — deriving
       // it here is what stops a GSTIN entered on this screen being refused.
-      ...(gstin.trim() ? { state_code: gstin.trim().slice(0, 2) } : {}),
+      ...(stateFromGstin(gstin.trim()) ? { state_code: stateFromGstin(gstin.trim()) } : {}),
     });
 
     if (error) {
@@ -225,6 +249,10 @@ export function LedgerManager({
     setIsLoanOrDeposit(false);
     setSec43bCategory("");
     setGstRegType("");
+    setGstin("");
+    setAddress("");
+    setCity("");
+    setPincode("");
     setBusy(false);
     router.refresh();
   }
@@ -460,6 +488,61 @@ export function LedgerManager({
             </label>
           </div>
 
+          <div className="rounded-md border border-border p-3">
+            <div className="flex flex-col gap-2">
+              <label className="flex flex-col gap-1.5">
+                <span className="text-sm font-medium">
+                  Address{" "}
+                  <span className="font-normal text-ink-faint">optional</span>
+                </span>
+                <input
+                  value={address}
+                  onChange={(e) => setAddress(e.target.value)}
+                  placeholder="Building, street"
+                  className={field}
+                />
+              </label>
+              <div className="grid grid-cols-[1fr_auto] gap-2">
+                <label className="flex flex-col gap-1.5">
+                  <span className="text-xs text-ink-faint">Town / city</span>
+                  <input
+                    value={city}
+                    onChange={(e) => setCity(e.target.value)}
+                    className={field}
+                  />
+                </label>
+                <label className="flex flex-col gap-1.5">
+                  <span className="text-xs text-ink-faint">PIN code</span>
+                  <input
+                    value={pincode}
+                    onChange={(e) =>
+                      setPincode(e.target.value.replace(/[^0-9]/g, "").slice(0, 6))
+                    }
+                    inputMode="numeric"
+                    maxLength={6}
+                    placeholder="400001"
+                    className={
+                      field +
+                      " w-28 font-mono" +
+                      (pincodeLooksValid ? "" : " border-error focus-visible:border-error")
+                    }
+                  />
+                </label>
+              </div>
+              {pincode.length > 0 && !pincodeLooksValid ? (
+                <span className="text-xs text-warning">
+                  Six digits, and it cannot start with a zero.
+                </span>
+              ) : (
+                <span className="text-xs text-ink-faint">
+                  An e-invoice payload is built from the buyer&rsquo;s own
+                  address — without all three of these it cannot be generated
+                  for this party at all.
+                </span>
+              )}
+            </div>
+          </div>
+
           {tdsOn && (
             <div className="rounded-md border border-border p-3">
               <label className="flex items-center gap-2 text-sm font-medium">
@@ -690,7 +773,7 @@ export function LedgerManager({
                     setGstRegType(next);
                     // Keeps ledgers_unregistered_has_no_gstin (0735)
                     // satisfiable without the preparer having to know it.
-                    if (next === "unregistered" || next === "overseas") setGstin("");
+                    if (forbidsGstin(next)) setGstin("");
                   }}
                   className={field}
                 >
@@ -702,7 +785,7 @@ export function LedgerManager({
                   ))}
                 </select>
               </label>
-              {gstRegType !== "unregistered" && gstRegType !== "overseas" && (
+              {!forbidsGstin(gstRegType) && (
                 <label className="mt-3 flex flex-col gap-1.5">
                   <span className="text-sm font-medium">
                     GSTIN{" "}
@@ -719,7 +802,8 @@ export function LedgerManager({
                       // them from it is what satisfies
                       // ledgers_gstin_matches_state / _matches_pan (0735)
                       // rather than asking twice and risking a refusal.
-                      if (GSTIN_PATTERN.test(next)) setPan(next.slice(2, 12));
+                      const derivedPan = panFromGstin(next);
+                      if (derivedPan) setPan(derivedPan);
                     }}
                     maxLength={15}
                     placeholder="07AAAAA0000A1Z5"

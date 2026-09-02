@@ -5,6 +5,23 @@ import Link from "next/link";
 import { createClient } from "@/lib/supabase/client";
 import { Modal } from "@/components/ui/Modal";
 import { friendlyLedgerError } from "@/lib/ledgers/friendlyError";
+// Every ledgers CHECK constraint this popup can write into, mirrored once so a
+// bad value reads as a sentence in the preparer's own terms rather than as a
+// constraint name after a round trip. These used to be declared here AND in
+// LedgerManager.tsx — see lib/ledgers/fieldPatterns.ts's header for the two
+// separate bugs that duplication caused. The database is still the authority.
+import {
+  ACCOUNT_PATTERN,
+  EMAIL_PATTERN,
+  GSTIN_PATTERN,
+  IFSC_PATTERN,
+  PAN_PATTERN,
+  PINCODE_PATTERN,
+  UDYAM_PATTERN,
+  blankOrMatches,
+  panFromGstin,
+  stateFromGstin,
+} from "@/lib/ledgers/fieldPatterns";
 
 /**
  * The minimum a ledger needs to be transacted against, created without
@@ -100,25 +117,6 @@ type Group = {
 
 type StateOption = { code: string; name: string };
 
-// Mirrors app_private.is_valid_pan exactly, same as LedgerManager's copy.
-const PAN_PATTERN = /^[A-Z]{5}[0-9]{4}[A-Z]$/;
-
-// The shape half of app_private.is_valid_gstin. The check digit is the other
-// half and is deliberately NOT reimplemented here — the database owns that
-// arithmetic, and a second copy that drifted would reject numbers Postgres
-// accepts. This catches the typo; ledgers_gstin_check catches the rest.
-const GSTIN_PATTERN = /^[0-9]{2}[A-Z]{5}[0-9]{4}[A-Z][1-9A-Z]Z[0-9A-Z]$/;
-
-/**
- * A GSTIN is a composite key: characters 1-2 are the state code and 3-12 are
- * the PAN. Deriving both from it (rather than asking for them again) is what
- * keeps this popup on the right side of ledgers_gstin_matches_state and
- * ledgers_gstin_matches_pan (0735) without the preparer having to know those
- * constraints exist.
- */
-const stateFromGstin = (g: string) => (GSTIN_PATTERN.test(g) ? g.slice(0, 2) : "");
-const panFromGstin = (g: string) => (GSTIN_PATTERN.test(g) ? g.slice(2, 12) : "");
-
 /**
  * The three statuses that matter at entry time. The full eight
  * (composition, sez_developer, uin, deemed_export) live on the ledgers
@@ -142,24 +140,6 @@ const CONVENTIONAL_GROUP_BY_ROLE: Record<string, string> = {
   debtor: "Sundry Debtors",
   creditor: "Sundry Creditors",
 };
-
-/*
- * The rest of the ledgers CHECK constraints this popup can now write into,
- * each mirrored here for the same reason PAN_PATTERN and GSTIN_PATTERN above
- * already are: so a bad value reads as a sentence in the preparer's own terms
- * rather than as a constraint name after a round trip. The database is still
- * the authority — every one of these is enforced there too.
- */
-/** ledgers_pincode_check. */
-const PINCODE_PATTERN = /^[1-9][0-9]{5}$/;
-/** ledgers_email_check. */
-const EMAIL_PATTERN = /^[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}$/;
-/** app_private.is_valid_udyam, via ledgers_udyam_number_check. */
-const UDYAM_PATTERN = /^UDYAM-[A-Z]{2}-[0-9]{2}-[0-9]{7}$/;
-/** app_private.is_valid_ifsc, via ledgers_bank_ifsc_check (0995). */
-const IFSC_PATTERN = /^[A-Z]{4}0[A-Z0-9]{6}$/;
-/** ledgers_bank_account_number_check (0995), same charset as 0800's. */
-const ACCOUNT_PATTERN = /^[A-Za-z0-9]{5,34}$/;
 
 export function QuickAddLedgerModal({
   open,
@@ -359,7 +339,7 @@ export function QuickAddLedgerModal({
       ? groupIdOverride
       : defaultGroupId;
 
-  const panLooksValid = pan.length === 0 || PAN_PATTERN.test(pan);
+  const panLooksValid = blankOrMatches(PAN_PATTERN, pan);
 
   // GST status only matters for a trading party. A journal line hitting Bank
   // Charges has no GST registration, and asking would be noise — so the whole
@@ -369,7 +349,7 @@ export function QuickAddLedgerModal({
     .some((r) => r === "debtor" || r === "creditor");
   const gstStatusMeta = GST_STATUSES.find((g) => g.value === gstStatus);
   const gstinRequired = !!gstStatusMeta?.needsGstin;
-  const gstinLooksValid = gstin.length === 0 || GSTIN_PATTERN.test(gstin);
+  const gstinLooksValid = blankOrMatches(GSTIN_PATTERN, gstin);
   const selectedGroup = candidates.find((g) => g.id === groupId);
 
   function reset() {
