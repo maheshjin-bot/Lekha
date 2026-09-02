@@ -5,57 +5,21 @@ import { useRouter } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
 import { formatINR } from "@/lib/utils/currency";
 import { ItemUomPanel, type ItemUomConversion } from "@/components/items/ItemUomPanel";
+import { ItemEditPanel, type EditableItem } from "@/components/items/ItemEditPanel";
+import {
+  BATCH_TRACKING_MODES,
+  GST_RATES,
+  ITC_BLOCK_CLAUSES,
+  SUPPLY_NATURES,
+  friendlyItemError,
+  type ItemEditContext,
+} from "@/components/items/itemFields";
 
-type Item = {
-  id: string;
-  code: string | null;
-  name: string;
-  item_type: string;
-  hsn_sac: string | null;
-  uom: string;
-  maintain_stock: boolean;
-  opening_quantity: number;
-  opening_value: number;
-  sale_rate: number | null;
-  gst_rate_percent: number;
-  supply_nature: string;
-  default_tcs_section: string | null;
-  is_active: boolean;
-};
+// The row type is now EditableItem itself: the list and the edit panel must
+// read exactly the same columns, or a field would be editable but invisible.
+type Item = EditableItem;
 
 type TcsSection = { section_code: string; description: string; rate_percent: number };
-
-// The rates actually notified for goods and services — not every percentage
-// in between, so a typo like 12.5 does not sit unnoticed on an invoice.
-const GST_RATES = [0, 0.25, 3, 5, 12, 18, 28];
-
-// Four legally distinct categories that a zero rate used to collapse into one.
-// Zero-rated (export/SEZ) is deliberately absent: it is a property of the
-// transaction, not of the item — the same goods are taxable domestically.
-// Sec 17(5) blocks ITC on these however genuine the business purpose. The
-// clause is stored alongside the flag so an auditor can be told which limb
-// applies, not merely that something does.
-const ITC_BLOCK_CLAUSES = [
-  { value: "17(5)(a)", label: "17(5)(a) — Motor vehicles (13 seats or fewer)" },
-  { value: "17(5)(aa)", label: "17(5)(aa) — Vessels and aircraft" },
-  { value: "17(5)(ab)", label: "17(5)(ab) — Insurance, servicing, repair of the above" },
-  { value: "17(5)(b)", label: "17(5)(b) — Food, catering, club, insurance, travel benefits" },
-  { value: "17(5)(c)", label: "17(5)(c) — Works contract for immovable property" },
-  { value: "17(5)(d)", label: "17(5)(d) — Construction on own account" },
-  { value: "17(5)(e)", label: "17(5)(e) — Supplies taxed under composition" },
-  { value: "17(5)(f)", label: "17(5)(f) — Supplies to a non-resident taxable person" },
-  { value: "17(5)(fa)", label: "17(5)(fa) — CSR expenditure" },
-  { value: "17(5)(g)", label: "17(5)(g) — Personal consumption" },
-  { value: "17(5)(h)", label: "17(5)(h) — Gifts, free samples, goods lost or written off" },
-  { value: "17(5)(i)", label: "17(5)(i) — Tax paid under Sec 74, 129 or 130" },
-];
-
-const SUPPLY_NATURES = [
-  { value: "taxable", label: "Taxable", hint: "Attracts GST at the rate below" },
-  { value: "nil_rated", label: "Nil-rated", hint: "Taxable under GST, tariff rate 0% — no ITC" },
-  { value: "exempt", label: "Exempt", hint: "Exempted by notification (Sec 11) — no ITC" },
-  { value: "non_gst", label: "Non-GST", hint: "Outside GST — petrol, diesel, alcohol" },
-];
 
 export function ItemManager({
   companyId,
@@ -63,6 +27,9 @@ export function ItemManager({
   uoms,
   tcsSections,
   uomConversions = [],
+  editContexts = [],
+  isAdmin = false,
+  batchModuleActive = false,
 }: {
   companyId: string;
   items: Item[];
@@ -71,9 +38,16 @@ export function ItemManager({
   // Alternate-unit conversions (0121), keyed by item_id — additive to the
   // item master, not required by any caller that predates it.
   uomConversions?: ItemUomConversion[];
+  // Per-item counts from get_item_edit_context (1370): which fields the edit
+  // panel may offer at all. Defaulted so the component still renders if a
+  // caller predates it, in which case every field simply looks unlocked and
+  // protect_item_master_fields does the refusing.
+  editContexts?: ItemEditContext[];
+  isAdmin?: boolean;
+  batchModuleActive?: boolean;
 }) {
   const router = useRouter();
-  const [expandedItemId, setExpandedItemId] = useState<string | null>(null);
+  const [expanded, setExpanded] = useState<{ id: string; panel: "uom" | "edit" } | null>(null);
   const [name, setName] = useState("");
   const [itemType, setItemType] = useState<"goods" | "service">("goods");
   const [hsn, setHsn] = useState("");
@@ -85,12 +59,14 @@ export function ItemManager({
   const [supplyNature, setSupplyNature] = useState("taxable");
   const [itcBlockedClause, setItcBlockedClause] = useState("");
   const [tcsSection, setTcsSection] = useState("");
+  const [newBatchTracking, setNewBatchTracking] = useState("none");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   const isService = itemType === "service";
   const tcsSectionRate = (code: string | null) =>
     tcsSections.find((s) => s.section_code === code)?.rate_percent;
+  const contextFor = (itemId: string) => editContexts.find((c) => c.item_id === itemId);
 
   async function onSubmit(e: React.FormEvent) {
     e.preventDefault();
@@ -121,10 +97,16 @@ export function ItemManager({
         // than letting the form build a row it will reject.
         gst_rate_percent: supplyNature === "taxable" ? Number(gstRate) || 0 : 0,
         default_tcs_section: tcsSection || null,
+        // items_batch_tracking_needs_stock (0067) refuses anything but 'none'
+        // on a service, so send what that rule allows.
+        batch_tracking: isService ? "none" : newBatchTracking,
       });
 
     if (error) {
-      setError(error.message);
+      // Was error.message verbatim, so a mistyped HSN read
+      // `violates check constraint "items_hsn_sac_check"` — the same defect
+      // fixed for the ledger forms on 1 Sep.
+      setError(friendlyItemError(error, name.trim()));
       setBusy(false);
       return;
     }
@@ -135,6 +117,7 @@ export function ItemManager({
     setOpeningValue("0");
     setSaleRate("");
     setTcsSection("");
+    setNewBatchTracking("none");
     setBusy(false);
     router.refresh();
   }
@@ -146,7 +129,7 @@ export function ItemManager({
     <div className="mt-8 grid gap-8 lg:grid-cols-[1fr_320px]">
       <section className="min-w-0">
         <div className="overflow-x-auto rounded-lg border border-border bg-surface">
-          <table className="w-full min-w-[620px] text-sm">
+          <table className="w-full min-w-[700px] text-sm">
             <thead>
               <tr className="border-b border-border text-left text-[11px] uppercase tracking-wide text-ink-faint">
                 <th className="px-4 py-2.5 font-medium">Item</th>
@@ -157,12 +140,15 @@ export function ItemManager({
                 <th className="px-4 py-2.5 font-medium">TCS</th>
                 <th className="px-4 py-2.5 text-right font-medium">Sale rate</th>
                 <th className="px-4 py-2.5 font-medium">Alt. units</th>
+                <th className="px-4 py-2.5 font-medium">
+                  <span className="sr-only">Edit</span>
+                </th>
               </tr>
             </thead>
             <tbody>
               {items.length === 0 && (
                 <tr>
-                  <td colSpan={8} className="px-4 py-10 text-center text-ink-faint">
+                  <td colSpan={9} className="px-4 py-10 text-center text-ink-faint">
                     No items yet. Create one on the right.
                   </td>
                 </tr>
@@ -170,17 +156,33 @@ export function ItemManager({
               {items.map((it) => {
                 const canHaveUom = it.item_type === "goods" && it.maintain_stock;
                 const itemConversions = uomConversions.filter((c) => c.item_id === it.id);
-                const expanded = expandedItemId === it.id;
+                const uomOpen = expanded?.id === it.id && expanded.panel === "uom";
+                const editOpen = expanded?.id === it.id && expanded.panel === "edit";
+                const trackingLabel = BATCH_TRACKING_MODES.find(
+                  (m) => m.value === it.batch_tracking
+                )?.label;
                 return (
                 <Fragment key={it.id}>
                 <tr
-                  className="border-b border-border last:border-0"
+                  className={
+                    "border-b border-border last:border-0 " + (it.is_active ? "" : "opacity-60")
+                  }
                 >
                   <td className="px-4 py-2.5">
                     <span className="font-medium">{it.name}</span>
                     {it.item_type === "service" && (
                       <span className="ml-2 rounded bg-surface-2 px-1.5 py-0.5 text-[10px] uppercase tracking-wide text-ink-soft">
                         Service
+                      </span>
+                    )}
+                    {!it.is_active && (
+                      <span className="ml-2 rounded bg-surface-2 px-1.5 py-0.5 text-[10px] uppercase tracking-wide text-ink-faint">
+                        Inactive
+                      </span>
+                    )}
+                    {it.batch_tracking !== "none" && (
+                      <span className="ml-2 rounded bg-accent-soft px-1.5 py-0.5 text-[10px] uppercase tracking-wide text-accent">
+                        {trackingLabel}
                       </span>
                     )}
                   </td>
@@ -231,7 +233,9 @@ export function ItemManager({
                     {canHaveUom ? (
                       <button
                         type="button"
-                        onClick={() => setExpandedItemId(expanded ? null : it.id)}
+                        onClick={() =>
+                          setExpanded(uomOpen ? null : { id: it.id, panel: "uom" })
+                        }
                         className={
                           "rounded-md border px-2 py-1 text-xs " +
                           (itemConversions.length > 0
@@ -247,15 +251,43 @@ export function ItemManager({
                       <span className="text-ink-faint">—</span>
                     )}
                   </td>
+                  <td className="px-4 py-2.5 text-right">
+                    <button
+                      type="button"
+                      onClick={() =>
+                        setExpanded(editOpen ? null : { id: it.id, panel: "edit" })
+                      }
+                      aria-expanded={editOpen}
+                      className="rounded-md border border-border-strong px-2 py-1 text-xs font-medium text-ink-soft hover:bg-surface-2"
+                    >
+                      {editOpen ? "Close" : "Edit"}
+                    </button>
+                  </td>
                 </tr>
-                {expanded && canHaveUom && (
+                {uomOpen && canHaveUom && (
                   <tr className="border-b border-border last:border-0 bg-bg">
-                    <td colSpan={8} className="px-4 py-3">
+                    <td colSpan={9} className="px-4 py-3">
                       <ItemUomPanel
                         companyId={companyId}
                         item={{ id: it.id, name: it.name, uom: it.uom }}
                         uoms={uoms}
                         conversions={itemConversions}
+                      />
+                    </td>
+                  </tr>
+                )}
+                {editOpen && (
+                  <tr className="border-b border-border last:border-0 bg-bg">
+                    <td colSpan={9} className="px-4 py-3">
+                      <ItemEditPanel
+                        companyId={companyId}
+                        item={it}
+                        uoms={uoms}
+                        tcsSections={tcsSections}
+                        context={contextFor(it.id)}
+                        isAdmin={isAdmin}
+                        batchModuleActive={batchModuleActive}
+                        onClose={() => setExpanded(null)}
                       />
                     </td>
                   </tr>
@@ -350,6 +382,26 @@ export function ItemManager({
                   An opening quantity needs a value, or the first issue is
                   costed at zero.
                 </p>
+              )}
+
+              {batchModuleActive && (
+                <label className="flex flex-col gap-1.5">
+                  <span className="text-sm font-medium">Batch tracking</span>
+                  <select
+                    value={newBatchTracking}
+                    onChange={(e) => setNewBatchTracking(e.target.value)}
+                    className={field}
+                  >
+                    {BATCH_TRACKING_MODES.map((m) => (
+                      <option key={m.value} value={m.value}>
+                        {m.label}
+                      </option>
+                    ))}
+                  </select>
+                  <span className="text-xs text-ink-faint">
+                    {BATCH_TRACKING_MODES.find((m) => m.value === newBatchTracking)?.hint}
+                  </span>
+                </label>
               )}
             </>
           )}

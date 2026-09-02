@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import { useRouter } from "next/navigation";
+import Link from "next/link";
 import { toast } from "sonner";
 import { createClient } from "@/lib/supabase/client";
 import { formatINR } from "@/lib/utils/currency";
@@ -175,8 +176,16 @@ export function BatchManager({
     <div className="flex flex-col gap-8">
       {trackedItems.length === 0 && (
         <div className="rounded-[14px] border border-dashed border-border-strong bg-surface px-5 py-8 text-center text-sm text-ink-faint">
-          No item has batch or serial tracking turned on yet. Open an item under Items
-          and set its Batch tracking field to &ldquo;Batch&rdquo; or &ldquo;Serial&rdquo;.
+          No item has batch or serial tracking turned on yet.{" "}
+          {/* This sentence promised a field that did not exist until migration
+              1370 — items were create-only and nothing anywhere wrote
+              items.batch_tracking, so this screen could never leave this
+              state. Now a real link, because there is now a real field. */}
+          <Link href={`/${companyId}/items`} className="text-accent underline">
+            Open an item under Items
+          </Link>{" "}
+          and set its Batch tracking field to &ldquo;Batch / lot&rdquo; or
+          &ldquo;Serial&rdquo;.
         </div>
       )}
 
