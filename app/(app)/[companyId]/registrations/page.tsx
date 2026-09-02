@@ -11,8 +11,11 @@ export default async function RegistrationsPage({
     await Promise.all([
       supabase
         .from("gst_registrations")
+        // legal_name / trade_name / registered_to have existed on this table
+        // since 0005 and were never once fetched here, which is half of why
+        // nothing could write them — see migration 1390.
         .select(
-          "id, gstin, state_code, registration_type, filing_frequency, registered_from, is_active, lut_number, lut_valid_from, lut_valid_to, lut_arn"
+          "id, gstin, state_code, registration_type, filing_frequency, registered_from, registered_to, is_active, legal_name, trade_name, lut_number, lut_valid_from, lut_valid_to, lut_arn"
         )
         .eq("company_id", companyId)
         .order("registered_from"),
