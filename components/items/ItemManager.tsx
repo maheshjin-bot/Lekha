@@ -17,9 +17,13 @@ type Item = {
   opening_quantity: number;
   opening_value: number;
   sale_rate: number | null;
+  purchase_rate: number | null;
   gst_rate_percent: number;
+  cess_rate_percent: number;
   supply_nature: string;
+  itc_blocked_clause: string | null;
   default_tcs_section: string | null;
+  is_rcm_applicable: boolean;
   is_active: boolean;
 };
 
@@ -63,6 +67,7 @@ export function ItemManager({
   uoms,
   tcsSections,
   uomConversions = [],
+  usedItemIds = [],
 }: {
   companyId: string;
   items: Item[];
@@ -71,9 +76,18 @@ export function ItemManager({
   // Alternate-unit conversions (0121), keyed by item_id — additive to the
   // item master, not required by any caller that predates it.
   uomConversions?: ItemUomConversion[];
+  // 1840: item ids that appear on at least one voucher_items line. item_type,
+  // maintain_stock and uom are refused on these by the live
+  // app_private.protect_item_master_fields trigger regardless of what this
+  // list says — it is used here only to disable those controls in the edit
+  // form up front, so a preparer never fills in a whole edit only to have it
+  // refused at the end.
+  usedItemIds?: string[];
 }) {
   const router = useRouter();
+  const usedIds = new Set(usedItemIds);
   const [expandedItemId, setExpandedItemId] = useState<string | null>(null);
+  const [editingItemId, setEditingItemId] = useState<string | null>(null);
   const [name, setName] = useState("");
   const [itemType, setItemType] = useState<"goods" | "service">("goods");
   const [hsn, setHsn] = useState("");
@@ -139,6 +153,109 @@ export function ItemManager({
     router.refresh();
   }
 
+  // ---------------------------------------------------------------------
+  // 1840 — edit an existing item via the update_item RPC. Kept as one flat
+  // draft object rather than one useState per field: the create form above
+  // predates this and already shows what one-state-per-field costs in wiring
+  // for this many fields, and this form only exists while a row is expanded.
+  // ---------------------------------------------------------------------
+  type EditDraft = {
+    name: string;
+    itemType: "goods" | "service";
+    hsn: string;
+    uom: string;
+    saleRate: string;
+    purchaseRate: string;
+    supplyNature: string;
+    gstRate: string;
+    cessRate: string;
+    itcBlockedClause: string;
+    tcsSection: string;
+    isRcmApplicable: boolean;
+    isActive: boolean;
+  };
+  const [editDraft, setEditDraft] = useState<EditDraft | null>(null);
+  const [editBusy, setEditBusy] = useState(false);
+  const [editError, setEditError] = useState<string | null>(null);
+
+  function startEdit(it: Item) {
+    setExpandedItemId(null);
+    setEditingItemId(it.id);
+    setEditError(null);
+    setEditDraft({
+      name: it.name,
+      itemType: it.item_type === "service" ? "service" : "goods",
+      hsn: it.hsn_sac ?? "",
+      uom: it.uom,
+      saleRate: it.sale_rate != null ? String(it.sale_rate) : "",
+      purchaseRate: it.purchase_rate != null ? String(it.purchase_rate) : "",
+      supplyNature: it.supply_nature,
+      gstRate: String(it.gst_rate_percent),
+      cessRate: String(it.cess_rate_percent),
+      itcBlockedClause: it.itc_blocked_clause ?? "",
+      tcsSection: it.default_tcs_section ?? "",
+      isRcmApplicable: it.is_rcm_applicable,
+      isActive: it.is_active,
+    });
+  }
+
+  function cancelEdit() {
+    setEditingItemId(null);
+    setEditDraft(null);
+    setEditError(null);
+  }
+
+  async function saveEdit(itemId: string) {
+    if (!editDraft) return;
+    setEditBusy(true);
+    setEditError(null);
+
+    const isEditingService = editDraft.itemType === "service";
+    const { error } = await createClient().rpc("update_item", {
+      p_item_id: itemId,
+      p_name: editDraft.name.trim(),
+      p_item_type: editDraft.itemType,
+      p_hsn_sac: editDraft.hsn.trim() || null,
+      // 1841: never force "OTH" here — that is correct only on CREATE, where
+      // a brand-new row has no prior uom to preserve. On EDIT, startEdit()
+      // already seeded editDraft.uom with the item's real current unit, and
+      // the Unit <select> below is only even rendered for a goods item, so a
+      // service's editDraft.uom is simply left untouched by the user. Forcing
+      // "OTH" here silently rewrote a service item's real unit (HRS, NOS...)
+      // on every save, which for any item with existing voucher history is
+      // then refused outright by protect_item_master_fields as an
+      // unauthorized unit change the user never asked for — including on the
+      // very save meant only to flip is_rcm_applicable — and for an item
+      // with no history yet, silently corrupted the unit with no error at
+      // all. editDraft.uom is always the right value for both item types.
+      p_uom: editDraft.uom,
+      // Same rule the create form applies: a service never maintains stock.
+      // Whether this item is even allowed to change type/uom at all is
+      // enforced by the database (app_private.protect_item_master_fields),
+      // not by this client — see the disabled-controls note below.
+      p_maintain_stock: !isEditingService,
+      p_sale_rate: editDraft.saleRate.trim() ? Number(editDraft.saleRate) : null,
+      p_purchase_rate: editDraft.purchaseRate.trim() ? Number(editDraft.purchaseRate) : null,
+      p_supply_nature: editDraft.supplyNature,
+      p_gst_rate_percent: editDraft.supplyNature === "taxable" ? Number(editDraft.gstRate) || 0 : 0,
+      p_cess_rate_percent: editDraft.supplyNature === "taxable" ? Number(editDraft.cessRate) || 0 : 0,
+      p_itc_blocked_clause: editDraft.itcBlockedClause || null,
+      p_default_tcs_section: editDraft.tcsSection || null,
+      p_is_rcm_applicable: editDraft.isRcmApplicable,
+      p_is_active: editDraft.isActive,
+    });
+
+    if (error) {
+      setEditError(error.message);
+      setEditBusy(false);
+      return;
+    }
+
+    setEditBusy(false);
+    cancelEdit();
+    router.refresh();
+  }
+
   const field =
     "rounded-lg border border-border-strong bg-surface px-3 py-2 text-sm text-ink outline-none focus-visible:border-accent focus-visible:ring-2 focus-visible:ring-accent/30";
 
@@ -157,12 +274,13 @@ export function ItemManager({
                 <th className="px-4 py-2.5 font-medium">TCS</th>
                 <th className="px-4 py-2.5 text-right font-medium">Sale rate</th>
                 <th className="px-4 py-2.5 font-medium">Alt. units</th>
+                <th className="px-4 py-2.5 font-medium"><span className="sr-only">Actions</span></th>
               </tr>
             </thead>
             <tbody>
               {items.length === 0 && (
                 <tr>
-                  <td colSpan={8} className="px-4 py-10 text-center text-ink-faint">
+                  <td colSpan={9} className="px-4 py-10 text-center text-ink-faint">
                     No items yet. Create one on the right.
                   </td>
                 </tr>
@@ -171,6 +289,8 @@ export function ItemManager({
                 const canHaveUom = it.item_type === "goods" && it.maintain_stock;
                 const itemConversions = uomConversions.filter((c) => c.item_id === it.id);
                 const expanded = expandedItemId === it.id;
+                const editing = editingItemId === it.id;
+                const locked = usedIds.has(it.id);
                 return (
                 <Fragment key={it.id}>
                 <tr
@@ -207,6 +327,11 @@ export function ItemManager({
                       <span className="font-sans text-xs text-ink-soft">
                         {SUPPLY_NATURES.find((n) => n.value === it.supply_nature)?.label ??
                           it.supply_nature}
+                      </span>
+                    )}
+                    {it.is_rcm_applicable && (
+                      <span className="ml-1.5 rounded bg-warning-soft px-1 py-0.5 font-sans text-[10px] font-semibold uppercase tracking-wide text-warning">
+                        RCM
                       </span>
                     )}
                   </td>
@@ -247,10 +372,275 @@ export function ItemManager({
                       <span className="text-ink-faint">—</span>
                     )}
                   </td>
+                  <td className="px-4 py-2.5 text-right">
+                    <button
+                      type="button"
+                      onClick={() => (editing ? cancelEdit() : startEdit(it))}
+                      className="rounded-md border border-border-strong px-2 py-1 text-xs text-ink-soft hover:bg-surface-2"
+                    >
+                      {editing ? "Close" : "Edit"}
+                    </button>
+                  </td>
                 </tr>
+                {editing && editDraft && (
+                  <tr className="border-b border-border last:border-0 bg-bg">
+                    <td colSpan={9} className="px-4 py-4">
+                      <form
+                        onSubmit={(e) => {
+                          e.preventDefault();
+                          saveEdit(it.id);
+                        }}
+                        className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4"
+                      >
+                        <label className="flex flex-col gap-1.5">
+                          <span className="text-sm font-medium">Name</span>
+                          <input
+                            required
+                            value={editDraft.name}
+                            onChange={(e) => setEditDraft({ ...editDraft, name: e.target.value })}
+                            className={field}
+                          />
+                        </label>
+
+                        <label className="flex flex-col gap-1.5">
+                          <span className="text-sm font-medium">
+                            Type{" "}
+                            {locked && (
+                              <span className="font-normal text-ink-faint">
+                                locked — used on {"≥"}1 voucher
+                              </span>
+                            )}
+                          </span>
+                          <select
+                            value={editDraft.itemType}
+                            disabled={locked}
+                            onChange={(e) =>
+                              setEditDraft({
+                                ...editDraft,
+                                itemType: e.target.value as "goods" | "service",
+                              })
+                            }
+                            className={field + " disabled:opacity-60"}
+                          >
+                            <option value="goods">Goods</option>
+                            <option value="service">Service</option>
+                          </select>
+                        </label>
+
+                        <label className="flex flex-col gap-1.5">
+                          <span className="text-sm font-medium">
+                            {editDraft.itemType === "service" ? "SAC" : "HSN"}
+                          </span>
+                          <input
+                            value={editDraft.hsn}
+                            onChange={(e) =>
+                              setEditDraft({ ...editDraft, hsn: e.target.value.replace(/\D/g, "") })
+                            }
+                            maxLength={8}
+                            className={field + " font-mono"}
+                          />
+                        </label>
+
+                        {editDraft.itemType === "goods" && (
+                          <label className="flex flex-col gap-1.5">
+                            <span className="text-sm font-medium">
+                              Unit{" "}
+                              {locked && (
+                                <span className="font-normal text-ink-faint">locked</span>
+                              )}
+                            </span>
+                            <select
+                              value={editDraft.uom}
+                              disabled={locked}
+                              onChange={(e) => setEditDraft({ ...editDraft, uom: e.target.value })}
+                              className={field + " disabled:opacity-60"}
+                            >
+                              {uoms.map((u) => (
+                                <option key={u.code} value={u.code}>
+                                  {u.code} — {u.name}
+                                </option>
+                              ))}
+                            </select>
+                          </label>
+                        )}
+
+                        <label className="flex flex-col gap-1.5">
+                          <span className="text-sm font-medium">Supply nature</span>
+                          <select
+                            value={editDraft.supplyNature}
+                            onChange={(e) =>
+                              setEditDraft({ ...editDraft, supplyNature: e.target.value })
+                            }
+                            className={field}
+                          >
+                            {SUPPLY_NATURES.map((n) => (
+                              <option key={n.value} value={n.value}>
+                                {n.label}
+                              </option>
+                            ))}
+                          </select>
+                        </label>
+
+                        {editDraft.supplyNature === "taxable" && (
+                          <label className="flex flex-col gap-1.5">
+                            <span className="text-sm font-medium">GST rate</span>
+                            <select
+                              value={editDraft.gstRate}
+                              onChange={(e) =>
+                                setEditDraft({ ...editDraft, gstRate: e.target.value })
+                              }
+                              className={field}
+                            >
+                              {GST_RATES.map((r) => (
+                                <option key={r} value={r}>
+                                  {r}%
+                                </option>
+                              ))}
+                            </select>
+                          </label>
+                        )}
+
+                        {editDraft.supplyNature === "taxable" && (
+                          <label className="flex flex-col gap-1.5">
+                            <span className="text-sm font-medium">Cess rate %</span>
+                            <input
+                              inputMode="decimal"
+                              value={editDraft.cessRate}
+                              onChange={(e) =>
+                                setEditDraft({ ...editDraft, cessRate: e.target.value })
+                              }
+                              className={field + " text-right tabular-nums"}
+                            />
+                          </label>
+                        )}
+
+                        <label className="flex flex-col gap-1.5">
+                          <span className="text-sm font-medium">
+                            Input tax credit{" "}
+                            <span className="font-normal text-ink-faint">blank = claimable</span>
+                          </span>
+                          <select
+                            value={editDraft.itcBlockedClause}
+                            onChange={(e) =>
+                              setEditDraft({ ...editDraft, itcBlockedClause: e.target.value })
+                            }
+                            className={field}
+                          >
+                            <option value="">Claimable</option>
+                            {ITC_BLOCK_CLAUSES.map((c) => (
+                              <option key={c.value} value={c.value}>
+                                {c.label}
+                              </option>
+                            ))}
+                          </select>
+                        </label>
+
+                        <label className="flex flex-col gap-1.5">
+                          <span className="text-sm font-medium">TCS section</span>
+                          <select
+                            value={editDraft.tcsSection}
+                            onChange={(e) =>
+                              setEditDraft({ ...editDraft, tcsSection: e.target.value })
+                            }
+                            className={field}
+                          >
+                            <option value="">Not applicable</option>
+                            {tcsSections.map((s) => (
+                              <option key={s.section_code} value={s.section_code}>
+                                {s.section_code} — {s.rate_percent}%
+                              </option>
+                            ))}
+                          </select>
+                        </label>
+
+                        <label className="flex flex-col gap-1.5">
+                          <span className="text-sm font-medium">
+                            Sale rate <span className="font-normal text-ink-faint">optional</span>
+                          </span>
+                          <input
+                            inputMode="decimal"
+                            value={editDraft.saleRate}
+                            onChange={(e) =>
+                              setEditDraft({ ...editDraft, saleRate: e.target.value })
+                            }
+                            className={field + " text-right tabular-nums"}
+                          />
+                        </label>
+
+                        <label className="flex flex-col gap-1.5">
+                          <span className="text-sm font-medium">
+                            Purchase rate <span className="font-normal text-ink-faint">optional</span>
+                          </span>
+                          <input
+                            inputMode="decimal"
+                            value={editDraft.purchaseRate}
+                            onChange={(e) =>
+                              setEditDraft({ ...editDraft, purchaseRate: e.target.value })
+                            }
+                            className={field + " text-right tabular-nums"}
+                          />
+                        </label>
+
+                        <label className="flex items-start gap-2 sm:col-span-2">
+                          <input
+                            type="checkbox"
+                            checked={editDraft.isRcmApplicable}
+                            onChange={(e) =>
+                              setEditDraft({ ...editDraft, isRcmApplicable: e.target.checked })
+                            }
+                            className="mt-0.5"
+                          />
+                          <span className="text-sm">
+                            <span className="font-medium">Reverse charge (Sec 9(3)/9(4))</span>
+                            <br />
+                            <span className="text-xs text-ink-faint">
+                              A purchase of this item self-assesses GST via RCM Payable instead of
+                              the supplier charging it — GTA freight, an advocate&rsquo;s fee,
+                              security services, director&rsquo;s fees and the like.
+                            </span>
+                          </span>
+                        </label>
+
+                        <label className="flex items-center gap-2">
+                          <input
+                            type="checkbox"
+                            checked={editDraft.isActive}
+                            onChange={(e) =>
+                              setEditDraft({ ...editDraft, isActive: e.target.checked })
+                            }
+                          />
+                          <span className="text-sm font-medium">Active</span>
+                        </label>
+
+                        {editError && (
+                          <p className="rounded-md bg-error-soft px-3 py-2 text-sm text-error sm:col-span-2 lg:col-span-4">
+                            {editError}
+                          </p>
+                        )}
+
+                        <div className="flex gap-2 sm:col-span-2 lg:col-span-4">
+                          <button
+                            type="submit"
+                            disabled={editBusy}
+                            className="rounded-lg bg-accent px-4 py-2 text-sm font-semibold text-accent-ink transition-colors hover:opacity-90 disabled:opacity-50"
+                          >
+                            {editBusy ? "Saving…" : "Save changes"}
+                          </button>
+                          <button
+                            type="button"
+                            onClick={cancelEdit}
+                            className="rounded-lg border border-border-strong px-4 py-2 text-sm text-ink-soft hover:bg-surface-2"
+                          >
+                            Cancel
+                          </button>
+                        </div>
+                      </form>
+                    </td>
+                  </tr>
+                )}
                 {expanded && canHaveUom && (
                   <tr className="border-b border-border last:border-0 bg-bg">
-                    <td colSpan={8} className="px-4 py-3">
+                    <td colSpan={9} className="px-4 py-3">
                       <ItemUomPanel
                         companyId={companyId}
                         item={{ id: it.id, name: it.name, uom: it.uom }}

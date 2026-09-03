@@ -7,12 +7,12 @@ export default async function ItemsPage({
   const { companyId } = await params;
   const supabase = await createClient();
 
-  const [{ data: items }, { data: uoms }, { data: tcsSections }, { data: uomConversions }] =
+  const [{ data: items }, { data: uoms }, { data: tcsSections }, { data: uomConversions }, { data: usageRows }] =
     await Promise.all([
       supabase
         .from("items")
         .select(
-          "id, code, name, item_type, hsn_sac, uom, maintain_stock, opening_quantity, opening_value, sale_rate, gst_rate_percent, supply_nature, default_tcs_section, is_active"
+          "id, code, name, item_type, hsn_sac, uom, maintain_stock, opening_quantity, opening_value, sale_rate, purchase_rate, gst_rate_percent, cess_rate_percent, supply_nature, itc_blocked_clause, default_tcs_section, is_rcm_applicable, is_active"
         )
         .eq("company_id", companyId)
         .order("name"),
@@ -29,7 +29,15 @@ export default async function ItemsPage({
         .select("id, item_id, alternate_uom, conversion_factor, is_purchase_uom, is_sales_uom")
         .eq("company_id", companyId)
         .order("alternate_uom"),
+      // 1840: which items already carry voucher history. item_type,
+      // maintain_stock and uom are refused on these by the DB itself
+      // (app_private.protect_item_master_fields) — fetched here only so the
+      // edit form can disable them up front instead of the preparer hitting
+      // that refusal after filling in the rest of the form.
+      supabase.from("voucher_items").select("item_id").eq("company_id", companyId),
     ]);
+
+  const usedItemIds = Array.from(new Set((usageRows ?? []).map((r) => r.item_id)));
 
   return (
     <main className="mx-auto max-w-5xl px-6 py-10">
@@ -45,6 +53,7 @@ export default async function ItemsPage({
         uoms={uoms ?? []}
         tcsSections={tcsSections ?? []}
         uomConversions={uomConversions ?? []}
+        usedItemIds={usedItemIds}
       />
     </main>
   );
