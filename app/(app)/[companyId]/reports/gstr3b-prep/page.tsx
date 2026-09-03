@@ -77,6 +77,19 @@ type Table61Row = {
   cash_tax_payable: number;
   interest_payable: number;
   late_fee_payable: number;
+  // 1410 — the reconciliation behind the two numbers above. tax_payable is
+  // now THIS period's own output tax; anything left unpaid from an earlier
+  // return shows in output_brought_forward and is never re-reported here.
+  // The credit pool is the electronic-credit-ledger balance brought forward
+  // plus this period's NET ITC, so it agrees with Table 4(C) above instead
+  // of quietly spending the gross figure.
+  output_brought_forward: number;
+  itc_opening: number;
+  itc_period_gross: number;
+  itc_period_reversal: number;
+  itc_available: number;
+  itc_balance_carried_forward: number;
+  note: string;
 };
 
 type Table51Row = {
@@ -195,7 +208,11 @@ export default async function Gstr3bPrepPage({
   ]);
 
   const t4 = (Array.isArray(t4Rows) ? t4Rows[0] : t4Rows) as Table4 | undefined;
-  const t61 = (t61Rows ?? []) as Table61Row[];
+  // `as unknown as` — 1410 added the reconciliation columns and the generated
+  // database.types.ts still describes the pre-1410 shape until the
+  // integration pass regenerates it, same situation as reports/balance-sheet
+  // after 0089.
+  const t61 = (t61Rows ?? []) as unknown as Table61Row[];
   const t51 = (t51Rows ?? []) as Table51Row[];
   const base = `/${companyId}/reports/gstr3b-prep`;
   const error = t4Error ?? t61Error ?? t51Error;
@@ -383,13 +400,19 @@ export default async function Gstr3bPrepPage({
           <div className="border-b border-t border-border p-4">
             <h2 className="font-semibold">Table 6.1 — Payment of tax</h2>
             <p className="mt-0.5 text-xs text-ink-faint">
-              Reused directly from the GST set-off computation (Sec 49/49A/49B, Rule 88A) — same
-              figures as{" "}
+              <strong className="text-ink">Tax payable is this period&rsquo;s own output tax</strong> —
+              {" "}
+              {from} to {to}, net of this period&rsquo;s credit notes, with GST set-off clearing
+              journals excluded so the figures do not change depending on whether you have posted the
+              set-off yet. An earlier return&rsquo;s unpaid liability is shown separately below and is
+              never re-reported here. Credit is drawn from the electronic credit ledger: the balance
+              brought forward plus Table 4(C) net ITC above, i.e. after the whole of 4(B). Set-off
+              order is Sec 49/49A/49B and Rule 88A, the same cascade as{" "}
               <Link href={`/${companyId}/reports/gst-setoff?as_at=${to}&reg=${regId}`} className="underline">
                 GST set-off
               </Link>
-              , cumulative since the last set-off posting as at {to}, not strictly bounded to this
-              calendar month unless set-off was last posted at the start of it.
+              , which is a different report on purpose: that one clears the control ledgers as they
+              stand today, this one prepares one return period.
             </p>
           </div>
           <table className="w-full min-w-[840px] text-sm">
@@ -434,6 +457,77 @@ export default async function Gstr3bPrepPage({
               </tr>
             </tbody>
           </table>
+
+          <div className="border-b border-t border-border p-4">
+            <h3 className="text-sm font-semibold">Where the credit came from</h3>
+            <p className="mt-0.5 text-xs text-ink-faint">
+              The electronic credit ledger behind the &ldquo;used&rdquo; columns above. Available =
+              brought forward + this period&rsquo;s gross ITC &minus; this period&rsquo;s 4(B)
+              reversal. The four reversal figures always add up to Table 4&rsquo;s own B total
+              ({formatINR(t4.b_total, { showZero: true })}) — Rule 42 and Rule 37 split per head from
+              their own sources, Sec 17(5) blocked credit apportioned by this period&rsquo;s ITC mix
+              because this schema holds no per-head split for it.
+            </p>
+          </div>
+          <table className="w-full min-w-[820px] text-sm">
+            <thead>
+              <tr className="border-b border-border text-left">
+                <th className={th}>Head</th>
+                <th className={th + " text-right"}>Credit b/f</th>
+                <th className={th + " text-right"}>ITC this period</th>
+                <th className={th + " text-right"}>Less 4(B) reversal</th>
+                <th className={th + " text-right"}>Available</th>
+                <th className={th + " text-right"}>Used</th>
+                <th className={th + " text-right"}>Credit c/f</th>
+                <th className={th + " text-right"}>Output b/f (earlier return)</th>
+              </tr>
+            </thead>
+            <tbody>
+              {t61.map((r) => (
+                <tr key={r.tax_head} className="border-b border-border last:border-0">
+                  <td className={td + " font-medium"}>{HEAD_LABEL[r.tax_head]}</td>
+                  <td className={num}>{formatINR(r.itc_opening, { showZero: true })}</td>
+                  <td className={num}>{formatINR(r.itc_period_gross, { showZero: true })}</td>
+                  <td className={num + (r.itc_period_reversal > 0 ? " text-warning" : "")}>
+                    {formatINR(r.itc_period_reversal, { showZero: true })}
+                  </td>
+                  <td className={num + " font-medium"}>{formatINR(r.itc_available, { showZero: true })}</td>
+                  <td className={num}>{formatINR(r.itc_total_utilised, { showZero: true })}</td>
+                  <td className={num}>{formatINR(r.itc_balance_carried_forward, { showZero: true })}</td>
+                  <td className={num + (r.output_brought_forward > 0 ? " font-semibold text-warning" : " text-ink-faint")}>
+                    {formatINR(r.output_brought_forward, { showZero: true })}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+          {t61.some((r) => r.output_brought_forward > 0) && (
+            <p className="border-t border-border px-4 py-3 text-xs text-warning">
+              {formatINR(
+                t61.reduce((n, r) => n + Number(r.output_brought_forward), 0),
+                { showZero: true }
+              )}{" "}
+              of output tax was still sitting uncleared in the control ledgers when this period
+              began. It belongs to an EARLIER return and is deliberately not added to the figures
+              above — re-reporting it here would pay the same tax twice. Clear it by posting that
+              period&rsquo;s GST set-off dated inside that period, on{" "}
+              <Link href={`/${companyId}/reports/gst-setoff`} className="underline">
+                GST set-off
+              </Link>
+              .
+            </p>
+          )}
+          {t61.some((r) => r.tax_payable < 0) && (
+            <p className="border-t border-border px-4 py-3 text-xs text-warning">
+              A negative tax payable means this period&rsquo;s credit notes outran its sales for that
+              head. It is shown as it stands and consumes no credit. GSTN will not accept a negative
+              liability — the excess has to be carried into a later period&rsquo;s GSTR-1, which
+              LEKHA does not do for you.
+            </p>
+          )}
+          {t61[0]?.note && (
+            <p className="border-t border-border px-4 py-3 text-xs text-ink-faint">{t61[0].note}</p>
+          )}
 
           <div className="border-b border-t border-border p-4">
             <h2 className="font-semibold">Table 5.1 — Interest and late fee</h2>

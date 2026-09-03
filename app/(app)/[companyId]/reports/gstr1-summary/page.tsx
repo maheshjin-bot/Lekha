@@ -325,6 +325,54 @@ function B2BTable({ rows }: { rows: OutputRow[] }) {
   );
 }
 
+/** Credit notes GSTR-1 puts in CDNUR (or in no table LEKHA builds at all) —
+ * shown so a note excluded from 4A/5A/6A is never simply lost. Values are
+ * printed at their own natural POSITIVE magnitude, GSTN's convention for a
+ * note, not the output register's internal negative. */
+function UnreportedNotesTable({ rows }: { rows: OutputRow[] }) {
+  return (
+    <table className="w-full min-w-[860px] text-sm">
+      <thead>
+        <tr className="border-b border-border text-left">
+          <th className={th}>Date</th>
+          <th className={th}>Note no.</th>
+          <th className={th}>Party</th>
+          <th className={th}>GSTIN</th>
+          <th className={th}>POS</th>
+          <th className={th}>Supply type</th>
+          <th className={th + " text-right"}>Taxable</th>
+          <th className={th + " text-right"}>Tax</th>
+          <th className={th + " text-right"}>Note value</th>
+        </tr>
+      </thead>
+      <tbody>
+        {rows.length === 0 && (
+          <tr>
+            <td colSpan={9} className="px-4 py-8 text-center text-ink-faint">
+              None — every credit note this month is carried by Table 7 or Table 9B above.
+            </td>
+          </tr>
+        )}
+        {rows.map((r) => (
+          <tr key={r.voucher_id} className="border-b border-border last:border-0">
+            <td className={td + " whitespace-nowrap"}>{r.voucher_date}</td>
+            <td className={td + " font-mono text-xs"}>{r.voucher_number}</td>
+            <td className={td}>{r.party_name ?? "—"}</td>
+            <td className={td + " font-mono text-xs"}>{r.party_gstin ?? "—"}</td>
+            <td className={td}>{r.place_of_supply ?? "—"}</td>
+            <td className={td}>{r.supply_type ?? "—"}</td>
+            <td className={num}>{formatINR(Math.abs(Number(r.taxable_value)), { showZero: true })}</td>
+            <td className={num}>{formatINR(Math.abs(sumTax([r])), { showZero: true })}</td>
+            <td className={num + " font-medium"}>
+              {formatINR(Math.abs(Number(r.invoice_value)), { showZero: true })}
+            </td>
+          </tr>
+        ))}
+      </tbody>
+    </table>
+  );
+}
+
 /** Table 5A — B2C(Large), invoice-wise: unregistered + inter-state + invoice value over the threshold. */
 function B2CLargeTable({ rows }: { rows: OutputRow[] }) {
   const taxTotal = sumTax(rows);
@@ -851,19 +899,74 @@ export default async function Gstr1SummaryPage({
   const ZERO_RATED_OR_DEEMED = new Set(["export_lut", "export_igst", "sez", "deemed_export"]);
   const domesticOutput = output.filter((r) => !ZERO_RATED_OR_DEEMED.has(r.supply_type ?? ""));
 
+  // CREDIT NOTES ARE NOT INVOICES, AND MUST NOT BE NETTED INTO AN
+  // INVOICE-WISE TABLE THAT ALSO REPORTS THEM SEPARATELY.
+  //
+  // get_gst_output_register (0035) returns voucher_type in ('sales',
+  // 'credit_note') with the note's taxable value and tax already NEGATED —
+  // deliberately, because a *register* nets a period down to what was
+  // actually supplied, and five other consumers depend on exactly that
+  // convention (the GST registers screen, gst-refunds, get_isd_distribution's
+  // turnover, get_gstr9_table4_5, and get_gstr3b_table5_1's preceding-FY
+  // turnover). The register is right; the bucketing below was wrong.
+  //
+  // Until this fix, a credit note to a REGISTERED party was deducted TWICE on
+  // this one screen: once as a negative row inside Table 4A (it has a GSTIN,
+  // so it fell straight into `b2b`), and again — positive, per GSTN's own
+  // convention — in Table 9B/CDNR further down. A preparer keying both tables
+  // as printed understated outward taxable value and output tax by the full
+  // note. Observed on TEST Rangoli Spice Works, Sep 2026: 4A rendered
+  // 1,94,502.81 / 9,725.14 against a correct B2B figure of 1,99,302.81 /
+  // 9,965.14, the note being 4,800.00 / 240.00.
+  //
+  // GSTN's own table structure decides where each note goes:
+  //   • note to a REGISTERED party      → Table 9B (CDNR). Never Table 4A.
+  //   • note to an UNREGISTERED party
+  //       against a B2CS supply         → netted into Table 7, which IS how
+  //                                       GSTR-1 reports it (Table 7 is
+  //                                       consolidated and reported net of
+  //                                       notes issued to unregistered
+  //                                       persons other than CDNUR ones).
+  //       against a B2CL/export supply  → Table 9B (CDNUR), which LEKHA does
+  //                                       not build — surfaced in its own
+  //                                       panel below rather than dropped.
+  // So: the two INVOICE-WISE tables (4A, 5A) take sales only; the
+  // CONSOLIDATED table (7) keeps its notes.
+  const domesticInvoices = domesticOutput.filter((r) => r.voucher_type !== "credit_note");
+  const domesticNotes = domesticOutput.filter((r) => r.voucher_type === "credit_note");
+
   // Re-bucket 0035's own output register into GSTR-1's table structure — no
   // new tax computation, so this can never drift from the register's own
   // figures. party_gstin present → registered counterparty → B2B (Table 4A).
   // Otherwise unregistered: inter-state over the threshold is invoice-wise
   // B2C(Large) (Table 5A); everything else is state-wise consolidated
   // B2C(Small) (Table 7).
-  const b2b = domesticOutput.filter((r) => r.party_gstin);
-  const b2cLarge = domesticOutput.filter(
-    (r) => !r.party_gstin && r.supply_type === "inter" && Math.abs(Number(r.invoice_value)) > B2C_LARGE_THRESHOLD
+  const isB2cLarge = (r: OutputRow) =>
+    r.supply_type === "inter" && Math.abs(Number(r.invoice_value)) > B2C_LARGE_THRESHOLD;
+  const b2b = domesticInvoices.filter((r) => r.party_gstin);
+  const b2cLarge = domesticInvoices.filter((r) => !r.party_gstin && isB2cLarge(r));
+
+  // Registered notes are excluded from 4A above and reported in Table 9B
+  // instead. Shown as an explicit reconciliation line under 4A so the
+  // exclusion is visible and cross-checkable against 9B's own total — never a
+  // silent drop.
+  const registeredNotes = domesticNotes.filter((r) => r.party_gstin);
+  const registeredNotesTaxable = registeredNotes.reduce((n, r) => n + Math.abs(Number(r.taxable_value)), 0);
+  const registeredNotesTax = Math.abs(sumTax(registeredNotes));
+
+  // Notes that belong in NEITHER Table 7 nor Table 9B/CDNR: an unregistered
+  // note big enough to be CDNUR, or a note on a zero-rated/deemed-export
+  // supply (Tables 6A/6B/6C are sales-only by construction). Listed rather
+  // than dropped — see the panel and the report footer.
+  const unreportedNotes = output.filter(
+    (r) =>
+      r.voucher_type === "credit_note" &&
+      (ZERO_RATED_OR_DEEMED.has(r.supply_type ?? "") || (!r.party_gstin && isB2cLarge(r)))
   );
-  const b2cSmallRows = domesticOutput.filter(
-    (r) => !r.party_gstin && !(r.supply_type === "inter" && Math.abs(Number(r.invoice_value)) > B2C_LARGE_THRESHOLD)
-  );
+
+  const b2cSmallRows = domesticNotes
+    .filter((r) => !r.party_gstin && !isB2cLarge(r))
+    .concat(domesticInvoices.filter((r) => !r.party_gstin && !isB2cLarge(r)));
   const b2cSmallByState = new Map<string, B2csBucket>();
   for (const r of b2cSmallRows) {
     const key = r.place_of_supply ?? "Unknown";
@@ -888,7 +991,7 @@ export default async function Gstr1SummaryPage({
       title="GSTR-1 summary"
       period={`${label} · B2B / B2C(Large) / B2C(Small) / HSN — GSTR-1 prep, not a filing`}
       status={{
-        label: `${formatINR(totalTaxable + totalTax, { showZero: true })} total outward supply`,
+        label: `${formatINR(totalTaxable + totalTax, { showZero: true })} outward supply, net of credit notes`,
         tone: "ok",
       }}
     >
@@ -940,7 +1043,31 @@ export default async function Gstr1SummaryPage({
         <h2 className="flex items-center gap-2 font-semibold">
           Table 4A — B2B <Badge tone="neutral">invoice-wise</Badge>
         </h2>
-        <p className="mt-0.5 text-xs text-ink-faint">Supplies to GST-registered counterparties.</p>
+        <p className="mt-0.5 text-xs text-ink-faint">
+          Sales invoices to GST-registered counterparties. Credit notes are deliberately NOT netted
+          here — GSTR-1 reports them in Table 9B (CDNR) below, and deducting them in both places
+          understates outward supply twice over.
+        </p>
+        {registeredNotes.length > 0 && (
+          <p className="mt-1.5 text-xs text-ink-faint">
+            {registeredNotes.length} credit note{registeredNotes.length === 1 ? "" : "s"} to registered
+            parties, worth{" "}
+            <strong>{formatINR(registeredNotesTaxable, { showZero: true })}</strong> taxable /{" "}
+            <strong>{formatINR(registeredNotesTax, { showZero: true })}</strong> tax, {" "}
+            {registeredNotes.length === 1 ? "is" : "are"} excluded from the figures below and reported
+            in Table 9B instead.
+            {Math.abs(
+              registeredNotesTaxable - table9b.reduce((n, r) => n + Number(r.taxable_value), 0)
+            ) > 0.5 && (
+              <>
+                {" "}
+                <span className="text-warning">
+                  This does not agree with Table 9B&rsquo;s own total below — hand-check before filing.
+                </span>
+              </>
+            )}
+          </p>
+        )}
       </div>
       <B2BTable rows={b2b} />
 
@@ -950,6 +1077,8 @@ export default async function Gstr1SummaryPage({
         </h2>
         <p className="mt-0.5 text-xs text-ink-faint">
           Unregistered, inter-state, invoice value over ₹1,00,000 (Rule 59(4), effective 1 Aug 2024).
+          Sales invoices only — a credit note against a B2C(Large) supply belongs in CDNUR, not here;
+          see the credit-note panel below.
         </p>
       </div>
       <B2CLargeTable rows={b2cLarge} />
@@ -999,6 +1128,9 @@ export default async function Gstr1SummaryPage({
         <p className="mt-0.5 text-xs text-ink-faint">
           Everything else unregistered — intra-state at any value, or inter-state at ₹1,00,000 or below.
           Consolidated by place of supply, per GSTN&rsquo;s own table structure — not invoice-wise.
+          Credit notes to unregistered parties in this bucket ARE netted in here, which is how GSTR-1
+          reports them: Table 7 is filed net of notes issued to unregistered persons other than the
+          CDNUR ones.
         </p>
       </div>
       <B2CSmallTable buckets={b2cSmall} />
@@ -1027,6 +1159,20 @@ export default async function Gstr1SummaryPage({
         </p>
       </div>
       <Table9bTable rows={table9b} />
+
+      <div className="border-b border-t border-border p-4">
+        <h2 className="flex items-center gap-2 font-semibold">
+          Credit notes not carried by any table above{" "}
+          <Badge tone={unreportedNotes.length > 0 ? "warn" : "neutral"}>CDNUR / zero-rated</Badge>
+        </h2>
+        <p className="mt-0.5 text-xs text-ink-faint">
+          A credit note against a B2C(Large) or a zero-rated/deemed-export supply goes in GSTR-1&rsquo;s
+          CDNUR table, which LEKHA does not build (Tables 6A/6B/6C are sales-only, and Table 5A is
+          invoice-wise). Any such note is listed here rather than netted into a table that would
+          double-count or silently swallow it — key it into CDNUR by hand.
+        </p>
+      </div>
+      <UnreportedNotesTable rows={unreportedNotes} />
 
       <div className="border-b border-t border-border p-4">
         <h2 className="flex items-center gap-2 font-semibold">
@@ -1073,7 +1219,15 @@ export default async function Gstr1SummaryPage({
       <p className="border-t border-border px-4 py-3 text-xs text-ink-faint">
         GSTR-1 prep — B2B/B2C(Large)/B2C(Small) is a straight re-bucketing of the GST output register
         (Reports → GST registers) by registration status, supply direction and invoice value; it carries
-        the same figures, so the two reports always reconcile. Table 12 is grouped by (HSN/SAC, GST rate,
+        the same figures, so the two reports always reconcile. Credit notes are the one place the two
+        reports deliberately part company: the register NETS a note off the supply it reverses (that is
+        what a register is for, and the &ldquo;net of credit notes&rdquo; total in the header above is
+        the register&rsquo;s own), whereas GSTR-1 reports the same note as a separate positive entry in
+        Table 9B. Netting it into Table 4A as well — which this screen did until it was fixed — deducts
+        it twice, understating both outward taxable value and output tax by the full note. So Tables 4A
+        and 5A now carry sales invoices only; Table 7 keeps its unregistered notes, because Table 7 is
+        genuinely filed net of them; and any note that lands in neither gets its own panel above rather
+        than disappearing. Table 12 is grouped by (HSN/SAC, GST rate,
         UOM) and split B2B/B2C by whether the party ledger carries a registered gst_registration_type —
         per GSTN&rsquo;s Phase-3 rules, which now reject a blended rate on the same HSN. The rate itself is
         read from the item master (voucher_items has no rate column of its own, only hsn_sac), so a rate
