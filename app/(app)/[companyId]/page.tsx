@@ -1,7 +1,7 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { createClient } from "@/lib/supabase/server";
-import { formatINR } from "@/lib/utils/currency";
+import { formatINR, formatINRWithSymbol } from "@/lib/utils/currency";
 import { KpiTile } from "@/components/ui/KpiTile";
 import { Badge } from "@/components/ui/Badge";
 import { Card } from "@/components/ui/Card";
@@ -21,8 +21,16 @@ export default async function CompanyPage({
   const { companyId } = await params;
   const supabase = await createClient();
 
-  const [{ data: profile }, { data: modules }, { data: branches }, { data: kpis }, { data: attention }, { count: pendingNotifications }] =
-    await Promise.all([
+  const [
+    { data: profile },
+    { data: modules },
+    { data: branches },
+    { data: kpis },
+    { data: attention },
+    { count: pendingNotifications },
+    { data: unallocatedDebtor },
+    { data: unallocatedCreditor },
+  ] = await Promise.all([
       supabase.rpc("get_company_profile", { p_company_id: companyId }),
       supabase.rpc("get_company_modules", { p_company_id: companyId }),
       supabase
@@ -40,6 +48,21 @@ export default async function CompanyPage({
         .select("id", { count: "exact", head: true })
         .eq("company_id", companyId)
         .eq("status", "pending"),
+      // Unallocated settlements (G2) — receipts/payments nobody has pointed
+      // at a bill yet. get_unallocated_settlements (1490) predates the
+      // generated types, same `as any` escape hatch the /allocations screen
+      // itself uses. Its default args (p_as_at = today, p_include_allocated
+      // = false) already filter to on_account > 0, so a bare company+role
+      // call is exactly "what still needs a person's attention" — no extra
+      // client-side filtering needed. Two calls (debtor/creditor), not one:
+      // the RPC takes a single p_role and there is no combined variant, and
+      // rule 6 forbids inventing one.
+      supabase
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any -- see above
+        .rpc("get_unallocated_settlements" as any, { p_company_id: companyId, p_role: "debtor" }),
+      supabase
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any -- see above
+        .rpc("get_unallocated_settlements" as any, { p_company_id: companyId, p_role: "creditor" }),
     ]);
 
   const company = profile?.[0];
@@ -48,7 +71,30 @@ export default async function CompanyPage({
   const active = (modules ?? []).filter((m) => m.active);
   const inactive = (modules ?? []).filter((m) => !m.active);
   const kpi = kpis?.[0];
+
+  // A sibling row on top of get_needs_attention's own list, not a
+  // replacement for it: an unallocated receipt/payment isn't wrong the way
+  // an overdue invoice or a pending approval is, so it isn't worth teaching
+  // the SQL function a new opinion about severity — it just needs a door
+  // back to /allocations when there is one to open. An empty needs-attention
+  // list must stay empty, so this only appends when the combined count is
+  // actually nonzero (never a "0 unallocated" row nobody would ever act on).
+  const unallocatedRows = [...(unallocatedDebtor ?? []), ...(unallocatedCreditor ?? [])] as unknown as Array<{
+    on_account: number;
+  }>;
+  const unallocatedCount = unallocatedRows.length;
   const attentionRows = attention ?? [];
+  if (unallocatedCount > 0) {
+    const round2 = (n: number) => Math.round((n + Number.EPSILON) * 100) / 100;
+    const unallocatedTotal = round2(unallocatedRows.reduce((n, r) => n + Number(r.on_account ?? 0), 0));
+    attentionRows.push({
+      category: "Allocations",
+      label: `${unallocatedCount} ${unallocatedCount === 1 ? "receipt/payment" : "receipts/payments"} awaiting allocation`,
+      detail: `totalling ${formatINRWithSymbol(unallocatedTotal)}`,
+      severity: "warn",
+      href: `/${companyId}/allocations`,
+    });
+  }
 
   return (
     <main className="mx-auto max-w-5xl px-6 py-10">

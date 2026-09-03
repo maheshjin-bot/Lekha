@@ -1,8 +1,9 @@
 "use client";
 
 import { useMemo, useState } from "react";
-import { useRouter } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import { toast } from "sonner";
+import { ChevronDown, ChevronUp } from "lucide-react";
 import { createClient } from "@/lib/supabase/client";
 import { formatINR, sumPaise, toPaise } from "@/lib/utils/currency";
 import {
@@ -13,7 +14,12 @@ import {
   QuickAddItemModal,
   type QuickAddedItem,
 } from "@/components/items/QuickAddItemModal";
+import { Combobox } from "@/components/ui/Combobox";
+import { useGridNav } from "@/components/ui/EntryGrid";
 import { VoucherNumberField } from "@/components/numbering/VoucherNumberField";
+import { useShortcuts } from "@/lib/keys/useShortcuts";
+import { SessionStrip, type SessionStripEntry } from "@/components/vouchers/SessionStrip";
+import { AllocationDrawer, type DrawerAllocation } from "@/components/allocations/AllocationDrawer";
 import {
   PURCHASE_TRADING_ROLES,
   SALE_TRADING_ROLES,
@@ -296,7 +302,23 @@ export function InvoiceForm({
 }) {
   const router = useRouter();
   const isEdit = Boolean(existing);
-  const [voucherType, setVoucherType] = useState<(typeof TYPES)[number]["value"]>(existing?.voucherType ?? "sales");
+  // AppShell's Alt+P (purchase bill) and Alt+D (debit note) global shortcuts
+  // land here via /invoices/new?type=purchase|debit_note — a `type` query
+  // param, read once on mount, that preselects the right option in the type
+  // selector below instead of always opening on "Sales invoice". Only a
+  // fresh /new (never an edit, which already has its own real voucherType)
+  // honours it, and only when the value is one this form actually knows —
+  // an unrecognised or absent param falls back to the pre-existing "sales"
+  // default exactly as before this was added.
+  const searchParams = useSearchParams();
+  const typeParam = searchParams.get("type");
+  const initialVoucherType =
+    !isEdit && typeParam && TYPES.some((t) => t.value === typeParam)
+      ? (typeParam as (typeof TYPES)[number]["value"])
+      : "sales";
+  const [voucherType, setVoucherType] = useState<(typeof TYPES)[number]["value"]>(
+    existing?.voucherType ?? initialVoucherType,
+  );
   const [branchId, setBranchId] = useState(existing?.branchId ?? branches[0]?.id ?? "");
   const [godownId, setGodownId] = useState(existing?.godownId ?? godowns[0]?.id ?? "");
   const [date, setDate] = useState(existing?.date ?? todayLocal);
@@ -351,11 +373,100 @@ export function InvoiceForm({
   const [tradingModalOpen, setTradingModalOpen] = useState(false);
   const [itemModalLine, setItemModalLine] = useState<number | null>(null);
 
+  // F4 (session strip) — every invoice saved via "save & start next" in THIS
+  // sitting, oldest first (SessionStrip reverses for display). /new only:
+  // an edit screen has no notion of "the next one in this session", it has
+  // exactly the one voucher it was opened to fix.
+  const [sessionEntries, setSessionEntries] = useState<SessionStripEntry[]>([]);
+
+  // F6 (allocation drawer) — only ever populated on a brand-new credit or
+  // debit note; see saveInvoice()'s own comment for why an edit never reads
+  // or writes this. Reset to null whenever the party or the voucher type
+  // changes (an allocation drafted against a different party or a
+  // sales/purchase invoice is meaningless once the thing it was drafted for
+  // is gone).
+  const [allocations, setAllocations] = useState<DrawerAllocation[] | null>(null);
+  const [allocationOnAccount, setAllocationOnAccount] = useState(0);
+  const [allocationDrawerOpen, setAllocationDrawerOpen] = useState(false);
+
+  // F5 (adjacent voucher) — guards get_adjacent_voucher against being fired
+  // twice for one Alt+ArrowUp/Down press (e.g. key-repeat) while the first
+  // request is still in flight.
+  const [adjacentBusy, setAdjacentBusy] = useState(false);
+
   const allLedgers = useMemo(() => mergeById(ledgers, addedLedgers), [ledgers, addedLedgers]);
   const allItems = useMemo(() => mergeById(items, addedItems), [items, addedItems]);
 
   const config = TYPES.find((t) => t.value === voucherType)!;
   const isSale = voucherType === "sales" || voucherType === "credit_note";
+  // A credit or debit note settles money against an EXISTING bill; a sales
+  // or purchase invoice always creates a NEW one — per F7's recon of TYPES,
+  // this is the only pair of voucherType values the allocation drawer
+  // should ever gate on.
+  const isCreditOrDebitNote = voucherType === "credit_note" || voucherType === "debit_note";
+  // config.roles[0] is always the party's own role (see the `partyRole`
+  // comment below) — narrowed to a literal union here because AllocationDrawer's
+  // `role` prop is typed strictly as "debtor" | "creditor", not the wider
+  // string TYPES itself is declared with.
+  const allocationRole: "debtor" | "creditor" = voucherType === "debit_note" ? "creditor" : "debtor";
+
+  // F5 (adjacent voucher). Alt+ArrowUp/Down navigates via router.push to
+  // this SAME route pattern with a different [voucherId] — the edit page
+  // (a file outside this pass's scope) renders a NEW `existing` prop for
+  // that id, but does not give InvoiceForm a `key`, so React reuses this
+  // exact component instance rather than remounting it. Every `useState`
+  // above that seeded itself from `existing?.…` therefore would NOT pick up
+  // the new voucher's data on its own — only this check, reacting to
+  // `existing.id` actually changing, makes the arrow keys land on a form
+  // that shows the voucher just navigated to instead of the one left
+  // behind. Deliberately keyed on just the id: re-running this every time
+  // any OTHER field of `existing` changed would fight the user's own edits
+  // on the voucher currently open.
+  //
+  // Done during render (not in a useEffect) and guarded by comparing the id
+  // against what was last synced — same "seed on key change" pattern as
+  // EmployeeManager.tsx's revision form and useScreenConfig.ts's loadingFor
+  // check, and for the same reason: an unconditional setState at the top of
+  // an effect body is exactly what this project's react-hooks/set-state-in-effect
+  // rule refuses.
+  const [syncedExistingId, setSyncedExistingId] = useState<string | null>(existing?.id ?? null);
+  if ((existing?.id ?? null) !== syncedExistingId) {
+    setSyncedExistingId(existing?.id ?? null);
+    if (existing) {
+      setVoucherType(existing.voucherType);
+      setBranchId(existing.branchId);
+      setGodownId(existing.godownId);
+      setDate(existing.date);
+      setPartyId(existing.partyId);
+      setTradingId(existing.tradingId);
+      setPlaceOfSupply(existing.placeOfSupply);
+      setPlaceOfSupplyTouched(true);
+      setReference(existing.reference);
+      setChallanNumber(existing.challanNumber);
+      setChallanDate(existing.challanDate);
+      setNarration(existing.narration);
+      setLines(existing.lines.length ? existing.lines : [emptyLine()]);
+      setShipToOn(Boolean(existing.shipTo));
+      setShipTo(existing.shipTo ?? emptyShipTo());
+      setAllocations(null);
+      setAllocationOnAccount(0);
+      setAllocationDrawerOpen(false);
+      setError(null);
+      setBusy(false);
+    }
+  }
+
+  // A draft allocation is only ever meaningful for the party and the
+  // voucher type it was drawn up against — switching either invalidates it.
+  // Same render-time key-comparison pattern as above, for the same reason.
+  const allocationSyncKey = `${partyId}|${voucherType}`;
+  const [syncedAllocationKey, setSyncedAllocationKey] = useState(allocationSyncKey);
+  if (allocationSyncKey !== syncedAllocationKey) {
+    setSyncedAllocationKey(allocationSyncKey);
+    setAllocations(null);
+    setAllocationOnAccount(0);
+    setAllocationDrawerOpen(false);
+  }
 
   // The party side hard-filters by ledger role — a sale cannot be billed to a
   // supplier. The trading side stays open, since a business may post to any
@@ -555,6 +666,25 @@ export function InvoiceForm({
     );
   }
 
+  // F3 grid navigation for the desktop line-items table: arrow keys move
+  // between cells, Enter on the last cell of the last row adds a line,
+  // Ctrl+D duplicates the focused row, Ctrl+Delete removes it. Column order
+  // matches the desktop <table>'s own cell order below — itemId=0,
+  // quantity=1, rate=2, discountPercent=3 — which is also the only place
+  // this invoice's line items are laid out as an actual grid; the stacked
+  // mobile cards below sm: are a single column already and are left on their
+  // plain onChange handlers, same as before this pass. This REPLACES the
+  // desktop Rate input's old one-off "Enter on the last row adds a line"
+  // handler (now generalised to the true last cell, discountPercent) rather
+  // than adding a second, competing Enter handler beside it.
+  const { getCellProps } = useGridNav({
+    rowCount: lines.length,
+    colCount: 4,
+    onAddRow: () => setLines((p) => [...p, emptyLine()]),
+    onDuplicateRow: (i) => setLines((p) => [...p.slice(0, i + 1), { ...p[i] }, ...p.slice(i + 1)]),
+    onRemoveRow: (i) => setLines((p) => p.filter((_, idx) => idx !== i)),
+  });
+
   /**
    * A ledger the popup just created. Selected here rather than through
    * selectParty(), because setAddedLedgers and the selection happen in the
@@ -598,23 +728,30 @@ export function InvoiceForm({
     router.refresh();
   }
 
-  async function onSubmit(e: React.FormEvent) {
-    e.preventDefault();
-    setError(null);
+  /** Lines actually filled in — the one predicate both validateForm() and
+   * saveInvoice() need to agree on, so pulling it out is what keeps "is
+   * there anything to save" and "what gets sent" from ever quietly
+   * diverging. */
+  function filledLines(): Line[] {
+    return lines.filter((l) => l.itemId && Number(l.quantity) > 0);
+  }
 
-    const filled = lines.filter((l) => l.itemId && Number(l.quantity) > 0);
-    if (!filled.length) return setError("Add at least one item line.");
-    if (!partyId) return setError(`Select a ${config.party.toLowerCase()}.`);
-    if (!tradingId) return setError(`Select a ${config.trading.toLowerCase()}.`);
-    if (taxable <= 0) return setError("The invoice must come to more than zero.");
-    if (gstOn && !placeOfSupply) return setError("Select a place of supply.");
+  /** Every check onSubmit used to run inline, unchanged, just returning the
+   * message instead of calling setError itself — so both save paths below
+   * (save & close, save & start next) run the identical validation. */
+  function validateForm(): string | null {
+    if (!filledLines().length) return "Add at least one item line.";
+    if (!partyId) return `Select a ${config.party.toLowerCase()}.`;
+    if (!tradingId) return `Select a ${config.trading.toLowerCase()}.`;
+    if (taxable <= 0) return "The invoice must come to more than zero.";
+    if (gstOn && !placeOfSupply) return "Select a place of supply.";
     // The same rule app_private.assert_rule46b_number applies, checked here so
     // the preparer reads a sentence rather than waiting for a round trip that
     // fails — and, on a tax invoice, so a number the IRP would reject never
     // gets issued in the first place.
     if (policy?.mode === "manual") {
       const problem = validateManualNumber(manualNumber);
-      if (problem) return setError(problem);
+      if (problem) return problem;
     }
     // Checked here rather than left to the database, because the ship-to is
     // written AFTER the invoice has already been posted and numbered — a
@@ -622,17 +759,47 @@ export function InvoiceForm({
     // These are the table's own NOT NULLs and its gstin/state CHECK (0805),
     // stated as sentences.
     if (shipToOn) {
-      if (!shipTo.name.trim()) return setError("Give the delivery address a name, or untick “Deliver to a different address”.");
-      if (!shipTo.address.trim()) return setError("Enter the delivery address, or untick “Deliver to a different address”.");
-      if (!shipTo.stateCode) return setError("Select the delivery address's state — a GST invoice must name it (Rule 46).");
+      if (!shipTo.name.trim()) return "Give the delivery address a name, or untick “Deliver to a different address”.";
+      if (!shipTo.address.trim()) return "Enter the delivery address, or untick “Deliver to a different address”.";
+      if (!shipTo.stateCode) return "Select the delivery address's state — a GST invoice must name it (Rule 46).";
       const g = shipTo.gstin.trim().toUpperCase();
-      if (g && g.length !== 15) return setError("A delivery GSTIN is 15 characters, or leave it blank.");
+      if (g && g.length !== 15) return "A delivery GSTIN is 15 characters, or leave it blank.";
       if (g && g.slice(0, 2) !== shipTo.stateCode) {
-        return setError("The delivery GSTIN starts with a different state code than the state selected beside it.");
+        return "The delivery GSTIN starts with a different state code than the state selected beside it.";
       }
       if (shipTo.pincode.trim() && !/^[1-9][0-9]{5}$/.test(shipTo.pincode.trim())) {
-        return setError("A delivery PIN code is six digits and cannot start with 0, or leave it blank.");
+        return "A delivery PIN code is six digits and cannot start with 0, or leave it blank.";
       }
+    }
+    return null;
+  }
+
+  /**
+   * Validates and posts one invoice — every check, RPC call and ship-to
+   * write onSubmit used to run inline, byte-for-byte unchanged in WHAT gets
+   * sent, just extracted so both save paths below (Ctrl+Shift+S/the Save
+   * button, which close the form, and Ctrl+S on a new invoice, which reopens
+   * a blank one) share one implementation instead of two that could drift.
+   *
+   * Step 4 of this pass: a credit or debit note's chosen bill split (F6),
+   * held in `allocations` state, is applied via set_voucher_allocations only
+   * AFTER create_invoice has already returned a real id — a SECOND, separate
+   * call — and only on a brand-new invoice, never an edit. AllocationDrawer's
+   * own header comment explains why it cannot safely drive an edit-save: its
+   * caps come straight from get_bill_wise_outstanding's `allocatable`
+   * figure, which is NOT netted against this settlement voucher's own
+   * already-posted allocations the way AllocationManager's revise flow is —
+   * replaying a fresh draft against an existing voucher would show the wrong
+   * room and could silently overwrite a correct allocation with a wrong one.
+   * A credit/debit note's allocation, once posted, is revised at
+   * /allocations instead, same as every other settlement voucher.
+   */
+  async function saveInvoice(): Promise<{ voucherId: string } | null> {
+    setError(null);
+    const problem = validateForm();
+    if (problem) {
+      setError(problem);
+      return null;
     }
 
     setBusy(true);
@@ -653,7 +820,7 @@ export function InvoiceForm({
       // eslint-disable-next-line @typescript-eslint/no-explicit-any -- see above
     } as any;
 
-    const items_payload = filled.map((l) => ({
+    const items_payload = filledLines().map((l) => ({
       item_id: l.itemId,
       quantity: Number(l.quantity),
       rate: Number(l.rate) || 0,
@@ -661,7 +828,7 @@ export function InvoiceForm({
       description: l.description.trim() || null,
     }));
 
-    const { data, error } = existing
+    const { data, error: rpcError } = existing
       ? await createClient().rpc("update_invoice", {
           p_voucher_id: existing.id,
           p_voucher_date: date,
@@ -699,10 +866,10 @@ export function InvoiceForm({
           ...challanArgs,
         });
 
-    if (error) {
-      setError(friendlyNumberingError(error.message));
+    if (rpcError) {
+      setError(friendlyNumberingError(rpcError.message));
       setBusy(false);
-      return;
+      return null;
     }
 
     // The ship-to is a separate row keyed on the voucher, so it can only be
@@ -750,9 +917,183 @@ export function InvoiceForm({
       );
     }
 
-    router.push(`/${companyId}/vouchers/${voucherId}`);
+    // Only on a brand-new invoice (never `existing` — see this function's
+    // own header comment) and only when step 3 actually drafted something.
+    if (!existing && allocations && allocations.length > 0) {
+      const { error: allocError } = await createClient().rpc(
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any -- set_voucher_allocations (1490) predates the generated types, same escape hatch as the challanArgs cast above.
+        "set_voucher_allocations" as any,
+        {
+          p_company_id: companyId,
+          p_settlement_voucher_id: voucherId,
+          p_party_ledger_id: partyId,
+          p_allocations: allocations.map((a) => ({ bill_voucher_id: a.billVoucherId, amount: a.amount })),
+        }
+      );
+      if (allocError) {
+        // The invoice itself is already correctly created and posted — a
+        // failure here must never read as though the whole save failed, or a
+        // preparer would re-submit and double-post the same invoice. Worse
+        // than the FIFO-inferred outstanding this leaves behind would be
+        // pretending the save didn't happen, so this is a toast pointing at
+        // the fix, not a form error blocking anything.
+        toast.error(
+          `The ${config.label.toLowerCase()} saved, but its allocation to bills did not: ${allocError.message}. Open /allocations to finish applying it.`
+        );
+      }
+    }
+
+    setBusy(false);
+    return { voucherId };
+  }
+
+  /** Ctrl+Shift+S, and the Save button — today's existing default: save,
+   * then navigate to the voucher and leave this form. */
+  async function saveAndClose() {
+    if (busy) return;
+    const result = await saveInvoice();
+    if (!result) return;
+    router.push(`/${companyId}/vouchers/${result.voucherId}`);
     router.refresh();
   }
+
+  /**
+   * Ctrl+S on a new invoice (and the "Save & start next" button beside the
+   * main Save button, which exists so this action is reachable without the
+   * keyboard — see useShortcuts.ts's own header comment on why an
+   * accelerator must never be the only way to do something): save, then
+   * reopen a blank invoice of the SAME voucher type, date and branch,
+   * without navigating anywhere, and drop a pill for what was just saved
+   * onto the session strip below the form.
+   *
+   * Only ever called when !isEdit (see the useShortcuts wiring below) — on
+   * the edit screen Ctrl+S behaves exactly like Ctrl+Shift+S instead, since
+   * "reopen a blank invoice" has no safe meaning while editing one that
+   * already exists: `existing.id` never changes just because the fields on
+   * screen were reset to blank, so a second save from that blank state would
+   * silently overwrite the original voucher with unrelated data.
+   */
+  async function saveAndNew() {
+    if (busy) return;
+    const partyName = allLedgers.find((l) => l.id === partyId)?.name ?? "—";
+    const savedAmount = grandTotal;
+    const result = await saveInvoice();
+    if (!result) return;
+    // create_invoice only ever returns the new id — the number itself is
+    // assigned inside it (next_voucher_number / resolve_manual_voucher_number),
+    // so it has to be read back to show it on the strip.
+    const { data: numberRow } = await createClient()
+      .from("vouchers")
+      .select("voucher_number")
+      .eq("id", result.voucherId)
+      .maybeSingle();
+    setSessionEntries((prev) => [
+      ...prev,
+      {
+        id: result.voucherId,
+        number: numberRow?.voucher_number ?? "—",
+        party: partyName,
+        amount: savedAmount,
+        href: `/${companyId}/invoices/${result.voucherId}/edit`,
+      },
+    ]);
+    resetForNewInvoice();
+    router.refresh();
+  }
+
+  /** What saveAndNew() resets to — every field a fresh visit to
+   * /invoices/new would start from, EXCEPT voucherType, branchId and date,
+   * which stay put so a batch of same-day, same-branch entries doesn't have
+   * to re-pick them each time. */
+  function resetForNewInvoice() {
+    setGodownId(godowns[0]?.id ?? "");
+    setPartyId("");
+    setTradingId("");
+    setPlaceOfSupply("");
+    setPlaceOfSupplyTouched(false);
+    setReference("");
+    setChallanNumber("");
+    setChallanDate("");
+    setNarration("");
+    setLines([emptyLine()]);
+    setShipToOn(false);
+    setShipTo(emptyShipTo());
+    setManualNumber("");
+    setSeriesId(null);
+    setAllocations(null);
+    setAllocationOnAccount(0);
+    setAllocationDrawerOpen(false);
+    setError(null);
+  }
+
+  /**
+   * F5. Alt+ArrowUp/Down, and the ‹ › buttons beside the invoice number —
+   * only ever rendered/bound when `isEdit`, since a brand-new invoice has no
+   * neighbor to step to yet. 'prev' on ArrowUp, 'next' on ArrowDown mirrors
+   * an ordinary list's up-goes-back/down-goes-forward reading; the RPC's own
+   * default (p_same_type = true) keeps this within the SAME voucher type,
+   * matching Tally's PgUp/PgDn.
+   */
+  async function goAdjacent(direction: "prev" | "next") {
+    if (!existing || adjacentBusy || busy) return;
+    setAdjacentBusy(true);
+    const { data, error: rpcError } = await createClient().rpc(
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any -- get_adjacent_voucher (1520) predates the generated types, same escape hatch as the challanArgs cast above.
+      "get_adjacent_voucher" as any,
+      {
+        p_company_id: companyId,
+        p_voucher_id: existing.id,
+        p_direction: direction,
+      }
+    );
+    setAdjacentBusy(false);
+    if (rpcError) {
+      toast.error(rpcError.message);
+      return;
+    }
+    const row = (data as unknown as Array<{ id: string }> | null)?.[0];
+    if (!row) {
+      // A subtle indicator, not an error — being at the first or last
+      // voucher of a type is an entirely ordinary place to be.
+      toast(
+        direction === "prev"
+          ? `${existing.voucherNumber} is the earliest ${config.label.toLowerCase()} here.`
+          : `${existing.voucherNumber} is the latest ${config.label.toLowerCase()} here.`
+      );
+      return;
+    }
+    router.push(`/${companyId}/invoices/${row.id}/edit`);
+  }
+
+  function onSubmit(e: React.FormEvent) {
+    e.preventDefault();
+    void saveAndClose();
+  }
+
+  // F1. Every combo bound here already has a visible control beside it —
+  // see each handler's own comment — this hook only gives a faster path to
+  // an action that already works without it.
+  useShortcuts("invoice-form", [
+    {
+      combo: "ctrl+s",
+      label: isEdit ? "Save changes" : "Save & start next",
+      handler: () => {
+        if (isEdit) void saveAndClose();
+        else void saveAndNew();
+      },
+    },
+    {
+      combo: "ctrl+shift+s",
+      label: "Save & close",
+      handler: () => void saveAndClose(),
+    },
+    ...(isEdit
+      ? [
+          { combo: "alt+arrowup", label: "Previous voucher", handler: () => void goAdjacent("prev") },
+          { combo: "alt+arrowdown", label: "Next voucher", handler: () => void goAdjacent("next") },
+        ]
+      : []),
+  ]);
 
   const field =
     "rounded-lg border border-border-strong bg-surface px-3 py-2 text-sm text-ink outline-none focus-visible:border-accent focus-visible:ring-2 focus-visible:ring-accent/30";
@@ -760,6 +1101,7 @@ export function InvoiceForm({
     "w-full rounded border border-transparent bg-transparent px-2 py-1.5 outline-none focus-visible:border-accent focus-visible:ring-2 focus-visible:ring-accent/30";
 
   return (
+    <>
     <form onSubmit={onSubmit} className="mt-8">
       <div className="grid gap-4 sm:grid-cols-3">
         <label className="flex flex-col gap-1.5">
@@ -868,14 +1210,42 @@ export function InvoiceForm({
         {/* Read-only on purpose. The number is allocated once, when the invoice
             is posted, and is very likely already printed on a document sent to
             the customer and filed in GSTR-1; update_invoice takes no number
-            argument at all, so there is nothing here for an input to send. */}
+            argument at all, so there is nothing here for an input to send.
+            The ‹ › pair is the visible control F5's Alt+ArrowUp/Down rides on
+            (see useShortcuts.ts's own rule that an accelerator must always
+            have one) — same get_adjacent_voucher call, same "first/last"
+            toast when there is nowhere to go. */}
         {isEdit && (
           <div className="flex flex-col gap-1.5">
             <span className="text-sm font-medium">Invoice number</span>
-            <span className="rounded-lg border border-border bg-bg px-3 py-2 text-sm font-mono text-ink-soft">
-              {existing!.voucherNumber}
+            <div className="flex items-center gap-1.5">
+              <button
+                type="button"
+                onClick={() => void goAdjacent("prev")}
+                disabled={adjacentBusy}
+                aria-label={`Previous ${config.label.toLowerCase()}`}
+                title="Alt+↑"
+                className="shrink-0 rounded-lg border border-border-strong p-2 text-ink-soft transition-colors hover:bg-surface-2 hover:text-ink disabled:opacity-50"
+              >
+                <ChevronUp size={14} aria-hidden="true" />
+              </button>
+              <span className="flex-1 truncate rounded-lg border border-border bg-bg px-3 py-2 text-sm font-mono text-ink-soft">
+                {existing!.voucherNumber}
+              </span>
+              <button
+                type="button"
+                onClick={() => void goAdjacent("next")}
+                disabled={adjacentBusy}
+                aria-label={`Next ${config.label.toLowerCase()}`}
+                title="Alt+↓"
+                className="shrink-0 rounded-lg border border-border-strong p-2 text-ink-soft transition-colors hover:bg-surface-2 hover:text-ink disabled:opacity-50"
+              >
+                <ChevronDown size={14} aria-hidden="true" />
+              </button>
+            </div>
+            <span className="text-xs text-ink-faint">
+              Fixed once issued. Alt+↑/↓ (or the arrows here) steps to the adjacent {config.label.toLowerCase()}.
             </span>
-            <span className="text-xs text-ink-faint">Fixed once issued.</span>
           </div>
         )}
 
@@ -890,20 +1260,39 @@ export function InvoiceForm({
               + New
             </button>
           </div>
-          <select
-            required
+          <Combobox
             aria-label={config.party}
             value={partyId}
-            onChange={(e) => selectParty(e.target.value)}
-            className={field}
-          >
-            <option value="">Select…</option>
-            {partyLedgers.map((l) => (
-              <option key={l.id} value={l.id}>
-                {l.name}
-              </option>
-            ))}
-          </select>
+            onChange={selectParty}
+            options={partyLedgers.map((l) => ({ id: l.id, label: l.name }))}
+            placeholder="Select…"
+            // Same modal, same onPartyCreated flow the "+ New" button above
+            // already opens — this is only a second trigger for it, not a
+            // second quick-add mechanism.
+            onCreateNew={() => setPartyModalOpen(true)}
+          />
+          {/* F6. Only a credit or debit note settles an EXISTING bill — a
+              sales or purchase invoice always creates a new one — and only on
+              a fresh invoice; see saveInvoice()'s header comment for why an
+              edit never mounts this. */}
+          {!isEdit && isCreditOrDebitNote && (
+            <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
+              <button
+                type="button"
+                disabled={!partyId}
+                onClick={() => setAllocationDrawerOpen(true)}
+                className="text-xs text-accent underline underline-offset-4 disabled:cursor-not-allowed disabled:text-ink-faint disabled:no-underline"
+              >
+                {allocations && allocations.length > 0 ? "Change bill allocation" : "Apply to a bill"}
+              </button>
+              {allocations && allocations.length > 0 && (
+                <span className="text-xs text-ink-faint">
+                  Applied to {allocations.length} bill{allocations.length > 1 ? "s" : ""}
+                  {allocationOnAccount > 0 ? `, ${formatINR(allocationOnAccount)} left on account` : ""}.
+                </span>
+              )}
+            </div>
+          )}
         </div>
 
         <div className="flex flex-col gap-1.5">
@@ -917,31 +1306,27 @@ export function InvoiceForm({
               + New
             </button>
           </div>
-          <select
-            required
+          <Combobox
             aria-label={config.trading}
             value={tradingId}
-            onChange={(e) => setTradingId(e.target.value)}
-            className={field}
-          >
-            <option value="">Select…</option>
-            {tradingLedgers.map((l) => (
-              <option key={l.id} value={l.id}>
-                {l.name}
-              </option>
-            ))}
-          </select>
+            onChange={setTradingId}
+            options={tradingLedgers.map((l) => ({ id: l.id, label: l.name }))}
+            placeholder="Select…"
+            onCreateNew={() => setTradingModalOpen(true)}
+          />
         </div>
 
         <label className="flex flex-col gap-1.5">
           <span className="text-sm font-medium">Godown</span>
-          <select value={godownId} onChange={(e) => setGodownId(e.target.value)} className={field}>
-            {godowns.map((g) => (
-              <option key={g.id} value={g.id}>
-                {g.code} — {g.name}
-              </option>
-            ))}
-          </select>
+          {/* No onCreateNew: there is no quick-add flow for godowns today
+              (only ledgers and items have one), so this stays a plain
+              searchable picker with nothing for "Create <text>" to open. */}
+          <Combobox
+            value={godownId}
+            onChange={setGodownId}
+            options={godowns.map((g) => ({ id: g.id, label: `${g.code} — ${g.name}` }))}
+            placeholder="Select…"
+          />
           {/* Said only when it applies, and said where the confusion would
               arise: a charge line is taxed and reported like any other line
               but has no quantity to store anywhere, so the godown simply
@@ -1311,6 +1696,7 @@ export function InvoiceForm({
                   <td className="px-3 py-2">
                     <div className="flex items-center gap-1">
                       <select
+                        {...getCellProps(i, 0)}
                         aria-label={`Item on line ${i + 1}`}
                         value={line.itemId}
                         onChange={(e) => update(i, { itemId: e.target.value })}
@@ -1337,6 +1723,7 @@ export function InvoiceForm({
                   </td>
                   <td className="px-3 py-2">
                     <input
+                      {...getCellProps(i, 1)}
                       inputMode="decimal"
                       value={line.quantity}
                       onChange={(e) => update(i, { quantity: e.target.value })}
@@ -1346,20 +1733,16 @@ export function InvoiceForm({
                   <td className="px-3 py-2 text-xs text-ink-faint">{item?.uom ?? "—"}</td>
                   <td className="px-3 py-2">
                     <input
+                      {...getCellProps(i, 2)}
                       inputMode="decimal"
                       value={line.rate}
                       onChange={(e) => update(i, { rate: e.target.value })}
-                      onKeyDown={(e) => {
-                        if (e.key === "Enter" && i === lines.length - 1) {
-                          e.preventDefault();
-                          setLines((p) => [...p, emptyLine()]);
-                        }
-                      }}
                       className={cell + " text-right tabular-nums"}
                     />
                   </td>
                   <td className="px-3 py-2">
                     <input
+                      {...getCellProps(i, 3)}
                       inputMode="decimal"
                       value={line.discountPercent}
                       placeholder="0"
@@ -1487,13 +1870,30 @@ export function InvoiceForm({
         together, in one transaction — never any of them without the others.
       </p>
 
-      <button
-        type="submit"
-        disabled={busy || taxable <= 0}
-        className="mt-3 w-full rounded-lg bg-accent px-4 py-2 text-sm font-semibold text-accent-ink transition-colors hover:opacity-90 disabled:opacity-50 sm:w-auto"
-      >
-        {busy ? "Saving…" : isEdit ? "Save changes" : `Save ${config.label.toLowerCase()}`}
-      </button>
+      <div className="mt-3 flex flex-wrap items-center gap-3">
+        <button
+          type="submit"
+          disabled={busy || taxable <= 0}
+          title="Ctrl+Shift+S"
+          className="w-full rounded-lg bg-accent px-4 py-2 text-sm font-semibold text-accent-ink transition-colors hover:opacity-90 disabled:opacity-50 sm:w-auto"
+        >
+          {busy ? "Saving…" : isEdit ? "Save changes" : `Save ${config.label.toLowerCase()}`}
+        </button>
+        {/* F1/F4. Ctrl+S's visible control — same saveAndNew() the shortcut
+            calls, only offered on a fresh invoice (see saveAndNew()'s own
+            comment for why the edit screen has nothing analogous to reopen). */}
+        {!isEdit && (
+          <button
+            type="button"
+            disabled={busy || taxable <= 0}
+            onClick={() => void saveAndNew()}
+            title="Ctrl+S"
+            className="w-full rounded-lg border border-border-strong px-4 py-2 text-sm font-semibold text-ink transition-colors hover:bg-surface-2 disabled:opacity-50 sm:w-auto"
+          >
+            {busy ? "Saving…" : "Save & start next"}
+          </button>
+        )}
+      </div>
 
       {/* The three popups. Rendered inside the form so they sit next to the
           state they feed, but each is an overlay and none of them is a nested
@@ -1537,6 +1937,36 @@ export function InvoiceForm({
           if (itemModalLine !== null) onItemCreated(itemModalLine, created);
         }}
       />
+
+      {/* F6. Same !isEdit && isCreditOrDebitNote gate as the trigger button
+          beside the party field above — nothing to draft an allocation
+          against on a sales/purchase invoice or on an edit, so nothing is
+          mounted at all rather than mounted-but-hidden. */}
+      {!isEdit && isCreditOrDebitNote && (
+        <AllocationDrawer
+          companyId={companyId}
+          partyLedgerId={partyId}
+          role={allocationRole}
+          amount={grandTotal}
+          asAt={date}
+          open={allocationDrawerOpen}
+          onClose={() => setAllocationDrawerOpen(false)}
+          onConfirm={(allocs, onAccount) => {
+            setAllocations(allocs);
+            setAllocationOnAccount(onAccount);
+            setAllocationDrawerOpen(false);
+          }}
+        />
+      )}
     </form>
+
+    {/* F4. /new only — an edit screen is here to fix the one voucher it was
+        opened for, not to run a batch-entry sitting. */}
+    {!isEdit && (
+      <div className="mt-4">
+        <SessionStrip entries={sessionEntries} onClear={() => setSessionEntries([])} />
+      </div>
+    )}
+    </>
   );
 }

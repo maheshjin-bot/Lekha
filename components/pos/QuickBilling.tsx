@@ -10,6 +10,12 @@ import { Input } from "@/components/ui/Input";
 import { Card, CardBody } from "@/components/ui/Card";
 import { TableContainer, th, td, num } from "@/components/ui/Table";
 import { EmptyState } from "@/components/ui/EmptyState";
+import { Combobox, type ComboboxOption } from "@/components/ui/Combobox";
+import {
+  QuickAddLedgerModal,
+  type QuickAddedLedger,
+} from "@/components/ledgers/QuickAddLedgerModal";
+import { SALE_TRADING_ROLES } from "@/lib/invoices/trading-roles";
 import { VoucherNumberField } from "@/components/numbering/VoucherNumberField";
 import {
   friendlyNumberingError,
@@ -54,6 +60,38 @@ export type RevenueLedger = {
   groupName: string;
   isRevenue: boolean;
 };
+
+/**
+ * Server-fetched rows first, then anything quick-added in this session the
+ * server has not caught up with yet — same dedup InvoiceForm's own
+ * mergeById runs, and for the same reason: this screen's props come from a
+ * server component, a quick-add ends with router.refresh(), and a moment
+ * later the same ledger arrives from BOTH sides. Keyed on id, the server's
+ * copy wins, since it alone carries the ledger's real group nature (see
+ * toRevenueLedger below).
+ */
+function mergeById<T extends { id: string; name: string }>(server: T[], added: T[]): T[] {
+  const known = new Set(server.map((r) => r.id));
+  return [...server, ...added.filter((a) => !known.has(a.id))].sort((a, b) =>
+    a.name.localeCompare(b.name)
+  );
+}
+
+/**
+ * The popup's row, narrowed to what this screen reads off a ledger.
+ *
+ * `isRevenue` is optimistic, not read off the popup — QuickAddedLedger
+ * carries the ledger's GROUP but not the group's `nature` (direct vs
+ * indirect income; see get_pos_revenue_ledger_options, 1501), so there is no
+ * signal here to test. The operator just typed this name into "Sales ledger
+ * to credit" and chose Create, which is itself a strong statement of intent
+ * — they are naming their counter's own revenue ledger, not an indirect one
+ * like Scrap Sales. `true` reflects that intent and is corrected the moment
+ * router.refresh() lands the server's authoritative row in its place.
+ */
+function toRevenueLedger(l: QuickAddedLedger): RevenueLedger {
+  return { id: l.id, name: l.name, groupName: l.group_name, isRevenue: true };
+}
 
 export function QuickBilling({
   companyId,
@@ -133,16 +171,26 @@ export function QuickBilling({
   const [cart, setCart] = useState<CartLine[]>([]);
   const [busy, setBusy] = useState(false);
 
+  // Ledgers quick-added from this screen's own Combobox, ahead of the
+  // server catching up — same session-local overlay InvoiceForm's
+  // addedLedgers keeps, and merged the same way (see mergeById above).
+  const [addedLedgers, setAddedLedgers] = useState<RevenueLedger[]>([]);
+  const [ledgerModalOpen, setLedgerModalOpen] = useState(false);
+  const allSalesLedgers = useMemo(
+    () => mergeById(salesLedgers, addedLedgers),
+    [salesLedgers, addedLedgers]
+  );
+
   // The ledger this sale will credit. Seeded from what the server resolved
   // and then owned by the operator. Resolved rather than held raw, exactly as
   // the numbering series below is, so a stale id can never be sent to
   // create_invoice: if the stored choice has since been deactivated it simply
-  // is not in `salesLedgers` and the screen falls back to "not chosen".
+  // is not in `allSalesLedgers` and the screen falls back to "not chosen".
   const [pickedLedgerId, setPickedLedgerId] = useState<string | null>(salesLedgerId);
-  const effectiveLedgerId = salesLedgers.some((l) => l.id === pickedLedgerId)
+  const effectiveLedgerId = allSalesLedgers.some((l) => l.id === pickedLedgerId)
     ? pickedLedgerId
     : null;
-  const effectiveLedger = salesLedgers.find((l) => l.id === effectiveLedgerId) ?? null;
+  const effectiveLedger = allSalesLedgers.find((l) => l.id === effectiveLedgerId) ?? null;
 
   // Remembered per branch, like the series selection and for the same reason:
   // a counter picks once at the start of a shift, not once per customer. The
@@ -160,6 +208,20 @@ export function QuickBilling({
     if (error) {
       toast.error(`Couldn't remember that choice: ${error.message}`);
     }
+  }
+
+  // A sales ledger the "Sales ledger to credit" popup just created. Both
+  // calls below land in the same React batch, so the render that follows
+  // sees them together — allSalesLedgers already contains the new row AND
+  // pickedLedgerId already points at it, which is what lets effectiveLedgerId
+  // resolve to it immediately rather than on the render after. chooseLedger
+  // also fires the RPC that remembers this as the counter's choice — exactly
+  // right here, since creating a ledger from this field IS the operator
+  // naming their counter's revenue ledger, not a side trip from it.
+  function onLedgerCreated(created: QuickAddedLedger) {
+    setAddedLedgers((prev) => [...prev, toRevenueLedger(created)]);
+    void chooseLedger(created.id);
+    router.refresh();
   }
 
   // Numbering (0725). Same three-line shape as InvoiceForm, on purpose: the
@@ -216,12 +278,25 @@ export function QuickBilling({
   }
 
   const subtotal = cart.reduce((n, l) => n + l.quantity * l.rate, 0);
-  const noIncomeLedgerAtAll = salesLedgers.length === 0;
+  // Reads the SESSION-LOCAL merged list, not the raw prop: a ledger quick-added
+  // from the Combobox below must make this banner (and the field it gates,
+  // see !missingSetup below) disappear immediately, not only after
+  // router.refresh() lands — otherwise the picker that just created the
+  // ledger would vanish along with it.
+  const noIncomeLedgerAtAll = allSalesLedgers.length === 0;
   const missingSetup = !branch || !godown || !cashLedgerId || noIncomeLedgerAtAll;
   // Distinct from missingSetup on purpose: the company IS set up, it just has
   // several income ledgers and nobody has said which one the counter uses.
   // That is a question, not a broken configuration, and it gets its own copy.
   const ledgerNotChosen = !missingSetup && !effectiveLedgerId;
+  // Group name as the sublabel (F2's own "group / HSN / balance" convention)
+  // rather than folded into one "Name — Group" label string, so a search also
+  // matches on the group the way CommandBar's own scoring does.
+  const ledgerOptions: ComboboxOption[] = allSalesLedgers.map((l) => ({
+    id: l.id,
+    label: l.name,
+    sublabel: l.groupName,
+  }));
 
   async function checkout() {
     if (cart.length === 0) {
@@ -424,30 +499,22 @@ export function QuickBilling({
             {!missingSetup && (
               <label className="flex flex-col gap-1.5">
                 <span className="text-sm font-medium text-ink">Sales ledger to credit</span>
-                <select
+                <Combobox
                   aria-label="Sales ledger to credit"
-                  value={effectiveLedgerId ?? ""}
-                  onChange={(e) => void chooseLedger(e.target.value)}
-                  className={
-                    "rounded-lg border bg-surface px-3 py-2 text-sm text-ink outline-none focus-visible:ring-2 focus-visible:ring-accent/30 " +
-                    (ledgerNotChosen
-                      ? "border-warning focus-visible:border-warning"
-                      : "border-border-strong focus-visible:border-accent")
-                  }
-                >
-                  {/* Only offered while nothing is chosen. Once the counter
-                      has answered, "not chosen" stops being a state they can
-                      return to by accident. */}
-                  {ledgerNotChosen && <option value="">Choose a sales ledger…</option>}
-                  {salesLedgers.map((l) => (
-                    <option key={l.id} value={l.id}>
-                      {l.name} — {l.groupName}
-                    </option>
-                  ))}
-                </select>
+                  value={effectiveLedgerId}
+                  onChange={(id) => void chooseLedger(id)}
+                  options={ledgerOptions}
+                  placeholder="Search or choose a sales ledger…"
+                  // The counter's own income ledger not existing yet is not a
+                  // chart-of-accounts error — it is exactly the moment this
+                  // popup exists for. onLedgerCreated both selects the new
+                  // ledger and remembers it as this counter's choice, same as
+                  // picking an existing one from the list does.
+                  onCreateNew={() => setLedgerModalOpen(true)}
+                />
                 <span className={"text-xs " + (ledgerNotChosen ? "text-warning" : "text-ink-faint")}>
                   {ledgerNotChosen
-                    ? `Nobody has told this counter which of the company's ${salesLedgers.length} income ledger${salesLedgers.length === 1 ? "" : "s"} a counter sale belongs to, and the till will not guess. Pick one — the choice is remembered.`
+                    ? `Nobody has told this counter which of the company's ${allSalesLedgers.length} income ledger${allSalesLedgers.length === 1 ? "" : "s"} a counter sale belongs to, and the till will not guess. Pick one — the choice is remembered.`
                     : effectiveLedger && !effectiveLedger.isRevenue
                       ? `Revenue posts to ${effectiveLedger.name}, which sits under ${effectiveLedger.groupName} — indirect income. A counter sale is normally revenue from operations; check this is what you meant.`
                       : `Revenue posts here (GST goes to the tax ledgers separately). Remembered for this counter until you change it.`}
@@ -507,6 +574,20 @@ export function QuickBilling({
           </TableContainer>
         )}
       </div>
+
+      {/* Opened only from the "Sales ledger to credit" Combobox's own
+          Create row — same popup, same onCreated contract, InvoiceForm's
+          trading-ledger modal uses (components/ledgers/QuickAddLedgerModal),
+          restricted to the income role a counter sale must credit. */}
+      <QuickAddLedgerModal
+        open={ledgerModalOpen}
+        onClose={() => setLedgerModalOpen(false)}
+        companyId={companyId}
+        title="New sales ledger"
+        description="An income ledger — what the sale is credited to."
+        roles={SALE_TRADING_ROLES}
+        onCreated={onLedgerCreated}
+      />
     </div>
   );
 }
