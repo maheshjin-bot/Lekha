@@ -24,6 +24,13 @@ import {
   validateManualNumber,
   type VoucherNumberingByBranch,
 } from "@/lib/numbering/voucher-numbering";
+import {
+  FOREIGN_CURRENCIES,
+  RATE_SOURCES,
+  classifySupplyType,
+  isLutActive,
+  lineGstSplit,
+} from "@/lib/invoices/foreign-currency";
 
 type Item = {
   id: string;
@@ -53,7 +60,20 @@ type Ledger = {
   // mirroring create_invoice's own 1230 rule.
   gst_registration_type?: string | null;
 };
-type Branch = { id: string; code: string; name: string; registeredState: string | null };
+type Branch = {
+  id: string;
+  code: string;
+  name: string;
+  registeredState: string | null;
+  // Read only to test LUT-active-on-this-date (isLutActive,
+  // lib/invoices/foreign-currency.ts) — the same three columns
+  // create_invoice's own SELECT reads off gst_registrations, needed here so
+  // the export tax preview can classify export_lut vs export_igst the way
+  // the server actually will, instead of guessing at plain intra/inter.
+  lutNumber: string | null;
+  lutValidFrom: string | null;
+  lutValidTo: string | null;
+};
 type Godown = { id: string; code: string; name: string };
 type StateOption = { code: string; name: string };
 type TcsSection = {
@@ -156,6 +176,17 @@ export type ExistingInvoice = {
   lines: Line[];
   /** The voucher_ship_to row on file, or null when goods go where the bill goes. */
   shipTo: ShipTo | null;
+  /**
+   * vouchers.txn_currency/exchange_rate/rate_source (0007, wired into
+   * create_invoice by 0065). Read-only once posted, same as voucherType and
+   * branchId below — update_invoice's own SET clause never touches these
+   * three columns, so an issued invoice's rate cannot drift out from under a
+   * settlement or revaluation that has already read it. currency is 'INR'
+   * and exchangeRate is '1' on every invoice this migration predates.
+   */
+  currency: string;
+  exchangeRate: string;
+  rateSource: string;
 };
 
 /** One bill already on file under this supplier and this bill number. */
@@ -272,6 +303,35 @@ export function InvoiceForm({
   // challan (Rule 55(4)) routinely carries both.
   const [challanNumber, setChallanNumber] = useState(existing?.challanNumber ?? "");
   const [challanDate, setChallanDate] = useState(existing?.challanDate ?? "");
+
+  // Foreign currency (0065's own create_invoice parameters, exposed on this
+  // form for the first time). 'INR' means exactly what it always meant on
+  // every invoice before this: p_txn_currency/p_exchange_rate fall through
+  // to the SQL defaults ('INR', 1) and p_rate_source to null, so an ordinary
+  // domestic invoice is byte-for-byte unaffected by this feature existing.
+  // Read-only on the edit screen, same reason branchId/voucherType are —
+  // update_invoice never touches these columns (see ExistingInvoice above),
+  // so there is nothing here for a change to send.
+  const [currency, setCurrency] = useState(existing?.currency ?? "INR");
+  const [exchangeRate, setExchangeRate] = useState(existing?.exchangeRate ?? "1");
+  const [rateSource, setRateSource] = useState(existing?.rateSource ?? "");
+  const isForeign = currency !== "INR";
+
+  function selectCurrency(next: string) {
+    setCurrency(next);
+    // Switching back to INR resets the rate the vouchers_inr_rate_is_one
+    // CHECK constraint requires (exchange_rate = 1 whenever txn_currency =
+    // 'INR') — cleared here rather than left for the server to reject, so a
+    // preparer who picks a currency by mistake and undoes it never sees a
+    // round-trip failure over a field the form itself just blanked.
+    if (next === "INR") {
+      setExchangeRate("1");
+      setRateSource("");
+    } else if (exchangeRate === "1") {
+      setExchangeRate("");
+    }
+  }
+
   const [narration, setNarration] = useState(existing?.narration ?? "");
   const [lines, setLines] = useState<Line[]>(existing?.lines.length ? existing.lines : [emptyLine()]);
   const [busy, setBusy] = useState(false);
@@ -458,12 +518,56 @@ export function InvoiceForm({
   const shipToIsElsewhere =
     shipToOn && shipTo.stateCode !== "" && partyState !== null && shipTo.stateCode !== partyState;
 
-  const supplyType =
-    gstOn && branch?.registeredState && placeOfSupply
-      ? branch.registeredState === placeOfSupply
-        ? "intra"
-        : "inter"
-      : null;
+  // Mirrors app_private.gst_supply_type's real 4-argument classification
+  // (0087) — export_lut/export_igst/sez/deemed_export, not just plain
+  // intra/inter. Before this the preview only ever computed intra/inter off
+  // branch.registeredState vs placeOfSupply, so an export shipped under a
+  // valid LUT (Sec 16(3)(a), zero tax) showed a full IGST figure on screen
+  // that create_invoice was never actually going to charge — found while
+  // building foreign-currency invoice support (this migration/task), not
+  // live, because no invoice had ever exercised the export_lut branch
+  // through this form before now (there was no way to enter a foreign
+  // currency at all, so nothing overseas-registered had reason to be
+  // invoiced through it either).
+  const party = allLedgers.find((l) => l.id === partyId);
+  // Memoized (rather than plain consts, as branch.registeredState/placeOfSupply
+  // comparisons used to be) because they now feed the tax/tcs useMemo hooks
+  // below as dependencies, and the React Compiler declines to optimize a
+  // memoized hook whose dependency is a freshly-computed, not-itself-memoized
+  // value on every render.
+  const isIntrastate = useMemo(
+    () => Boolean(gstOn && branch?.registeredState && placeOfSupply && branch.registeredState === placeOfSupply),
+    [gstOn, branch, placeOfSupply]
+  );
+  const lutActive = useMemo(() => isLutActive(branch, date), [branch, date]);
+  const supplyType = useMemo(
+    () =>
+      gstOn && branch?.registeredState && placeOfSupply
+        ? classifySupplyType(branch.registeredState, placeOfSupply, party?.gst_registration_type, lutActive)
+        : null,
+    [gstOn, branch, placeOfSupply, party, lutActive]
+  );
+
+  // GST law does not let LEKHA's tax engine self-compute a credit here: an
+  // import purchase's IGST is assessed by Customs at the port (Sec 3(7)
+  // Customs Tariff Act / Sec 5(1) IGST Act) against the Bill of Entry, not
+  // against this item's own rate on an ordinary purchase invoice. Checked
+  // live before writing this warning, on this session's own migration
+  // (1590's header) and against create_invoice's real behaviour: a purchase
+  // from a party whose gst_registration_type is 'overseas' still runs
+  // through the SAME export_lut/export_igst branch a SALE to that party
+  // would — which for a purchase means create_invoice fabricates an "Input
+  // IGST" line at the item's ordinary GST rate that was never actually paid
+  // to Indian Customs, and that a real Bill of Entry would show a
+  // completely different assessable value for. This is independent of
+  // currency and pre-existing — not introduced by exposing currency on this
+  // form — but exposing currency is exactly what makes recording a real
+  // import bill through this screen newly plausible, so the form says so
+  // rather than shipping it silently. See this task's own report for the
+  // full finding; fixing the import side properly needs a Bill-of-Entry-
+  // driven ITC path this migration does not attempt.
+  const overseasPurchaseWarning =
+    !isSale && party?.gst_registration_type === "overseas";
 
   // Post-discount (net) taxable value per line — Sec 15(3)(a)/Rule 46(k),
   // see 0147. lineAmounts mirrors create_invoice's own formula exactly.
@@ -500,16 +604,13 @@ export function InvoiceForm({
       const item = allItems.find((x) => x.id === l.itemId);
       if (!item || !item.gst_rate_percent) continue;
       const amount = lineAmounts(l.quantity, l.rate, l.discountPercent).net;
-      if (supplyType === "intra") {
-        const half = Math.round(((amount * item.gst_rate_percent) / 2 / 100) * 100) / 100;
-        cgst += half;
-        sgst += half;
-      } else {
-        igst += Math.round(((amount * item.gst_rate_percent) / 100) * 100) / 100;
-      }
+      const split = lineGstSplit(amount, item.gst_rate_percent, supplyType, lutActive, isIntrastate);
+      cgst += split.cgst;
+      sgst += split.sgst;
+      igst += split.igst;
     }
     return { cgst, sgst, igst };
-  }, [lines, allItems, supplyType, allLedgers, partyId, isSale]);
+  }, [lines, allItems, supplyType, allLedgers, partyId, isSale, lutActive, isIntrastate]);
 
   // Mirrors create_invoice's TCS math exactly, for the same display-only
   // reason as `tax` above. Only sales and credit notes ever carry TCS, only
@@ -528,23 +629,21 @@ export function InvoiceForm({
       if (!section) continue;
       const amount = lineAmounts(l.quantity, l.rate, l.discountPercent).net;
       if (section.threshold_rupees != null && amount <= section.threshold_rupees) continue;
-      // This line's own GST, computed inline rather than reused from `tax`
-      // above, since that memo only keeps invoice-wide totals.
+      // This line's own GST, computed via the same classification as `tax`
+      // above (not reused from it directly, since that memo only keeps
+      // invoice-wide totals) — includes the export_lut/export_igst routes
+      // now, same reason `tax` needed them.
       let lineGst = 0;
       if (supplyType && item.gst_rate_percent) {
-        if (supplyType === "intra") {
-          const half = Math.round(((amount * item.gst_rate_percent) / 2 / 100) * 100) / 100;
-          lineGst = half + half;
-        } else {
-          lineGst = Math.round(((amount * item.gst_rate_percent) / 100) * 100) / 100;
-        }
+        const split = lineGstSplit(amount, item.gst_rate_percent, supplyType, lutActive, isIntrastate);
+        lineGst = split.cgst + split.sgst + split.igst;
       }
       const base = amount + lineGst;
       const rate = hasPan ? section.rate_percent : section.no_pan_rate_percent;
       total += Math.round(((base * rate) / 100) * 100) / 100;
     }
     return total;
-  }, [tcsOn, isSale, lines, allItems, tcsSections, allLedgers, partyId, supplyType]);
+  }, [tcsOn, isSale, lines, allItems, tcsSections, allLedgers, partyId, supplyType, lutActive, isIntrastate]);
 
   const grandTotal = taxable + tax.cgst + tax.sgst + tax.igst + tcs;
 
@@ -634,6 +733,13 @@ export function InvoiceForm({
     if (!tradingId) return setError(`Select a ${config.trading.toLowerCase()}.`);
     if (taxable <= 0) return setError("The invoice must come to more than zero.");
     if (gstOn && !placeOfSupply) return setError("Select a place of supply.");
+    // Mirrors vouchers_exchange_rate_check and vouchers_fc_needs_rate_source
+    // exactly — checked here so a preparer reads a sentence instead of
+    // waiting for a round trip that fails on a CHECK constraint by name.
+    if (!isEdit && isForeign) {
+      if (!(Number(exchangeRate) > 0)) return setError("Enter the exchange rate.");
+      if (!rateSource) return setError("Select where the exchange rate came from.");
+    }
     // Stops the save once, rather than warning and letting it through: the
     // warning panel is already on screen by the time anyone presses Save, so
     // a preparer who has genuinely looked at it can tick the box and press
@@ -731,6 +837,16 @@ export function InvoiceForm({
           p_voucher_number: policy?.mode === "manual" ? manualNumber.trim() : undefined,
           p_number_series_id:
             policy?.mode === "series" ? (effectiveSeriesId ?? undefined) : undefined,
+          // create_invoice's own defaults ('INR', 1, null) match what an
+          // ordinary domestic invoice needs — undefined here falls through
+          // to them exactly as every other optional argument does, so a
+          // company that never touches this feature posts byte-identically
+          // to before it existed. update_invoice takes none of these three:
+          // they are read-only once posted (see ExistingInvoice's comment),
+          // so this branch is the only place they are ever sent.
+          p_txn_currency: isForeign ? currency : undefined,
+          p_exchange_rate: isForeign ? Number(exchangeRate) : undefined,
+          p_rate_source: isForeign ? rateSource : undefined,
           ...challanArgs,
         });
 
@@ -1076,6 +1192,92 @@ export function InvoiceForm({
               </span>
             )}
           </label>
+        )}
+
+        {/* Foreign currency (0065's own create_invoice parameters). Item
+            rates above stay INR — same rule create_voucher has always held
+            callers to (this migration's own header) — this is purely the
+            commercial currency and rate underneath that INR figure, kept
+            for settlement and revaluation (/forex) to work with later.
+            Read-only once posted: see ExistingInvoice's own comment for why. */}
+        <label className="flex flex-col gap-1.5">
+          <span className="text-sm font-medium">Currency</span>
+          <select
+            value={currency}
+            disabled={isEdit}
+            onChange={(e) => selectCurrency(e.target.value)}
+            className={field + (isEdit ? " opacity-60" : "")}
+          >
+            <option value="INR">INR — no foreign currency</option>
+            {FOREIGN_CURRENCIES.map((c) => (
+              <option key={c} value={c}>
+                {c}
+              </option>
+            ))}
+          </select>
+        </label>
+
+        {isForeign && (
+          <>
+            <label className="flex flex-col gap-1.5">
+              <span className="text-sm font-medium">Exchange rate (₹ per {currency})</span>
+              <input
+                type="number"
+                required
+                min={0}
+                step="any"
+                disabled={isEdit}
+                value={exchangeRate}
+                onChange={(e) => setExchangeRate(e.target.value)}
+                placeholder="83.25"
+                className={field + (isEdit ? " opacity-60" : "")}
+              />
+              {/* Hand-checkable: the item lines above are already in INR, so
+                  this shows what the invoice implies the FC total was at the
+                  rate entered — the same number settlement will later need
+                  to close against. */}
+              {Number(exchangeRate) > 0 && taxable > 0 && (
+                <span className="text-xs text-ink-faint">
+                  ≈ {currency} {(grandTotal / Number(exchangeRate)).toFixed(2)} at this rate
+                </span>
+              )}
+            </label>
+            <label className="flex flex-col gap-1.5">
+              <span className="text-sm font-medium">Rate source</span>
+              <select
+                required
+                disabled={isEdit}
+                value={rateSource}
+                onChange={(e) => setRateSource(e.target.value)}
+                className={field + (isEdit ? " opacity-60" : "")}
+              >
+                <option value="">Select…</option>
+                {RATE_SOURCES.map((r) => (
+                  <option key={r.value} value={r.value}>
+                    {r.label}
+                  </option>
+                ))}
+              </select>
+            </label>
+          </>
+        )}
+
+        {/* GST law does not let an import's tax be self-computed off this
+            item's own rate the way this form (and create_invoice) does for
+            every other purchase — see the overseasPurchaseWarning comment
+            above for the full reasoning. Independent of currency: shown for
+            an INR purchase from this party too, not gated on isForeign. */}
+        {overseasPurchaseWarning && (
+          <p className="rounded-lg border border-warning/40 bg-warning-soft px-3 py-2 text-xs text-warning sm:col-span-3">
+            This supplier is registered as “overseas”. LEKHA&rsquo;s GST engine
+            currently computes this purchase&rsquo;s tax the same way it computes an
+            export SALE&rsquo;s — which for a purchase produces an Input IGST figure
+            that was never actually charged or paid to Indian Customs. Real
+            import GST is assessed by Customs against the Bill of Entry, not
+            this invoice. Do not rely on the tax figures below for this
+            invoice; record the actual Customs IGST separately once you have
+            the Bill of Entry.
+          </p>
         )}
       </div>
 

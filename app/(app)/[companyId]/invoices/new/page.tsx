@@ -50,9 +50,16 @@ export default async function NewInvoicePage({
     // Each branch's registered state, when it has one attached — needed for
     // the client-side intra/inter preview. The server's determination in
     // create_invoice is the one that actually counts.
+    //
+    // lut_number/lut_valid_from/lut_valid_to (0087) are read here too, new
+    // for foreign-currency invoice support: an export shipped under a valid
+    // LUT is zero-rated (Sec 16(3)(a)), and the client-side tax preview has
+    // no way to know that without them — see lib/invoices/foreign-currency.ts.
     supabase
       .from("branches")
-      .select("id, code, name, gst_registration_id, gst_registrations(state_code)")
+      .select(
+        "id, code, name, gst_registration_id, gst_registrations(state_code, lut_number, lut_valid_from, lut_valid_to)"
+      )
       .eq("company_id", companyId)
       .eq("is_active", true)
       .order("is_head_office", { ascending: false }),
@@ -112,6 +119,9 @@ export default async function NewInvoicePage({
     code: b.code,
     name: b.name,
     registeredState: b.gst_registrations?.state_code ?? null,
+    lutNumber: b.gst_registrations?.lut_number ?? null,
+    lutValidFrom: b.gst_registrations?.lut_valid_from ?? null,
+    lutValidTo: b.gst_registrations?.lut_valid_to ?? null,
   }));
 
   const gstOn = (modules ?? []).some((m) => m.code === "gst" && m.active);

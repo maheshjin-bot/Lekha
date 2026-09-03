@@ -15,7 +15,7 @@ export default async function EditInvoicePage({
   const { data: voucher } = await supabase
     .from("vouchers")
     .select(
-      "id, voucher_number, voucher_type, voucher_date, narration, reference_number, financial_year_label, branch_id, party_ledger_id, place_of_supply, is_deleted"
+      "id, voucher_number, voucher_type, voucher_date, narration, reference_number, financial_year_label, branch_id, party_ledger_id, place_of_supply, is_deleted, txn_currency, exchange_rate, rate_source"
     )
     .eq("id", voucherId)
     .eq("company_id", companyId)
@@ -50,9 +50,12 @@ export default async function EditInvoicePage({
       .eq("company_id", companyId)
       .eq("is_active", true)
       .order("name"),
+    // lut_number/lut_valid_from/lut_valid_to — see invoices/new/page.tsx for why.
     supabase
       .from("branches")
-      .select("id, code, name, gst_registration_id, gst_registrations(state_code)")
+      .select(
+        "id, code, name, gst_registration_id, gst_registrations(state_code, lut_number, lut_valid_from, lut_valid_to)"
+      )
       .eq("company_id", companyId)
       .eq("is_active", true)
       .order("is_head_office", { ascending: false }),
@@ -165,6 +168,9 @@ export default async function EditInvoicePage({
     code: b.code,
     name: b.name,
     registeredState: b.gst_registrations?.state_code ?? null,
+    lutNumber: b.gst_registrations?.lut_number ?? null,
+    lutValidFrom: b.gst_registrations?.lut_valid_from ?? null,
+    lutValidTo: b.gst_registrations?.lut_valid_to ?? null,
   }));
 
   const gstOn = (modules ?? []).some((m) => m.code === "gst" && m.active);
@@ -199,6 +205,12 @@ export default async function EditInvoicePage({
     reference: voucher.reference_number ?? "",
     challanNumber: challanRow?.challan_number ?? "",
     challanDate: challanRow?.challan_date ?? "",
+    // txn_currency is bpchar(3) and always padded/trimmed the way every
+    // other reader of it in this codebase trims it (see get_open_fc_vouchers'
+    // own trim(v.txn_currency)) — done here once rather than in the form.
+    currency: voucher.txn_currency.trim(),
+    exchangeRate: String(voucher.exchange_rate),
+    rateSource: voucher.rate_source ?? "",
     narration: voucher.narration ?? "",
     lines: (voucherItems ?? []).map((vi) => ({
       itemId: vi.item_id,
