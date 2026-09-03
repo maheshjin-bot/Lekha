@@ -40,11 +40,27 @@ type TodaySale = { id: string; voucher_number: string; total_amount: number; cre
 // instead of always falling back to the item master's flat sale_rate.
 type PriceListEntry = { item_id: string; price: number; effective_from: string };
 
+/**
+ * One income ledger the counter may credit — every active ledger whose
+ * EFFECTIVE ledger_role is 'income', straight from
+ * get_pos_revenue_ledger_options (migration 1501), revenue-from-operations
+ * first. `isRevenue` is the direct_income flag, shown so an operator can tell
+ * "Sales - Spices & Masala" from "Scrap Sales" without opening the chart of
+ * accounts.
+ */
+export type RevenueLedger = {
+  id: string;
+  name: string;
+  groupName: string;
+  isRevenue: boolean;
+};
+
 export function QuickBilling({
   companyId,
   items,
   branch,
   godown,
+  salesLedgers,
   salesLedgerId,
   cashLedgerId,
   todaySales,
@@ -55,6 +71,21 @@ export function QuickBilling({
   items: Item[];
   branch: Branch;
   godown: Godown;
+  /** Everything the till may credit. Empty means the chart of accounts has no income ledger at all. */
+  salesLedgers: RevenueLedger[];
+  /**
+   * What the server resolved for this branch: the stored choice, or the one
+   * unambiguous revenue ledger, or NULL when it is genuinely ambiguous.
+   *
+   * NULL is not a failure state to be papered over — it is the fix. This
+   * prop used to be a single id chosen by
+   * `find(l => l.name === "Sales Account") ?? salesLedgers[0]`, and in a
+   * company that never used that exact English name the fallback credited
+   * whichever income ledger sorted first. The pilot's counter takings went to
+   * "Discount Received" for a month with nothing on screen to notice. So when
+   * the server cannot say which ledger is right, this screen ASKS instead of
+   * picking, and will not post until it has an answer.
+   */
   salesLedgerId: string | null;
   cashLedgerId: string | null;
   todaySales: TodaySale[];
@@ -101,6 +132,35 @@ export function QuickBilling({
   const [search, setSearch] = useState("");
   const [cart, setCart] = useState<CartLine[]>([]);
   const [busy, setBusy] = useState(false);
+
+  // The ledger this sale will credit. Seeded from what the server resolved
+  // and then owned by the operator. Resolved rather than held raw, exactly as
+  // the numbering series below is, so a stale id can never be sent to
+  // create_invoice: if the stored choice has since been deactivated it simply
+  // is not in `salesLedgers` and the screen falls back to "not chosen".
+  const [pickedLedgerId, setPickedLedgerId] = useState<string | null>(salesLedgerId);
+  const effectiveLedgerId = salesLedgers.some((l) => l.id === pickedLedgerId)
+    ? pickedLedgerId
+    : null;
+  const effectiveLedger = salesLedgers.find((l) => l.id === effectiveLedgerId) ?? null;
+
+  // Remembered per branch, like the series selection and for the same reason:
+  // a counter picks once at the start of a shift, not once per customer. The
+  // write is deliberately not awaited before billing can continue — failing to
+  // SAVE the preference must never stop a sale, and the sale itself carries
+  // the chosen id regardless.
+  async function chooseLedger(id: string) {
+    setPickedLedgerId(id || null);
+    if (!id || !branch) return;
+    const { error } = await createClient().rpc(
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any -- set_pos_revenue_ledger (1501) postdates types/database.types.ts.
+      "set_pos_revenue_ledger" as any,
+      { p_company_id: companyId, p_branch_id: branch.id, p_ledger_id: id }
+    );
+    if (error) {
+      toast.error(`Couldn't remember that choice: ${error.message}`);
+    }
+  }
 
   // Numbering (0725). Same three-line shape as InvoiceForm, on purpose: the
   // series id is RESOLVED rather than stored, so a series that has been
@@ -156,17 +216,24 @@ export function QuickBilling({
   }
 
   const subtotal = cart.reduce((n, l) => n + l.quantity * l.rate, 0);
-  const missingSetup = !branch || !godown || !salesLedgerId || !cashLedgerId;
+  const noIncomeLedgerAtAll = salesLedgers.length === 0;
+  const missingSetup = !branch || !godown || !cashLedgerId || noIncomeLedgerAtAll;
+  // Distinct from missingSetup on purpose: the company IS set up, it just has
+  // several income ledgers and nobody has said which one the counter uses.
+  // That is a question, not a broken configuration, and it gets its own copy.
+  const ledgerNotChosen = !missingSetup && !effectiveLedgerId;
 
   async function checkout() {
     if (cart.length === 0) {
       toast.error("Cart is empty.");
       return;
     }
-    if (!branch || !godown || !salesLedgerId || !cashLedgerId) {
-      toast.error(
-        "Quick billing needs an active branch, a godown and a Sales Account ledger set up first."
-      );
+    if (!branch || !godown || !cashLedgerId) {
+      toast.error("Quick billing needs an active branch, a godown and a cash ledger set up first.");
+      return;
+    }
+    if (!effectiveLedgerId) {
+      toast.error("Choose the sales ledger this counter credits before completing the sale.");
       return;
     }
     // The same rule app_private.assert_rule46b_number applies, checked here so
@@ -187,7 +254,7 @@ export function QuickBilling({
       p_voucher_type: "sales",
       p_voucher_date: new Date().toISOString().slice(0, 10),
       p_party_ledger_id: cashLedgerId,
-      p_trading_ledger_id: salesLedgerId,
+      p_trading_ledger_id: effectiveLedgerId,
       p_godown_id: godown.id,
       p_items: cart.map((l, i) => ({
         item_id: l.item.id,
@@ -239,7 +306,12 @@ export function QuickBilling({
           <CardBody className="text-sm text-ink-soft">
             {!branch && "No active branch found. "}
             {branch && !godown && "This branch has no godown set up yet — add one in Godowns. "}
-            {!salesLedgerId && "No income ledger (Sales Account) found in the chart of accounts. "}
+            {/* No longer "no Sales Account": nothing in this app creates a
+                ledger by that name, and saying so sent preparers hunting for
+                a string that does not exist. What is actually missing is any
+                ledger at all under an income group. */}
+            {noIncomeLedgerAtAll &&
+              "The chart of accounts has no ledger under Direct or Indirect Incomes yet — add your sales ledger there first. "}
             Quick billing can&rsquo;t post a sale until this is set up.
           </CardBody>
         </Card>
@@ -343,12 +415,52 @@ export function QuickBilling({
               onSeriesIdChange={setSeriesId}
             />
 
+            {/* THE LEDGER THE SALE CREDITS — always visible, never guessed.
+                A till that does not say where the money is being booked is
+                how a month of counter takings ended up in "Discount
+                Received". Shown even when there is only one candidate: it
+                costs one line and it is the only place the operator can see
+                the answer at all. */}
+            {!missingSetup && (
+              <label className="flex flex-col gap-1.5">
+                <span className="text-sm font-medium text-ink">Sales ledger to credit</span>
+                <select
+                  aria-label="Sales ledger to credit"
+                  value={effectiveLedgerId ?? ""}
+                  onChange={(e) => void chooseLedger(e.target.value)}
+                  className={
+                    "rounded-lg border bg-surface px-3 py-2 text-sm text-ink outline-none focus-visible:ring-2 focus-visible:ring-accent/30 " +
+                    (ledgerNotChosen
+                      ? "border-warning focus-visible:border-warning"
+                      : "border-border-strong focus-visible:border-accent")
+                  }
+                >
+                  {/* Only offered while nothing is chosen. Once the counter
+                      has answered, "not chosen" stops being a state they can
+                      return to by accident. */}
+                  {ledgerNotChosen && <option value="">Choose a sales ledger…</option>}
+                  {salesLedgers.map((l) => (
+                    <option key={l.id} value={l.id}>
+                      {l.name} — {l.groupName}
+                    </option>
+                  ))}
+                </select>
+                <span className={"text-xs " + (ledgerNotChosen ? "text-warning" : "text-ink-faint")}>
+                  {ledgerNotChosen
+                    ? `Nobody has told this counter which of the company's ${salesLedgers.length} income ledger${salesLedgers.length === 1 ? "" : "s"} a counter sale belongs to, and the till will not guess. Pick one — the choice is remembered.`
+                    : effectiveLedger && !effectiveLedger.isRevenue
+                      ? `Revenue posts to ${effectiveLedger.name}, which sits under ${effectiveLedger.groupName} — indirect income. A counter sale is normally revenue from operations; check this is what you meant.`
+                      : `Revenue posts here (GST goes to the tax ledgers separately). Remembered for this counter until you change it.`}
+                </span>
+              </label>
+            )}
+
             <Button
               type="button"
               onClick={checkout}
               busy={busy}
               busyLabel="Posting…"
-              disabled={cart.length === 0 || missingSetup}
+              disabled={cart.length === 0 || missingSetup || ledgerNotChosen}
               className="w-full"
             >
               Complete sale

@@ -51,7 +51,7 @@ export default async function PosPage({
 
   const branch = branches?.[0] ?? null;
 
-  const [{ data: godowns }, { data: salesLedgers }] = await Promise.all([
+  const [{ data: godowns }, { data: revenueLedgerRows }] = await Promise.all([
     branch
       ? supabase
           .from("godowns")
@@ -61,16 +61,48 @@ export default async function PosPage({
           .eq("is_active", true)
           .order("is_default", { ascending: false })
       : Promise.resolve({ data: [] as { id: string; name: string; is_default: boolean }[] }),
-    supabase
-      .from("ledgers")
-      .select("id, name, account_groups!inner(ledger_role)")
-      .eq("company_id", companyId)
-      .eq("account_groups.ledger_role", "income")
-      .order("name"),
+    // WHICH LEDGER THE TILL CREDITS — migration 1501.
+    //
+    // This used to be `salesLedgers.find(l => l.name === "Sales Account")
+    // ?? salesLedgers[0]` over a query ordered by name, and for any company
+    // whose preparer named their own revenue ledgers the find missed and the
+    // fallback silently took the alphabetically-first income ledger. In the
+    // pilot that was "Discount Received", so a month of counter takings was
+    // booked as indirect income. Matching a ledger by an English name is the
+    // bug, not the fix — the lesson migration 1200 already paid for.
+    //
+    // The RPC binds by effective ledger_role instead, returns every income
+    // ledger with revenue-from-operations first, and marks the one quick
+    // billing would credit: the branch's stored choice, or the single
+    // direct-income ledger when there is exactly one, or NOTHING when it is
+    // genuinely ambiguous — in which case the operator picks and the till
+    // refuses to post until they have.
+    branch
+      ? // eslint-disable-next-line @typescript-eslint/no-explicit-any -- get_pos_revenue_ledger_options postdates types/database.types.ts, which this task does not regenerate. Same escape hatch as the numbering call below.
+        supabase.rpc("get_pos_revenue_ledger_options" as any, {
+          p_company_id: companyId,
+          p_branch_id: branch.id,
+        })
+      : Promise.resolve({ data: null }),
   ]);
 
-  const salesLedger =
-    salesLedgers?.find((l) => l.name === "Sales Account") ?? salesLedgers?.[0] ?? null;
+  const revenueLedgers = ((revenueLedgerRows ?? []) as unknown as {
+    ledger_id: string;
+    ledger_name: string;
+    group_name: string;
+    is_revenue: boolean;
+    is_selected: boolean;
+  }[]).map((r) => ({
+    id: r.ledger_id,
+    name: r.ledger_name,
+    groupName: r.group_name,
+    isRevenue: r.is_revenue,
+  }));
+
+  const salesLedgerId =
+    ((revenueLedgerRows ?? []) as unknown as { ledger_id: string; is_selected: boolean }[]).find(
+      (r) => r.is_selected
+    )?.ledger_id ?? null;
   const godown = godowns?.[0] ?? null;
 
   // The sales voucher type's numbering policy (migration 0725), for THIS
@@ -132,7 +164,8 @@ export default async function PosPage({
         items={items ?? []}
         branch={branch}
         godown={godown}
-        salesLedgerId={salesLedger?.id ?? null}
+        salesLedgers={revenueLedgers}
+        salesLedgerId={salesLedgerId}
         cashLedgerId={(cashLedgerId as string | null) ?? null}
         todaySales={(todaySales ?? []) as { id: string; voucher_number: string; total_amount: number; created_at: string }[]}
         priceListItems={priceListItems}

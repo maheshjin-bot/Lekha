@@ -2,6 +2,7 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 import { createClient } from "@/lib/supabase/server";
 import { InvoiceForm, type ExistingInvoice, type ShipTo } from "@/components/invoices/InvoiceForm";
+import { Alert } from "@/components/ui/Alert";
 import { TRADING_ROLES } from "@/lib/invoices/trading-roles";
 
 const INVOICE_TYPES = ["sales", "purchase", "credit_note", "debit_note"];
@@ -35,12 +36,19 @@ export default async function EditInvoicePage({
     { data: tradingEntry },
     { data: priceListItemsRaw },
   ] = await Promise.all([
+    // Goods and services alike — see invoices/new/page.tsx for why the
+    // maintain_stock filter that used to be here had to go with migration
+    // 1480 rather than before it. It matters more on this screen than on the
+    // new-invoice one: without it an invoice that already carries a charge
+    // line would render with that line's item missing from the dropdown, and
+    // saving would silently drop the line from a document already issued.
     supabase
       .from("items")
-      .select("id, name, uom, sale_rate, purchase_rate, gst_rate_percent, default_tcs_section")
+      .select(
+        "id, name, uom, sale_rate, purchase_rate, gst_rate_percent, default_tcs_section, item_type, maintain_stock, hsn_sac"
+      )
       .eq("company_id", companyId)
       .eq("is_active", true)
-      .eq("maintain_stock", true)
       .order("name"),
     supabase
       .from("ledgers")
@@ -107,6 +115,40 @@ export default async function EditInvoicePage({
     .eq("id", voucherId)
     .eq("company_id", companyId)
     .maybeSingle<{ challan_number: string | null; challan_date: string | null }>();
+
+  // Has this document already been reported to the Invoice Registration
+  // Portal? (public.einvoice_details, migration 0230.) If it has, migration
+  // 1500 freezes the party, the date, the place of supply and every line —
+  // the signed QR printed on the invoice attests those figures, so editing
+  // them here would leave the paper contradicting its own IRN. update_invoice
+  // refuses the save with the full remedy; this banner says it BEFORE the
+  // preparer retypes an invoice they are not allowed to change.
+  const { data: einvoice } = await supabase
+    .from("einvoice_details")
+    .select("irn, ack_date")
+    .eq("voucher_id", voucherId)
+    .eq("company_id", companyId)
+    .not("irn", "is", null)
+    .maybeSingle();
+
+  const reportedIrn = einvoice?.irn ?? null;
+  // The IRP cancels an IRN only within 24 hours of the acknowledgement, and
+  // never amends one. Both halves matter to what this banner should say, so
+  // the deadline is computed rather than described vaguely.
+  const cancelDeadline = einvoice?.ack_date
+    ? new Date(new Date(einvoice.ack_date).getTime() + 24 * 60 * 60 * 1000)
+    : null;
+  const cancelWindowOpen = cancelDeadline ? cancelDeadline > new Date() : false;
+  const deadlineLabel = cancelDeadline
+    ? cancelDeadline.toLocaleString("en-IN", {
+        timeZone: "Asia/Kolkata",
+        day: "2-digit",
+        month: "short",
+        year: "numeric",
+        hour: "2-digit",
+        minute: "2-digit",
+      }) + " IST"
+    : null;
 
   const { data: shipToRow } = await supabase
     // eslint-disable-next-line @typescript-eslint/no-explicit-any -- see above
@@ -226,6 +268,39 @@ export default async function EditInvoicePage({
         Saving replaces every line — the stock movement, GST/TCS and ledger entries are all
         recomputed together, exactly as they would be for a fresh invoice with these figures.
       </p>
+
+      {reportedIrn && !voucher.is_deleted && (
+        <Alert tone="warning" className="mt-6 max-w-3xl">
+          <span className="font-semibold">
+            Reported to the Invoice Registration Portal — the figures are frozen.
+          </span>{" "}
+          This invoice carries IRN <span className="font-mono">{reportedIrn.slice(0, 12)}…</span>
+          {deadlineLabel ? ` (acknowledged, cancellable until ${deadlineLabel})` : ""}. The signed
+          QR code printed on it attests the buyer, the date and the value that were reported, so
+          the party, the invoice date, the place of supply and the item lines can no longer be
+          changed — saving such a change is refused.{" "}
+          {cancelWindowOpen ? (
+            <>
+              Until {deadlineLabel} you may still cancel the IRN on the IRP (cancel any e-way bill
+              against it first) and raise a corrected invoice under a fresh number.
+            </>
+          ) : (
+            <>
+              The 24-hour cancellation window on the IRP has closed, and an e-invoice can never be
+              amended there.
+            </>
+          )}{" "}
+          Otherwise correct it with a credit note or debit note under Sec 34 CGST Act — itself
+          reported to the IRP — or in the amendment table of a later GSTR-1. Narration, reference,
+          challan and godown can still be corrected here.{" "}
+          <Link
+            href={`/${companyId}/einvoice/${voucherId}`}
+            className="underline underline-offset-4"
+          >
+            Open the e-invoice record
+          </Link>
+        </Alert>
+      )}
 
       {voucher.is_deleted ? (
         <p className="mt-8 rounded-lg border border-dashed border-border-strong px-5 py-8 text-center text-sm text-ink-faint">
