@@ -1,6 +1,9 @@
 import { createClient } from "@/lib/supabase/server";
 import { formatINR } from "@/lib/utils/currency";
+import { defaultPeriod } from "@/lib/utils/period";
+import { Badge } from "@/components/ui/Badge";
 import { ReportShell, num, td, th } from "@/components/reports/ReportShell";
+import { DrillHeadCell, DrillRow } from "@/components/reports/DrillLink";
 
 export default async function OutstandingPage({
   params,
@@ -9,12 +12,46 @@ export default async function OutstandingPage({
   const { companyId } = await params;
   const sp = await searchParams;
   const role = sp.role === "creditor" ? "creditor" : "debtor";
+  // As-at, same control /allocations and /reports/party-bills already give a
+  // preparer (1490) — this report used to always mean "as of right now" with
+  // nothing on screen saying so. Carried into the per-party drill below so
+  // the two screens can never disagree about which day's position is on
+  // screen (party-bills defaults to today too, but a stale bookmark of this
+  // page should not silently re-date what it drills into).
+  // defaultPeriod's `to` with no override is exactly todayLocal() (see
+  // lib/nav/context.ts's own comment to this effect) regardless of the
+  // startMonth passed in — using it here, rather than a bare
+  // `new Date().toISOString()`, is what keeps this page off the two real
+  // UTC+05:30 date bugs period.ts's header documents (a period reading
+  // yesterday between midnight and 05:30 IST, chief among them).
+  const asAt =
+    typeof sp.as_at === "string" && /^\d{4}-\d{2}-\d{2}$/.test(sp.as_at)
+      ? sp.as_at
+      : defaultPeriod(4).to;
   const supabase = await createClient();
 
-  const { data: rows } = await supabase.rpc("get_party_outstanding", {
-    p_company_id: companyId,
-    p_role: role,
-  });
+  const [{ data: rows }, { data: allocatedRows }] = await Promise.all([
+    supabase.rpc("get_party_outstanding", {
+      p_company_id: companyId,
+      p_as_at: asAt,
+      p_role: role,
+    }),
+    // Which parties have at least one bill someone has actually pointed a
+    // receipt/payment at (1490), as opposed to every figure below coming
+    // from the oldest-first FIFO guess. voucher_allocations is brand new and
+    // not yet in database.types.ts — the same `as any` escape hatch the
+    // sibling /allocations and /reports/party-bills pages already use for
+    // this exact table.
+    supabase
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any -- see above
+      .from("voucher_allocations" as any)
+      .select("party_ledger_id")
+      .eq("company_id", companyId),
+  ]);
+
+  const explicitlyAllocated = new Set(
+    ((allocatedRows ?? []) as unknown as { party_ledger_id: string }[]).map((r) => r.party_ledger_id)
+  );
 
   const parties = rows ?? [];
   const sum = (k: keyof (typeof parties)[number]) =>
@@ -33,20 +70,39 @@ export default async function OutstandingPage({
           : { label: formatINR(total, { showZero: true }), tone: "ok" }
       }
     >
-      <div className="border-b border-border px-4 py-2.5 text-sm print:hidden">
+      <div className="flex flex-wrap items-center gap-3 border-b border-border px-4 py-2.5 text-sm print:hidden">
         <a
-          href={`?role=debtor`}
+          href={`?role=debtor&as_at=${asAt}`}
           className={role === "debtor" ? "font-semibold" : "text-ink-soft underline underline-offset-4 "}
         >
           Receivables
         </a>
-        <span className="mx-3 text-ink-faint">|</span>
+        <span className="text-ink-faint">|</span>
         <a
-          href={`?role=creditor`}
+          href={`?role=creditor&as_at=${asAt}`}
           className={role === "creditor" ? "font-semibold" : "text-ink-soft underline underline-offset-4 "}
         >
           Payables
         </a>
+        <form method="get" className="ml-auto flex items-center gap-2">
+          <input type="hidden" name="role" value={role} />
+          <label htmlFor="as_at" className="text-xs text-ink-faint">
+            As at
+          </label>
+          <input
+            id="as_at"
+            name="as_at"
+            type="date"
+            defaultValue={asAt}
+            className="rounded-lg border border-border-strong bg-surface px-2 py-1 text-sm text-ink"
+          />
+          <button
+            type="submit"
+            className="rounded-lg border border-border-strong px-3 py-1 text-sm font-medium text-ink hover:bg-surface-2"
+          >
+            Show
+          </button>
+        </form>
       </div>
 
       <table className="w-full min-w-[760px] text-sm">
@@ -59,23 +115,36 @@ export default async function OutstandingPage({
             <th className={th + " text-right"}>61–90</th>
             <th className={th + " text-right"}>90+</th>
             <th className={th + " text-right"}>Total</th>
+            <DrillHeadCell />
           </tr>
         </thead>
         <tbody>
           {parties.length === 0 && (
             <tr>
-              <td colSpan={7} className="px-4 py-12 text-center text-ink-faint">
+              <td colSpan={8} className="px-4 py-12 text-center text-ink-faint">
                 Nothing outstanding.
               </td>
             </tr>
           )}
           {parties.map((r) => (
-            <tr
+            <DrillRow
               key={r.ledger_id}
+              href={`/${companyId}/reports/party-bills`}
+              params={{ ledger: r.ledger_id, role, as_at: asAt }}
+              label={r.ledger_name}
               className="border-b border-border last:border-0"
             >
               <td className={td + " font-medium"}>
                 {r.ledger_name}
+                {/* Whether THIS party's number above is bill-wise fact or a
+                    FIFO guess — the general note below explains the
+                    difference once; this is which side of it a reader is
+                    looking at. */}
+                {explicitlyAllocated.has(r.ledger_id) && (
+                  <Badge tone="accent" className="ml-2 normal-case">
+                    Bill-wise
+                  </Badge>
+                )}
                 {r.oldest_date && Number(r.days_over_90) > 0 && (
                   <span className="ml-2 text-xs font-normal text-warning">
                     oldest {r.oldest_date}
@@ -90,7 +159,7 @@ export default async function OutstandingPage({
                 {formatINR(Number(r.days_over_90))}
               </td>
               <td className={num + " font-medium"}>{formatINR(Number(r.outstanding))}</td>
-            </tr>
+            </DrillRow>
           ))}
         </tbody>
         {parties.length > 0 && (
@@ -103,15 +172,18 @@ export default async function OutstandingPage({
               <td className={num}>{formatINR(sum("days_61_90"), { showZero: true })}</td>
               <td className={num}>{formatINR(overdue, { showZero: true })}</td>
               <td className={num}>{formatINR(total, { showZero: true })}</td>
+              <td className="print:hidden" />
             </tr>
           </tfoot>
         )}
       </table>
 
       <p className="border-t border-border px-4 py-3 text-xs text-ink-faint">
-        Ageing is inferred: receipts are applied to the oldest invoices first,
-        not matched to the invoices they actually settle. Bill-wise allocation
-        comes later — worth knowing before this number goes to a lender.
+        Ageing is bill-wise fact wherever a receipt, payment or credit note has been explicitly
+        pointed at the invoice it settles (marked <Badge tone="accent" className="normal-case">Bill-wise</Badge>{" "}
+        above) — otherwise it is still the oldest-first FIFO fallback this report has always used,
+        which assumes money was applied to the oldest invoice first without anyone actually saying
+        so. Open a party to see the bill-by-bill split for it before this number goes to a lender.
       </p>
     </ReportShell>
   );
