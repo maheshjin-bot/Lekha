@@ -9889,6 +9889,26 @@ export type Database = {
         }
         Returns: string
       }
+      update_item: {
+        Args: {
+          p_cess_rate_percent: number
+          p_default_tcs_section: string | null
+          p_gst_rate_percent: number
+          p_hsn_sac: string | null
+          p_is_active: boolean
+          p_is_rcm_applicable: boolean
+          p_item_id: string
+          p_item_type: string
+          p_itc_blocked_clause: string | null
+          p_maintain_stock: boolean
+          p_name: string
+          p_purchase_rate: number | null
+          p_sale_rate: number | null
+          p_supply_nature: string
+          p_uom: string
+        }
+        Returns: string
+      }
       update_recurring_voucher_template: {
         Args: {
           p_end_date?: string
