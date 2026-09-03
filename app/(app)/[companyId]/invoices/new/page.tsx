@@ -22,22 +22,30 @@ export default async function NewInvoicePage({
     { data: tcsSections },
     { data: priceListItemsRaw },
   ] = await Promise.all([
-    // maintain_stock is NOT a presentational preference here, it is exactly
-    // the predicate the database enforces on the other side. voucher_items
-    // carries a BEFORE INSERT trigger (app_private.enforce_stock_item, 0013)
-    // that refuses any item which is not `item_type = 'goods' and
-    // maintain_stock` — and items_service_has_no_stock guarantees a service
-    // can never have maintain_stock set, so this one filter already selects
-    // precisely the set create_invoice will accept. Offering a service here
-    // would not make it invoiceable; it would make the save fail after the
-    // voucher header had already been numbered. See the quick-add item
-    // popup, which blocks the service option for the same reason.
+    // Every active item, goods and services alike (migration 1480).
+    //
+    // This deliberately used to filter `maintain_stock = true`, and the
+    // filter was right for as long as the database agreed with it:
+    // voucher_items' BEFORE INSERT trigger (app_private.enforce_stock_item,
+    // 0013) refused anything that was not `item_type = 'goods' and
+    // maintain_stock`, so offering a service would only have made the save
+    // fail after the voucher header had already been numbered. 1480 widened
+    // the trigger instead of relaxing this filter, which is the order those
+    // two changes have to happen in: a service is now a CHARGE LINE that
+    // carries its SAC, rate, amount and GST onto the invoice and into both
+    // GST registers, and moves no stock. So the set create_invoice will
+    // accept is now every active item, and that is what is fetched.
+    //
+    // item_type and maintain_stock come along because the form labels a
+    // charge line and says what the godown does not cover; hsn_sac so it can
+    // show the SAC that Rule 46(g) requires on the line.
     supabase
       .from("items")
-      .select("id, name, uom, sale_rate, purchase_rate, gst_rate_percent, default_tcs_section")
+      .select(
+        "id, name, uom, sale_rate, purchase_rate, gst_rate_percent, default_tcs_section, item_type, maintain_stock, hsn_sac"
+      )
       .eq("company_id", companyId)
       .eq("is_active", true)
-      .eq("maintain_stock", true)
       .order("name"),
     supabase
       .from("ledgers")

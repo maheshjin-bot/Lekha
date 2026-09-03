@@ -32,7 +32,54 @@ type Item = {
   purchase_rate: number | null;
   gst_rate_percent: number;
   default_tcs_section: string | null;
+  // Migration 1480. An item that does not maintain stock is billed as a
+  // CHARGE LINE — freight, processing, installation and the like — which
+  // carries its SAC, rate, amount and GST onto the invoice and into both GST
+  // registers, and moves no inventory. Read here only to label the line and
+  // to say what the godown does not cover: the database derives
+  // voucher_items.moves_stock from the item master itself, so nothing in the
+  // submitted payload has to carry it, and nothing here can get it wrong.
+  item_type: string;
+  maintain_stock: boolean;
+  hsn_sac: string | null;
 };
+
+/**
+ * Whether a line on this item moves stock — the same predicate
+ * app_private.enforce_stock_item applies server-side, and the reason a
+ * service can be invoiced but still never reaches the stock ledger.
+ */
+function movesStock(item: Item) {
+  return item.item_type === "goods" && item.maintain_stock;
+}
+
+/**
+ * Names a charge line in the picker itself, so the difference is understood
+ * before the choice is made rather than explained after it. Goods that simply
+ * are not stock-tracked behave identically to a service on the invoice, but
+ * calling them one would be wrong, so they say what they actually are.
+ */
+function itemOptionLabel(item: Item) {
+  if (movesStock(item)) return item.name;
+  return `${item.name} — ${item.item_type === "service" ? "service" : "no stock"}`;
+}
+
+/**
+ * What a charge line is, shown on the line itself. The SAC is here because
+ * Rule 46(g) CGST Rules requires a code for services exactly as it does for
+ * goods, and because a preparer who sees it blank on the invoice has to know
+ * to go and put it on the item master — quantity, by contrast, is a goods-only
+ * particular under Rule 46(i), which is why nothing here asks for one.
+ */
+function ChargeLineNote({ item }: { item: Item }) {
+  return (
+    <p className="mt-1 text-[11px] text-ink-faint">
+      Charge line · {item.hsn_sac ? `SAC ${item.hsn_sac}` : "no SAC on the item master"} · moves no
+      stock
+    </p>
+  );
+}
+
 type Ledger = {
   id: string;
   name: string;
@@ -207,6 +254,9 @@ function toItem(i: QuickAddedItem): Item {
     purchase_rate: i.purchase_rate,
     gst_rate_percent: i.gst_rate_percent,
     default_tcs_section: i.default_tcs_section,
+    item_type: i.item_type,
+    maintain_stock: i.maintain_stock,
+    hsn_sac: i.hsn_sac,
   };
 }
 
@@ -376,6 +426,18 @@ export function InvoiceForm({
         ? "intra"
         : "inter"
       : null;
+
+  // True once any line on the invoice is billed as a charge rather than as
+  // stock (migration 1480) — the one moment the godown below stops covering
+  // the whole document, and the only thing on this screen that has to know.
+  const hasChargeLine = useMemo(
+    () =>
+      lines.some((l) => {
+        const it = allItems.find((x) => x.id === l.itemId);
+        return it ? !movesStock(it) : false;
+      }),
+    [lines, allItems]
+  );
 
   // Post-discount (net) taxable value per line — Sec 15(3)(a)/Rule 46(k),
   // see 0147. lineAmounts mirrors create_invoice's own formula exactly.
@@ -880,6 +942,16 @@ export function InvoiceForm({
               </option>
             ))}
           </select>
+          {/* Said only when it applies, and said where the confusion would
+              arise: a charge line is taxed and reported like any other line
+              but has no quantity to store anywhere, so the godown simply
+              does not reach it. */}
+          {hasChargeLine && (
+            <span className="text-xs text-ink-faint">
+              Charge lines carry their SAC and GST but no stock, so this godown covers only the
+              goods lines.
+            </span>
+          )}
         </label>
 
         {gstOn && (
@@ -1097,7 +1169,7 @@ export function InvoiceForm({
                       <option value="">Select an item…</option>
                       {allItems.map((it) => (
                         <option key={it.id} value={it.id}>
-                          {it.name}
+                          {itemOptionLabel(it)}
                         </option>
                       ))}
                     </select>
@@ -1111,6 +1183,7 @@ export function InvoiceForm({
                     + New
                   </button>
                 </div>
+                {item && !movesStock(item) && <ChargeLineNote item={item} />}
                 <div className="grid grid-cols-3 gap-2.5">
                   <label className="flex flex-col gap-1">
                     <span className="text-xs text-ink-faint">Qty {item ? `(${item.uom})` : ""}</span>
@@ -1246,7 +1319,7 @@ export function InvoiceForm({
                         <option value="">Select an item…</option>
                         {allItems.map((it) => (
                           <option key={it.id} value={it.id}>
-                            {it.name}
+                            {itemOptionLabel(it)}
                           </option>
                         ))}
                       </select>
@@ -1260,6 +1333,7 @@ export function InvoiceForm({
                         + New
                       </button>
                     </div>
+                    {item && !movesStock(item) && <ChargeLineNote item={item} />}
                   </td>
                   <td className="px-3 py-2">
                     <input
@@ -1453,9 +1527,12 @@ export function InvoiceForm({
         onClose={() => setItemModalLine(null)}
         companyId={companyId}
         gstOn={gstOn}
-        // An invoice line is a stock line — voucher_items refuses anything
-        // that does not maintain stock. See the prop's own comment.
-        requireStockItem
+        // requireStockItem is deliberately NOT passed any more (migration
+        // 1480). It was set because an invoice line had to be a stock line
+        // and voucher_items refused anything else, so offering the service
+        // option here would only have produced an item the very invoice it
+        // was created for could not carry. An invoice can now carry a charge
+        // line, so the popup offers the whole choice again.
         onCreated={(created) => {
           if (itemModalLine !== null) onItemCreated(itemModalLine, created);
         }}
