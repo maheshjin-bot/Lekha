@@ -12,10 +12,22 @@ type PLRow = { nature: string; group_name: string; ledger_name: string; ledger_r
 // Schedule III Division I/II's Statement of Profit and Loss "Expenses"
 // break-up, in the Schedule's own order (confirmed live against Schedule
 // III's bare-act text — see migration 0210). ledger_role is
-// coalesce(ledger override, group default) from get_profit_and_loss, so
-// every direct_expense/indirect_expense row lands in exactly one of these
-// eight buckets — the eighth, tax_expense, is deliberately NOT one of the
-// seven Schedule III heads (rendered separately below, not in this array).
+// coalesce(ledger override, group default) from get_profit_and_loss, and in
+// the OVERWHELMING common case every direct_expense/indirect_expense row
+// lands in exactly one of these seven buckets or the eighth, tax_expense
+// (deliberately not a Schedule III head — rendered separately below, not in
+// this array). But the role vocabulary a ledger or account_group can
+// actually carry (0210's CHECK constraint, widened by 1470) is broader than
+// these eight — 'other' is a real, currently-unused-by-any-screen but
+// perfectly legal value on an expense-nature group (account_groups'
+// ledger_role CHECK, 0210; account_group_roles_for_nature, 1470). Below,
+// KNOWN_EXPENSE_HEAD_ROLES + the "Unclassified Expenses" block exist so a
+// row carrying any role outside this array is still shown rather than
+// silently missing from every visible line while still counting in
+// totalExpenses — a page-only, presentational fix: get_profit_and_loss
+// itself already returns such a row honestly (grouped by NATURE for
+// totalExpenses, same as always), the gap was only ever in this page's own
+// role-keyed whitelist. No RPC or migration change accompanies this.
 const SCHEDULE_III_EXPENSE_HEADS: { role: string; label: string }[] = [
   { role: "cost_of_materials", label: "Cost of Materials Consumed" },
   { role: "purchases_stock_in_trade", label: "Purchases of Stock-in-Trade" },
@@ -28,6 +40,17 @@ const SCHEDULE_III_EXPENSE_HEADS: { role: string; label: string }[] = [
   { role: "depreciation_amortisation", label: "Depreciation and Amortisation Expense" },
   { role: "other_expenses", label: "Other Expenses" },
 ];
+
+// The eight roles this page places on a named Schedule III line — the seven
+// heads above plus tax_expense, which gets its own Block below (see 0210)
+// but is still a role the page KNOWS about, not an unclassified one. Any
+// direct_expense/indirect_expense row whose role is not in this set is
+// rendered by the "Unclassified Expenses" catch-all instead of vanishing —
+// see the comment beside its computation below.
+const KNOWN_EXPENSE_HEAD_ROLES = new Set<string>([
+  ...SCHEDULE_III_EXPENSE_HEADS.map((h) => h.role),
+  "tax_expense",
+]);
 
 /** curr - comp as a signed percentage of |comp|, or null when there is
  * nothing to divide by — a brand-new line (comp undefined) or a comp that
@@ -381,6 +404,38 @@ export default async function ProfitLossPage({
     return m;
   };
 
+  // The reconciling catch-all. totalExpenses (above) sums every
+  // direct_expense/indirect_expense row by NATURE, straight off the RPC —
+  // it does not know or care about ledger_role. The eight Blocks above
+  // (headSection for the seven Schedule III heads, plus tax_expense) only
+  // render a row whose role is an EXACT match for one of those eight
+  // strings. Those two are the same set of rows only as long as every
+  // expense ledger's role (0210's CHECK constraint, widened by 1470) is one
+  // of the eight this page knows — true of every company today except one
+  // live ledger (TEST Vantage Consulting, "Professional & Sub-consulting
+  // Fees", role 'other' — a non-UI-faithful setup insert, not something any
+  // screen can produce today), but nothing stops a future migration, import,
+  // or feature from producing another.
+  // When it happens, the gap is not a rounding difference to explain away:
+  // it is one or more real ledgers that are fully counted in Total Expenses
+  // and invisible in every line above it. So: whatever expense-nature row
+  // is not claimed by one of the eight known Blocks is rendered here
+  // instead — same Block component, same drill-through — so total minus
+  // visible heads is always exactly zero, never a silent gap.
+  const isUnclassifiedExpense = (r: { nature: string; ledger_role: string }) =>
+    (r.nature === "direct_expense" || r.nature === "indirect_expense") &&
+    !KNOWN_EXPENSE_HEAD_ROLES.has(r.ledger_role);
+  const unclassifiedExpenseItems = all.filter(isUnclassifiedExpense);
+  const compUnclassifiedExpenseMap = (() => {
+    const m = new Map<string, { group_name: string; amount: number }>();
+    for (const r of compAll.filter(isUnclassifiedExpense)) {
+      m.set(r.ledger_name, { group_name: r.group_name, amount: Number(r.amount) });
+    }
+    return m;
+  })();
+  const hasUnclassifiedExpense =
+    unclassifiedExpenseItems.length > 0 || compUnclassifiedExpenseMap.size > 0;
+
   const selectedBranch = (branches ?? []).find((b) => b.id === branchId);
 
   // Built once and handed to every Block: the whole point is that a ledger
@@ -515,6 +570,19 @@ export default async function ProfitLossPage({
                 label="Tax Expense (shown separately — not one of the seven expense heads above)"
                 items={headSection("tax_expense")}
                 compByLedger={compHeadSection("tax_expense")}
+                hasComparative={hasComparative}
+                drill={drill}
+              />
+              {/* The reconciling catch-all — see the comment beside
+                  unclassifiedExpenseItems above. Block itself renders
+                  nothing when there are no such rows in either period, so
+                  this is safe to always mount rather than gate on
+                  hasUnclassifiedExpense; that flag is reused below only to
+                  decide whether the explanatory caption is worth showing. */}
+              <Block
+                label="Unclassified Expenses (ledger role not one of the heads above — see note below)"
+                items={unclassifiedExpenseItems}
+                compByLedger={compUnclassifiedExpenseMap}
                 hasComparative={hasComparative}
                 drill={drill}
               />
@@ -656,6 +724,19 @@ export default async function ProfitLossPage({
           only, not that note-level detail. Profit for the year (after tax)
           is not shown here; see the Income Tax report for a separate
           estimate.
+        </p>
+      )}
+      {scheduleIII && hasUnclassifiedExpense && (
+        <p className="border-t border-border px-4 py-3 text-xs text-ink-soft">
+          <span className="font-medium text-ink">Unclassified Expenses</span> above
+          is not a Schedule III line. It lists every direct/indirect-expense
+          ledger whose role does not match Cost of Materials Consumed,
+          Purchases of Stock-in-Trade, Changes in Inventories, Employee
+          Benefits, Finance Costs, Depreciation and Amortisation, Other
+          Expenses, or Tax Expense — the only roles this report otherwise
+          knows how to place. It exists so Total Expenses always agrees with
+          the lines shown above it; each ledger listed there should be
+          reclassified into the correct head rather than left unclassified.
         </p>
       )}
     </ReportShell>
