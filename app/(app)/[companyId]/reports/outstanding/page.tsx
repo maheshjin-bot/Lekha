@@ -3,7 +3,11 @@ import { formatINR } from "@/lib/utils/currency";
 import { defaultPeriod } from "@/lib/utils/period";
 import { Badge } from "@/components/ui/Badge";
 import { ReportShell, num, td, th } from "@/components/reports/ReportShell";
-import { DrillHeadCell, DrillRow } from "@/components/reports/DrillLink";
+// Row-level drill-through to /reports/party-bills is not wired here: that
+// screen depends on a table-link helper that is not part of this change (see
+// the commit that pulled party-bills). This report still stands on its own —
+// its own real fix is bill-wise allocation replacing the FIFO guess below,
+// not navigation — and gets the drill-through back once party-bills ships.
 
 export default async function OutstandingPage({
   params,
@@ -115,25 +119,18 @@ export default async function OutstandingPage({
             <th className={th + " text-right"}>61–90</th>
             <th className={th + " text-right"}>90+</th>
             <th className={th + " text-right"}>Total</th>
-            <DrillHeadCell />
           </tr>
         </thead>
         <tbody>
           {parties.length === 0 && (
             <tr>
-              <td colSpan={8} className="px-4 py-12 text-center text-ink-faint">
+              <td colSpan={7} className="px-4 py-12 text-center text-ink-faint">
                 Nothing outstanding.
               </td>
             </tr>
           )}
           {parties.map((r) => (
-            <DrillRow
-              key={r.ledger_id}
-              href={`/${companyId}/reports/party-bills`}
-              params={{ ledger: r.ledger_id, role, as_at: asAt }}
-              label={r.ledger_name}
-              className="border-b border-border last:border-0"
-            >
+            <tr key={r.ledger_id} className="border-b border-border last:border-0">
               <td className={td + " font-medium"}>
                 {r.ledger_name}
                 {/* Whether THIS party's number above is bill-wise fact or a
@@ -159,7 +156,7 @@ export default async function OutstandingPage({
                 {formatINR(Number(r.days_over_90))}
               </td>
               <td className={num + " font-medium"}>{formatINR(Number(r.outstanding))}</td>
-            </DrillRow>
+            </tr>
           ))}
         </tbody>
         {parties.length > 0 && (
@@ -172,7 +169,6 @@ export default async function OutstandingPage({
               <td className={num}>{formatINR(sum("days_61_90"), { showZero: true })}</td>
               <td className={num}>{formatINR(overdue, { showZero: true })}</td>
               <td className={num}>{formatINR(total, { showZero: true })}</td>
-              <td className="print:hidden" />
             </tr>
           </tfoot>
         )}
