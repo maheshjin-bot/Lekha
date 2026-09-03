@@ -15,6 +15,7 @@ type Ledger = {
   opening_balance_type: string;
   is_active: boolean;
   pan: string | null;
+  tan: string | null;
   is_tds_deductee: boolean;
   default_tds_section: string | null;
   udyam_number: string | null;
@@ -44,6 +45,11 @@ type StateOption = { code: string; name: string };
 const UDYAM_PATTERN = /^UDYAM-[A-Z]{2}-[0-9]{2}-[0-9]{7}$/;
 // Mirrors app_private.is_valid_pan exactly.
 const PAN_PATTERN = /^[A-Z]{5}[0-9]{4}[A-Z]$/;
+// Mirrors app_private.is_valid_tan exactly (0148) — 4 letters, 5 digits, 1
+// letter, a fixed real TAN format, distinct from PAN's shape above. This is
+// the deductor identity a 26AS/AIS row is keyed on (Reports > TDS credit
+// match) — without it here, a customer's TAN can never be recorded at all.
+const TAN_PATTERN = /^[A-Z]{4}[0-9]{5}[A-Z]$/;
 
 // The shape half of app_private.is_valid_gstin. The check digit stays the
 // database's job — a drifting second copy would reject numbers it accepts.
@@ -152,6 +158,7 @@ export function LedgerManager({
   const [opening, setOpening] = useState("0");
   const [openingType, setOpeningType] = useState<"debit" | "credit">("debit");
   const [pan, setPan] = useState("");
+  const [tan, setTan] = useState("");
   const [isTdsDeductee, setIsTdsDeductee] = useState(false);
   const [tdsSection, setTdsSection] = useState("");
   const [isMsme, setIsMsme] = useState(false);
@@ -221,6 +228,7 @@ export function LedgerManager({
     tdsSections.find((s) => s.section_code === code)?.rate_percent;
   const udyamLooksValid = udyam.length === 0 || UDYAM_PATTERN.test(udyam);
   const panLooksValid = pan.length === 0 || PAN_PATTERN.test(pan);
+  const tanLooksValid = tan.length === 0 || TAN_PATTERN.test(tan);
   const gstinLooksValid = gstin.length === 0 || GSTIN_PATTERN.test(gstin);
   // "" here means "Regular / not set" in this screen's own dropdown, which is
   // stored as null and stays permissive — so only an explicit registered type
@@ -239,6 +247,7 @@ export function LedgerManager({
       opening_balance_amount: Number(opening) || 0,
       opening_balance_type: openingType,
       pan: pan.trim() || null,
+      tan: tan.trim() || null,
       is_tds_deductee: isTdsDeductee,
       default_tds_section: isTdsDeductee ? tdsSection || null : null,
       udyam_number: isMsme ? udyam.trim() || null : null,
@@ -272,6 +281,7 @@ export function LedgerManager({
     setName("");
     setOpening("0");
     setPan("");
+    setTan("");
     setIsTdsDeductee(false);
     setTdsSection("");
     setIsMsme(false);
@@ -303,6 +313,7 @@ export function LedgerManager({
                 <th className="px-4 py-2.5 font-medium">Ledger</th>
                 <th className="px-4 py-2.5 font-medium">Group</th>
                 <th className="px-4 py-2.5 font-medium">PAN</th>
+                <th className="px-4 py-2.5 font-medium">TAN</th>
                 {tdsOn && <th className="px-4 py-2.5 font-medium">TDS</th>}
                 {msmeOn && <th className="px-4 py-2.5 font-medium">MSME</th>}
                 {partnerRemunerationOn && <th className="px-4 py-2.5 font-medium">Sec 40(b)</th>}
@@ -318,7 +329,7 @@ export function LedgerManager({
                 <tr>
                   <td
                     colSpan={
-                      4 +
+                      5 +
                       (tdsOn ? 1 : 0) +
                       (msmeOn ? 1 : 0) +
                       (partnerRemunerationOn ? 1 : 0) +
@@ -344,6 +355,9 @@ export function LedgerManager({
                   </td>
                   <td className="px-4 py-2.5 font-mono text-xs text-ink-soft">
                     {l.pan ?? <span className="text-ink-faint">—</span>}
+                  </td>
+                  <td className="px-4 py-2.5 font-mono text-xs text-ink-soft">
+                    {l.tan ?? <span className="text-ink-faint">—</span>}
                   </td>
                   {tdsOn && (
                     <td className="px-4 py-2.5 text-ink-soft">
@@ -477,6 +491,30 @@ export function LedgerManager({
             {pan.length > 0 && !panLooksValid && (
               <span className="text-xs text-warning">
                 That doesn&rsquo;t match the PAN format (5 letters, 4 digits,
+                1 letter).
+              </span>
+            )}
+          </label>
+
+          <label className="flex flex-col gap-1.5">
+            <span className="text-sm font-medium">
+              TAN{" "}
+              <span className="font-normal text-ink-faint">
+                optional — the deductor identity a customer&rsquo;s Form
+                26AS/AIS row is matched against on Reports &rsaquo; TDS
+                credit match
+              </span>
+            </span>
+            <input
+              value={tan}
+              onChange={(e) => setTan(e.target.value.toUpperCase())}
+              maxLength={10}
+              placeholder="ABCD12345E"
+              className={field + " font-mono uppercase"}
+            />
+            {tan.length > 0 && !tanLooksValid && (
+              <span className="text-xs text-warning">
+                That doesn&rsquo;t match the TAN format (4 letters, 5 digits,
                 1 letter).
               </span>
             )}

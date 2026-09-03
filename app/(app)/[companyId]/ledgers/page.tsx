@@ -12,7 +12,7 @@ export default async function LedgersPage({
       supabase
         .from("ledgers")
         .select(
-          "id, name, group_id, opening_balance_amount, opening_balance_type, is_active, pan, is_tds_deductee, default_tds_section, udyam_number, msme_category, msme_payment_days, is_partner_remuneration, is_related_party, relationship_type, is_loan_or_deposit, sec43b_category, gst_registration_type"
+          "id, name, group_id, opening_balance_amount, opening_balance_type, is_active, pan, tan, is_tds_deductee, default_tds_section, udyam_number, msme_category, msme_payment_days, is_partner_remuneration, is_related_party, relationship_type, is_loan_or_deposit, sec43b_category, gst_registration_type"
         )
         .eq("company_id", companyId)
         .order("name"),
