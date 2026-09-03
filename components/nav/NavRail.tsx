@@ -5,6 +5,7 @@ import Link from "next/link";
 import { ChevronDown, X } from "lucide-react";
 import { cn } from "@/lib/utils/cn";
 import { SignOutButton } from "@/components/auth/SignOutButton";
+import { navEntries, navGroups as registryNavGroups } from "@/lib/nav/registry";
 
 type NavItem = { href: string; label: string };
 type NavGroup = { label: string; items: NavItem[] };
@@ -46,155 +47,42 @@ export function NavRail({
 }) {
   const base = `/${companyId}`;
 
-  const groups: NavGroup[] = [
-    {
-      label: "Transactions",
-      items: [
-        { href: `${base}/vouchers/new`, label: "New voucher" },
-        { href: `${base}/invoices/new`, label: "New invoice" },
-        { href: `${base}/pos`, label: "Quick billing" },
-        { href: `${base}/import`, label: "Import" },
-        { href: `${base}/capture`, label: "Document inbox" },
-        // Not company-scoped: /scan picks its own company on the device and
-        // deliberately carries none of this shell. It is listed here anyway
-        // because otherwise nobody discovers it — the people who USE it are
-        // handed the URL, but the person who sets it up looks for it here.
-        { href: `/scan`, label: "Scan on a phone" },
-        { href: `${base}/orders`, label: "Orders" },
-        { href: `${base}/forex`, label: "Foreign currency" },
-        { href: `${base}/job-work`, label: "Job work" },
-        { href: `${base}/manufacturing`, label: "Manufacturing" },
-        { href: `${base}/delivery-challans`, label: "Delivery challans" },
-        { href: `${base}/exim`, label: "EXIM shipments" },
-        { href: `${base}/recurring-vouchers`, label: "Recurring vouchers" },
-        { href: `${base}/service-advances`, label: "Service advances (GST)" },
-        { href: `${base}/eway-bill`, label: "E-way bills" },
-        { href: `${base}/einvoice`, label: "E-invoices" },
-        { href: `${base}/signature-requests`, label: "Signature requests" },
-        { href: `${base}/stock-verification`, label: "Stock verification" },
-        { href: `${base}/approvals`, label: "Approvals" },
-      ],
-    },
-    {
-      label: "Masters",
-      items: [
-        { href: `${base}/ledgers`, label: "Ledgers" },
-        { href: `${base}/items`, label: "Items" },
-        { href: `${base}/price-lists`, label: "Price lists" },
-        { href: `${base}/discount-agreements`, label: "Discount agreements" },
-        { href: `${base}/fixed-assets`, label: "Fixed assets" },
-        { href: `${base}/cost-centres`, label: "Cost centres" },
-        { href: `${base}/batches`, label: "Batches & serials" },
-        { href: `${base}/closing-stock`, label: "Closing stock" },
-        { href: `${base}/depreciation`, label: "Depreciation" },
-        { href: `${base}/budgets`, label: "Budgets" },
-        { href: `${base}/notices`, label: "Notices" },
-        { href: `${base}/tax-payments`, label: "Tax payments" },
-        { href: `${base}/godowns`, label: "Godowns" },
-        { href: `${base}/employees`, label: "Employees" },
-        { href: `${base}/employees/perquisites`, label: "Perquisites" },
-        { href: `${base}/leave`, label: "Leave" },
-        { href: `${base}/fnf-settlement`, label: "Full & final settlement" },
-        { href: `${base}/directors`, label: "Directors & KMP" },
-        { href: `${base}/significant-beneficial-owners`, label: "Significant beneficial owners" },
-        { href: `${base}/meetings`, label: "Meetings" },
-        { href: `${base}/share-capital`, label: "Share capital" },
-        { href: `${base}/charges`, label: "Charges (CHG-1/CHG-4)" },
-        { href: `${base}/sec186-investments`, label: "Sec 186 investments" },
-        { href: `${base}/dsc-register`, label: "DSC register" },
-        { href: `${base}/filing-register`, label: "Filing register" },
-      ],
-    },
-    {
-      label: "GST",
-      items: [
-        { href: `${base}/registrations`, label: "Registrations" },
-        { href: `${base}/reports/gst-registers`, label: "Registers" },
-        { href: `${base}/reports/gst-setoff`, label: "GST set-off" },
-        { href: `${base}/reports/itc-180day-reversal`, label: "ITC 180-day reversal" },
-        { href: `${base}/reports/gstr2b-match`, label: "GSTR-2B match" },
-        { href: `${base}/reports/gstr3b-prep`, label: "GSTR-3B prep" },
-        { href: `${base}/reports/gst-refunds`, label: "GST refunds" },
-        { href: `${base}/reports/gst-tds-tcs-suffered`, label: "GST TDS/TCS suffered" },
-      ],
-    },
-    {
-      label: "Reports",
-      items: [
-        { href: `${base}/reports/daybook`, label: "Daybook" },
-        { href: `${base}/reports/sales-invoices`, label: "Sales invoices" },
-        { href: `${base}/reports/purchase-invoices`, label: "Purchase invoices" },
-        { href: `${base}/reports/sales-returns`, label: "Sales returns" },
-        { href: `${base}/reports/purchase-returns`, label: "Purchase returns" },
-        { href: `${base}/reports/ledger-statement`, label: "Ledger statement" },
-        { href: `${base}/reports/trial-balance`, label: "Trial balance" },
-        { href: `${base}/reports/profit-loss`, label: "Profit & loss" },
-        { href: `${base}/reports/balance-sheet`, label: "Balance sheet" },
-        { href: `${base}/reports/cash-flow`, label: "Cash flow" },
-        { href: `${base}/reports/stock`, label: "Stock" },
-        { href: `${base}/reports/stock-ageing`, label: "Stock ageing" },
-        { href: `${base}/reports/stock-expiry`, label: "Stock expiry" },
-        { href: `${base}/reports/outstanding`, label: "Outstanding" },
-        { href: `${base}/reports/msme`, label: "MSME dues" },
-        { href: `${base}/reports/stock-statement`, label: "Stock statement" },
-        { href: `${base}/reports/cost-centre-pnl`, label: "Cost centre P&L" },
-        { href: `${base}/reports/budget-variance`, label: "Budget variance" },
-        { href: `${base}/reports/cma-ratios`, label: "CMA & ratios" },
-        { href: `${base}/reports/tally-export`, label: "Export to Tally" },
-        { href: `${base}/reports/itc-04-prep`, label: "ITC-04 prep" },
-        { href: `${base}/reports/gstr1-summary`, label: "GSTR-1 summary" },
-        { href: `${base}/reports/isd-distribution`, label: "ISD distribution" },
-        { href: `${base}/reports/tds-summary`, label: "TDS summary" },
-        { href: `${base}/reports/tds-threshold-status`, label: "TDS threshold status" },
-        { href: `${base}/reports/tds-interest-and-fees`, label: "TDS interest & 234E fee" },
-        { href: `${base}/reports/tds-return-24q`, label: "TDS return 24Q" },
-        { href: `${base}/reports/tds-return-26q`, label: "TDS return 26Q" },
-        { href: `${base}/reports/tds-return-27q`, label: "TDS return 27Q" },
-        { href: `${base}/reports/tds-return-27eq`, label: "TDS return 27EQ (TCS)" },
-        { href: `${base}/reports/form16-partb`, label: "Form 16 Part B" },
-        { href: `${base}/reports/tds-credit-match`, label: "26AS/AIS/TIS match" },
-        { href: `${base}/lower-deduction`, label: "Sec 197 certificates" },
-        { href: `${base}/reports/tax-depreciation`, label: "Tax depreciation" },
-        { href: `${base}/deferred-tax`, label: "Deferred tax" },
-        { href: `${base}/reports/income-tax`, label: "Income tax" },
-        { href: `${base}/reports/advance-tax`, label: "Advance tax" },
-        { href: `${base}/reports/itr-prep`, label: "ITR prep" },
-        { href: `${base}/reports/tax-audit`, label: "Tax audit" },
-        { href: `${base}/reports/common-credit-apportionment`, label: "Common credit (Rules 42/43)" },
-        { href: `${base}/reports/notes-to-accounts`, label: "Notes to accounts" },
-        { href: `${base}/reports/discount-agreement-coverage`, label: "Discount agreement coverage" },
-        { href: `${base}/reports/gstr9-workpaper`, label: "GSTR-9/9C workpaper" },
-        { href: `${base}/reports/dpt3-content`, label: "DPT-3 content" },
-        { href: `${base}/reports/aoc4-xbrl`, label: "AOC-4 XBRL" },
-        { href: `${base}/reports/payroll-register`, label: "Payroll register" },
-        { href: `${base}/reports/payroll-registers`, label: "Payroll registers (muster/wage)" },
-        { href: `${base}/reports/pt-liability`, label: "Professional tax by state" },
-        { href: `${base}/reports/statutory-bonus`, label: "Statutory bonus" },
-        { href: `${base}/reports/gratuity`, label: "Gratuity" },
-        { href: `${base}/reports/pf-ecr`, label: "PF ECR" },
-        { href: `${base}/reports/esi-mc`, label: "ESI MC" },
-        { href: `${base}/reports/compliance-calendar`, label: "Calendar" },
-      ],
-    },
-  ];
+  /**
+   * Every href in lib/nav/registry.ts carries the literal token ":companyId"
+   * in place of this rail's own `${base}` interpolation (see that file's own
+   * header comment for why: one place to add a link, searchable by a future
+   * command palette). Resolving a real link is a plain string substitution
+   * back to `base` — NOT to the bare companyId, because the token itself
+   * carries no leading slash (registry hrefs read literally ":companyId/…",
+   * so substituting the raw id would drop the leading "/" the old inline
+   * `${base}/…` template always had). The two routes that are NOT
+   * company-scoped (/scan, /security) simply contain no such token, so this
+   * replace is a harmless no-op for them, exactly as registry.ts documents.
+   */
+  const resolveHref = (href: string) => href.replace(":companyId", base);
 
-  const bottomItems: NavItem[] = [
-    { href: `${base}/reconciliation`, label: "Reconcile" },
-    { href: `${base}/notifications`, label: "Notifications" },
-    { href: `${base}/audit-trail`, label: "Audit trail" },
-    { href: `${base}/year-end`, label: "Year-end" },
-    { href: `${base}/settings`, label: "Settings" },
-    { href: `${base}/settings/team`, label: "Team" },
-    { href: `${base}/settings/employer-registrations`, label: "Employer registrations" },
-    { href: `${base}/settings/numbering`, label: "Voucher numbering" },
-    { href: `${base}/whatsapp-numbers`, label: "WhatsApp numbers" },
-    { href: `${base}/settings/print-template`, label: "Invoice design" },
-    { href: `${base}/settings/backup`, label: "Backup / export" },
-    { href: `${base}/settings/api-keys`, label: "API keys" },
-    // Not under /[companyId]: a second factor belongs to the person, not to a
-    // company, so someone working across six companies enrols once.
-    { href: `/security`, label: "Account security" },
-  ];
+  // The four accordions, resolved straight off the registry — same labels,
+  // same items, same order this file used to hard-code (registry.ts's own
+  // header guarantees navGroups reproduces NavRail's pre-registry order and
+  // membership exactly).
+  const groups: NavGroup[] = registryNavGroups.map((g) => ({
+    label: g.label,
+    items: g.items.map((i) => ({ href: resolveHref(i.href), label: i.label })),
+  }));
+
+  // Overview and the bottom account/settings list are the registry entries
+  // that carry no `group` at all — registry.ts's own header explains why
+  // (neither renders inside an accordion). Overview is the one such entry
+  // whose href is exactly the bare company root; everything else without a
+  // group is the old 13-item bottomItems list, now with two more routes
+  // appended at the end: /allocations and /account-groups, real screens that
+  // existed on disk but that NavRail never linked to before registry.ts
+  // catalogued them as "orphans". Appending (rather than interleaving) keeps
+  // the original 13 links in their exact original order and position.
+  const overviewEntry = navEntries.find((e) => !e.group && e.href === ":companyId");
+  const bottomItems: NavItem[] = navEntries
+    .filter((e) => !e.group && e.href !== ":companyId")
+    .map((e) => ({ href: resolveHref(e.href), label: e.label }));
 
   const [openGroup, setOpenGroup] = useState<string | null>(() => {
     const active = groups.find((g) => g.items.some((i) => isActive(activePath, i.href)));
@@ -264,7 +152,13 @@ export function NavRail({
         </div>
 
         <div className="flex-1 overflow-y-auto px-2.5 py-3">
-        <NavLink href={base} label="Overview" active={isActive(activePath, base)} />
+        {overviewEntry && (
+          <NavLink
+            href={resolveHref(overviewEntry.href)}
+            label={overviewEntry.label}
+            active={isActive(activePath, resolveHref(overviewEntry.href))}
+          />
+        )}
 
         {groups.map((group) => {
           const groupActive = group.items.some((i) => isActive(activePath, i.href));
@@ -302,8 +196,8 @@ export function NavRail({
           {bottomItems.map((item) => (
             <NavLink
               key={item.href}
-              href={item.href}
               label={item.label}
+              href={item.href}
               active={isActive(activePath, item.href)}
             />
           ))}

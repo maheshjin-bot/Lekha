@@ -1,8 +1,11 @@
 import Link from "next/link";
+import { Fragment } from "react";
 import { createClient } from "@/lib/supabase/server";
+import { cn } from "@/lib/utils/cn";
 import { formatINR } from "@/lib/utils/currency";
 import { defaultPeriod, comparativePeriod, periodRangeLabel } from "@/lib/utils/period";
 import { ReportShell, num, td, th } from "@/components/reports/ReportShell";
+import { DrillHeadCell, DrillRow, type CarrySource } from "@/components/reports/DrillLink";
 
 type PLRow = { nature: string; group_name: string; ledger_name: string; ledger_role: string; amount: number };
 
@@ -41,6 +44,42 @@ function formatVariance(pct: number | null): string {
   return `${sign}${pct.toFixed(1)}%`;
 }
 
+/**
+ * Everything a ledger row needs to become a link into its own statement.
+ *
+ * Bundled into one object rather than five separate props because every Block
+ * below takes it and passes it straight through untouched — a Block is not
+ * allowed to reinterpret the period it drills into.
+ */
+type DrillContext = {
+  companyId: string;
+  /** The resolved period on screen, passed to the destination EXPLICITLY.
+   * Carrying ?from/?to alone is not enough: when the user has not set them,
+   * this page's period comes from get_company_profile's financial-year start
+   * month while the ledger statement re-derives its own from `companies`.
+   * Those agree today, but a drill that lands on a different window than the
+   * figure that was clicked is exactly the silent bug drilling is meant to
+   * remove, so the dates travel as real values instead of as an assumption. */
+  from: string;
+  to: string;
+  /** This page's own query string, so ?branch survives the drill. */
+  carry: CarrySource;
+  /** ledger name (lowercased) -> ledgers.id. get_profit_and_loss returns no
+   * ledger_id at all — it groups by name — but the ledger statement is
+   * addressed by id, so the id has to be looked up on this side. */
+  ledgerIdByName: Map<string, string>;
+};
+
+/**
+ * The trailing cell that keeps a NON-drillable row (a subtotal, a ledger whose
+ * id could not be resolved) aligned with <DrillRow>'s chevron column. Marked
+ * print:hidden exactly as DrillHeadCell and DrillRow's own chevron cell are, so
+ * the whole column drops cleanly out of a printed statement.
+ */
+function DrillSpacer() {
+  return <td className={cn(td, "w-px px-2 print:hidden")} />;
+}
+
 // Declared at module scope, not inside the page component: both the simple
 // and schedule_iii layouts below reuse this for a different nature each, and
 // a component re-created on every render (react-hooks/static-components)
@@ -57,16 +96,25 @@ function formatVariance(pct: number | null): string {
 // treats any nil figure elsewhere). Without the union, a ledger that zeroed
 // out this period would silently disappear from the comparative TOTAL too,
 // understating the prior period's real total.
+//
+// A Block renders three levels, which is the whole point of it: the statutory
+// line (Revenue from Operations, Employee Benefits Expense, Indirect Expenses
+// …), then the account groups that line is made of, then the ledgers inside
+// each group — each of which opens its own statement. The group level replaced
+// a plain "Group" column: the same fact, but positioned so the reader can see
+// which subtotal a ledger rolls into instead of re-adding the column by eye.
 function Block({
   label,
   items,
   compByLedger,
   hasComparative,
+  drill,
 }: {
   label: string;
   items: PLRow[];
   compByLedger: Map<string, { group_name: string; amount: number }>;
   hasComparative: boolean;
+  drill: DrillContext;
 }) {
   const currLedgers = new Set(items.map((r) => r.ledger_name));
   const compOnly = hasComparative
@@ -82,12 +130,30 @@ function Block({
     ? rows.reduce((n, r) => n + (compByLedger.get(r.ledger_name)?.amount ?? 0), 0)
     : undefined;
 
+  // Grouped by account group in the order the rows arrived, which is the RPC's
+  // own `order by nature, group_name, ledger_name` — so groups come out
+  // alphabetically and a comp-only group (one that posted last period and not
+  // this one) lands after the live ones rather than being dropped.
+  const groups = new Map<string, typeof rows>();
+  for (const r of rows) {
+    const existing = groups.get(r.group_name);
+    if (existing) existing.push(r);
+    else groups.set(r.group_name, [r]);
+  }
+
+  // The group level is skipped in exactly one case: this line is made of a
+  // single group that is ALSO named the same as the line ("Indirect Expenses"
+  // under "Indirect Expenses", which is every simple-format company). Rendering
+  // it there would repeat the line's own label and its own total one row later
+  // and say nothing. Under Schedule III the names differ by construction
+  // (Employee Benefits Expense is drawn from the Indirect Expenses group), so
+  // the group row stays and carries real information.
+  const showGroups = groups.size > 1 || !groups.has(label);
+
   return (
     <>
       <tr className="bg-bg">
-        <td className={td + " font-semibold"} colSpan={2}>
-          {label}
-        </td>
+        <td className={td + " font-semibold"}>{label}</td>
         <td className={num + " font-semibold"}>{formatINR(currTotal, { showZero: true })}</td>
         <td className={num + " font-semibold"}>
           {hasComparative ? formatINR(compTotal ?? 0, { showZero: true }) : "—"}
@@ -95,17 +161,73 @@ function Block({
         <td className={num + " font-semibold text-ink-soft"}>
           {hasComparative ? formatVariance(variancePct(currTotal, compTotal)) : "—"}
         </td>
+        <DrillSpacer />
       </tr>
-      {rows.map((r, i) => {
-        const comp = compByLedger.get(r.ledger_name)?.amount;
+      {[...groups.entries()].map(([groupName, groupRows]) => {
+        // Both subtotals are re-derived from this group's own rows, never from
+        // a slice of the line total, so a group subtotal and the line header
+        // above it can only disagree if the rows themselves disagree.
+        const groupCurr = groupRows.reduce((n, r) => n + Number(r.amount), 0);
+        const groupComp = hasComparative
+          ? groupRows.reduce((n, r) => n + (compByLedger.get(r.ledger_name)?.amount ?? 0), 0)
+          : undefined;
+
         return (
-          <tr key={i} className="border-b border-border">
-            <td className={td + " pl-8"}>{r.ledger_name}</td>
-            <td className={td + " text-ink-soft "}>{r.group_name}</td>
-            <td className={num}>{formatINR(Number(r.amount))}</td>
-            <td className={num + " text-ink-soft"}>{hasComparative ? formatINR(comp ?? 0) : "—"}</td>
-            <td className={num + " text-ink-faint"}>{hasComparative ? formatVariance(variancePct(Number(r.amount), comp)) : "—"}</td>
-          </tr>
+          <Fragment key={groupName}>
+            {showGroups && (
+              <tr key={`group-${groupName}`} className="bg-surface-2/40">
+                <td className={td + " pl-8 font-medium text-ink-soft"}>{groupName}</td>
+                <td className={num + " font-medium text-ink-soft"}>
+                  {formatINR(groupCurr, { showZero: true })}
+                </td>
+                <td className={num + " font-medium text-ink-soft"}>
+                  {hasComparative ? formatINR(groupComp ?? 0, { showZero: true }) : "—"}
+                </td>
+                <td className={num + " font-medium text-ink-faint"}>
+                  {hasComparative ? formatVariance(variancePct(groupCurr, groupComp)) : "—"}
+                </td>
+                <DrillSpacer />
+              </tr>
+            )}
+            {groupRows.map((r) => {
+              const comp = compByLedger.get(r.ledger_name)?.amount;
+              const ledgerId = drill.ledgerIdByName.get(r.ledger_name.toLowerCase());
+              const cells = (
+                <>
+                  <td className={cn(td, showGroups ? "pl-12" : "pl-8")}>{r.ledger_name}</td>
+                  <td className={num}>{formatINR(Number(r.amount))}</td>
+                  <td className={num + " text-ink-soft"}>
+                    {hasComparative ? formatINR(comp ?? 0) : "—"}
+                  </td>
+                  <td className={num + " text-ink-faint"}>
+                    {hasComparative ? formatVariance(variancePct(Number(r.amount), comp)) : "—"}
+                  </td>
+                </>
+              );
+
+              // No id means the name in the statement matched no ledger row —
+              // it should be impossible (the RPC reads ledgers.name, and
+              // ledgers carries a unique index on lower(name) per company), but
+              // a report must still render the figure rather than crash or drop
+              // the line. It simply loses its chevron.
+              return ledgerId ? (
+                <DrillRow
+                  key={`${groupName}-${r.ledger_name}`}
+                  href={`/${drill.companyId}/reports/ledger-statement`}
+                  params={{ ledger: ledgerId, from: drill.from, to: drill.to }}
+                  carry={drill.carry}
+                  label={r.ledger_name}
+                >
+                  {cells}
+                </DrillRow>
+              ) : (
+                <tr key={`${groupName}-${r.ledger_name}`}>
+                  {cells}
+                  <DrillSpacer />
+                </tr>
+              );
+            })}
+          </Fragment>
         );
       })}
     </>
@@ -145,7 +267,7 @@ export default async function ProfitLossPage({
   // vs a same-length preceding window for a custom range).
   const comparative = comparativePeriod(period.from, period.to, startMonth);
 
-  const [{ data: branches }, { data: companyRow }] = await Promise.all([
+  const [{ data: branches }, { data: companyRow }, { data: ledgerRows }] = await Promise.all([
     supabase
       .from("branches")
       .select("id, code, name")
@@ -153,9 +275,23 @@ export default async function ProfitLossPage({
       .eq("is_active", true)
       .order("is_head_office", { ascending: false }),
     supabase.from("companies").select("book_beginning_date").eq("id", companyId).single(),
+    // Only needed to turn a statement row into a link: get_profit_and_loss
+    // groups by ledger NAME and returns no id (read its definition — the
+    // select list is nature, group name, ledger name, role, amount). Inactive
+    // ledgers are deliberately included: a ledger that was closed mid-year
+    // still has postings in the period and still has a statement worth opening.
+    supabase.from("ledgers").select("id, name").eq("company_id", companyId),
   ]);
   const branchId = typeof sp.branch === "string" ? sp.branch : undefined;
   const bookBeginning = companyRow?.book_beginning_date as string | undefined;
+
+  // Keyed on the lowercased name because ledgers enforces uniqueness that way
+  // (unique index ledgers_company_name_idx on (company_id, lower(name))) — the
+  // same reason the RPC's grouping by name cannot silently fuse two ledgers
+  // into one row.
+  const ledgerIdByName = new Map<string, string>(
+    (ledgerRows ?? []).map((l) => [l.name.toLowerCase(), l.id])
+  );
 
   // A first-year company has no prior period at all — the comparative range
   // ends entirely before the books began, so get_profit_and_loss would
@@ -247,6 +383,17 @@ export default async function ProfitLossPage({
 
   const selectedBranch = (branches ?? []).find((b) => b.id === branchId);
 
+  // Built once and handed to every Block: the whole point is that a ledger
+  // opened from Revenue from Operations and one opened from Other Expenses
+  // land on the same period, not on two different defaults.
+  const drill: DrillContext = {
+    companyId,
+    from: period.from,
+    to: period.to,
+    carry: sp,
+    ledgerIdByName,
+  };
+
   return (
     <ReportShell
       title="Profit &amp; Loss"
@@ -289,12 +436,14 @@ export default async function ProfitLossPage({
         <thead>
           <tr className="border-b border-border text-left">
             <th className={th}>Particulars</th>
-            <th className={th}>Group</th>
             <th className={th + " text-right"}>{periodRangeLabel(period.from, period.to)}</th>
             <th className={th + " text-right"}>
               {hasComparative ? periodRangeLabel(comparative.from, comparative.to) : "Previous period"}
             </th>
             <th className={th + " text-right"}>Change</th>
+            {/* One head cell per <DrillRow> trailing cell; every non-drillable
+                row below pays for it with a <DrillSpacer /> instead. */}
+            <DrillHeadCell />
           </tr>
         </thead>
         <tbody>
@@ -317,18 +466,18 @@ export default async function ProfitLossPage({
                 items={section("direct_income")}
                 compByLedger={compSection("direct_income")}
                 hasComparative={hasComparative}
+                drill={drill}
               />
               <Block
                 label="Other Income"
                 items={section("indirect_income")}
                 compByLedger={compSection("indirect_income")}
                 hasComparative={hasComparative}
+                drill={drill}
               />
               {(all.length > 0 || compAll.length > 0) && (
                 <tr className="border-y-2 border-border-strong bg-surface-2">
-                  <td className={td + " font-semibold"} colSpan={2}>
-                    Total Income
-                  </td>
+                  <td className={td + " font-semibold"}>Total Income</td>
                   <td className={num + " font-semibold"}>
                     {formatINR(totalIncome, { showZero: true })}
                   </td>
@@ -338,6 +487,7 @@ export default async function ProfitLossPage({
                   <td className={num + " font-semibold text-ink-soft"}>
                     {hasComparative ? formatVariance(variancePct(totalIncome, compTotalIncome)) : "—"}
                   </td>
+                  <DrillSpacer />
                 </tr>
               )}
               {/* Schedule III's own seven-head "Expenses" break-up (0210),
@@ -351,6 +501,7 @@ export default async function ProfitLossPage({
                   items={headSection(role)}
                   compByLedger={compHeadSection(role)}
                   hasComparative={hasComparative}
+                  drill={drill}
                 />
               ))}
               {/* tax_expense (0210): deliberately NOT one of the seven heads
@@ -365,12 +516,11 @@ export default async function ProfitLossPage({
                 items={headSection("tax_expense")}
                 compByLedger={compHeadSection("tax_expense")}
                 hasComparative={hasComparative}
+                drill={drill}
               />
               {(all.length > 0 || compAll.length > 0) && (
                 <tr className="border-y-2 border-border-strong bg-surface-2">
-                  <td className={td + " font-semibold"} colSpan={2}>
-                    Total Expenses
-                  </td>
+                  <td className={td + " font-semibold"}>Total Expenses</td>
                   <td className={num + " font-semibold"}>
                     {formatINR(totalExpenses, { showZero: true })}
                   </td>
@@ -380,6 +530,7 @@ export default async function ProfitLossPage({
                   <td className={num + " font-semibold text-ink-soft"}>
                     {hasComparative ? formatVariance(variancePct(totalExpenses, compTotalExpenses)) : "—"}
                   </td>
+                  <DrillSpacer />
                 </tr>
               )}
             </>
@@ -390,18 +541,18 @@ export default async function ProfitLossPage({
                 items={section("direct_income")}
                 compByLedger={compSection("direct_income")}
                 hasComparative={hasComparative}
+                drill={drill}
               />
               <Block
                 label="Direct Expenses"
                 items={section("direct_expense")}
                 compByLedger={compSection("direct_expense")}
                 hasComparative={hasComparative}
+                drill={drill}
               />
               {(all.length > 0 || compAll.length > 0) && (
                 <tr className="border-y-2 border-border-strong bg-surface-2">
-                  <td className={td + " font-semibold"} colSpan={2}>
-                    Gross Profit
-                  </td>
+                  <td className={td + " font-semibold"}>Gross Profit</td>
                   <td className={num + " font-semibold"}>
                     {formatINR(grossProfit, { showZero: true })}
                   </td>
@@ -411,6 +562,7 @@ export default async function ProfitLossPage({
                   <td className={num + " font-semibold text-ink-soft"}>
                     {hasComparative ? formatVariance(variancePct(grossProfit, compGrossProfit)) : "—"}
                   </td>
+                  <DrillSpacer />
                 </tr>
               )}
               <Block
@@ -418,12 +570,14 @@ export default async function ProfitLossPage({
                 items={section("indirect_income")}
                 compByLedger={compSection("indirect_income")}
                 hasComparative={hasComparative}
+                drill={drill}
               />
               <Block
                 label="Indirect Expenses"
                 items={section("indirect_expense")}
                 compByLedger={compSection("indirect_expense")}
                 hasComparative={hasComparative}
+                drill={drill}
               />
             </>
           )}
@@ -431,7 +585,7 @@ export default async function ProfitLossPage({
         {(all.length > 0 || compAll.length > 0) && (
           <tfoot>
             <tr className="border-t-2 border-border-strong bg-bg">
-              <td className="px-4 py-3 font-semibold" colSpan={2}>
+              <td className="px-4 py-3 font-semibold">
                 {scheduleIII ? "Profit Before Tax" : netProfit >= 0 ? "Net Profit" : "Net Loss"}
               </td>
               <td className="px-4 py-3 text-right font-semibold tabular-nums font-mono">
@@ -449,17 +603,26 @@ export default async function ProfitLossPage({
               <td className="px-4 py-3 text-right font-semibold tabular-nums font-mono text-ink-soft">
                 {hasComparative ? formatVariance(variancePct(netProfit, compNetProfit)) : "—"}
               </td>
+              <td className="w-px px-2 print:hidden" />
             </tr>
           </tfoot>
         )}
       </table>
       {selectedBranch && (
-        <p className="border-t border-border px-4 py-3 text-xs text-ink-faint">
-          Showing {selectedBranch.name} only — income and expense lines posted directly
-          to this branch. If any voucher ever splits its own lines across more than one
-          branch (uncommon; every voucher in this company today stays within one), this
-          branch&rsquo;s own total can differ from its share of the whole-company figure.
-        </p>
+        <>
+          <p className="border-t border-border px-4 py-3 text-xs text-ink-faint">
+            Showing {selectedBranch.name} only — income and expense lines posted directly
+            to this branch. If any voucher ever splits its own lines across more than one
+            branch (uncommon; every voucher in this company today stays within one), this
+            branch&rsquo;s own total can differ from its share of the whole-company figure.
+          </p>
+          <p className="border-t border-border px-4 py-3 text-xs text-ink-faint">
+            Opening a ledger from a row above carries this branch in the link, but the
+            Ledger Statement report does not filter by branch yet — the statement it
+            opens covers every branch, so its closing figure can exceed the branch
+            figure you clicked.
+          </p>
+        </>
       )}
       {!hasComparative && (
         <p className="border-t border-border px-4 py-3 text-xs text-ink-faint">

@@ -1,8 +1,11 @@
 import Link from "next/link";
+import { ChevronDown } from "lucide-react";
 import { createClient } from "@/lib/supabase/server";
 import { formatINR } from "@/lib/utils/currency";
 import { defaultPeriod, financialYearStart } from "@/lib/utils/period";
+import { cn } from "@/lib/utils/cn";
 import { ReportShell, num, td, th } from "@/components/reports/ReportShell";
+import { DrillRow } from "@/components/reports/DrillLink";
 
 const NATURE_LABEL: Record<string, string> = {
   capital: "Capital Account",
@@ -147,16 +150,47 @@ export default async function BalanceSheetPage({
     to: typeof sp.as_at === "string" ? sp.as_at : undefined,
   });
 
-  const [{ data: branches }, { data: companyRow }] = await Promise.all([
-    supabase
-      .from("branches")
-      .select("id, code, name")
-      .eq("company_id", companyId)
-      .eq("is_active", true)
-      .order("is_head_office", { ascending: false }),
-    supabase.from("companies").select("book_beginning_date").eq("id", companyId).single(),
-  ]);
+  const [{ data: branches }, { data: companyRow }, { data: groupRows }, { data: ledgerRows }] =
+    await Promise.all([
+      supabase
+        .from("branches")
+        .select("id, code, name")
+        .eq("company_id", companyId)
+        .eq("is_active", true)
+        .order("is_head_office", { ascending: false }),
+      supabase.from("companies").select("book_beginning_date").eq("id", companyId).single(),
+      // Fetched for the group-drill feature below. get_balance_sheet (unlike
+      // get_trial_balance) returns no id at all -- only nature/group_name/
+      // ledger_name as plain text -- so a real account_groups.id and
+      // ledgers.id have to be recovered client-side by matching on name,
+      // same as the ledgers list page (app/(app)/[companyId]/ledgers) already
+      // does for its own group picker: two flat queries, joined in JS,
+      // rather than one PostgREST embed.
+      supabase.from("account_groups").select("id, name, nature").eq("company_id", companyId),
+      supabase.from("ledgers").select("id, name, group_id").eq("company_id", companyId),
+    ]);
   const branchId = typeof sp.branch === "string" ? sp.branch : undefined;
+
+  // (nature, group_name) -> the real account_groups.id, and (nature,
+  // group_name, ledger_name) -> the real ledgers.id -- the exact same
+  // tuple the comparativeIndex below already treats as a stable identity
+  // for a ledger, just extended one level to reach the group and ledger
+  // themselves. Verified against a real company (Bharat Industries
+  // Limited, 17 ledger rows) that every current-period row resolves
+  // cleanly; a row that somehow doesn't match still renders further down,
+  // just without a group toggle or a drill link, rather than disappearing.
+  const groupById = new Map((groupRows ?? []).map((g) => [g.id, g] as const));
+  const groupIdByKey = new Map<string, string>();
+  for (const g of groupRows ?? []) {
+    groupIdByKey.set(`${g.nature}|${g.name}`, g.id);
+  }
+  const ledgerIdByKey = new Map<string, string>();
+  for (const l of ledgerRows ?? []) {
+    const g = groupById.get(l.group_id);
+    if (!g) continue;
+    ledgerIdByKey.set(`${g.nature}|${g.name}|${l.name}`, l.id);
+  }
+  const statementHref = `/${companyId}/reports/ledger-statement`;
 
   // The balance sheet reads every ledger CUMULATIVELY from the day the books
   // began (get_balance_sheet -> ledger_opening_signed, which sums all entries
@@ -305,6 +339,40 @@ export default async function BalanceSheetPage({
   const difference = total("assets") - total("liabilities");
   const balanced = Math.abs(difference) < 0.005;
 
+  // Which account groups are currently expanded to show their ledgers —
+  // Tally's Shift+Enter, done with a plain <Link> and a searchParam instead
+  // of client state, so this stays a Server Component with no hooks. A
+  // single flat set shared by both sides (not one per sideKey): a real
+  // account_groups.id is a UUID, so a liabilities-side group can never
+  // collide with an assets-side one, and sharing means a link built for one
+  // side's group never accidentally disturbs the other side's expand state.
+  const expandedGroupIds = new Set(
+    typeof sp.expand === "string" && sp.expand.trim() !== "" ? sp.expand.split(",") : []
+  );
+
+  // Builds the href that flips ONE group's membership in ?expand=, keeping
+  // every other query param (?as_at, ?branch, and anything this page does
+  // not itself know about) exactly as it stands. Re-deriving from `sp`
+  // rather than the branch-switch links' bare `href="?branch=..."` pattern
+  // further up this file on purpose: those two links only ever need to set
+  // branch/clear everything else, but a group toggle must NOT silently reset
+  // the as-at date or branch filter the reader is already looking at — that
+  // is the same "carrying the period" discipline DrillLink's own header
+  // documents, applied here to an in-page toggle rather than a drill-out.
+  const toggleExpandHref = (groupId: string): string => {
+    const params = new URLSearchParams();
+    for (const [key, value] of Object.entries(sp)) {
+      if (key === "expand" || typeof value !== "string" || value === "") continue;
+      params.set(key, value);
+    }
+    const next = expandedGroupIds.has(groupId)
+      ? [...expandedGroupIds].filter((id) => id !== groupId)
+      : [...expandedGroupIds, groupId];
+    if (next.length > 0) params.set("expand", next.join(","));
+    const qs = params.toString();
+    return qs ? `?${qs}` : "?";
+  };
+
   // Display-only renaming for Schedule III — the same nature/account-group
   // data, just Schedule III's own line-item names. 'capital' only ever
   // shows as a leftover row (see SCHEDULE_III_PRESENT_ONLY above), so it is
@@ -358,16 +426,136 @@ export default async function BalanceSheetPage({
     const comparativeOf = (r: BsRow) =>
       comparativeIndex.get(`${r.nature}|${r.group_name}|${r.ledger_name}`) ?? 0;
 
-    // One row of a nested per-ledger table: name, this year, comparative.
-    const ledgerRow = (r: BsRow, i: number) => (
-      <tr key={i}>
-        <td className="py-0.5 pl-4 text-ink-soft">{r.ledger_name}</td>
-        <td className="py-0.5 text-right tabular-nums font-mono">{formatINR(Number(r.amount))}</td>
-        <td className="py-0.5 text-right tabular-nums font-mono text-ink-faint">
-          {hasComparative ? formatINR(comparativeOf(r)) : "—"}
-        </td>
-      </tr>
-    );
+    // One row of a nested per-ledger table: name, this year, comparative —
+    // and, when this exact (nature, group_name, ledger_name) resolved to a
+    // real ledgers.id above, a DrillRow out to that ledger's own statement
+    // rather than a dead <tr>. `from`/`to` are pinned to bookBeginning..
+    // period.to rather than left to carry() to pick up: the balance sheet
+    // itself reads every ledger CUMULATIVELY since the books began (see the
+    // page-level comment above bookBeginning), so a statement opened from
+    // any narrower window would show a different closing figure than the
+    // one just clicked — the same "the destination must resolve its own
+    // period explicitly" rule DrillLink's header documents for any report
+    // whose period is not already in ?from/?to.
+    const ledgerRow = (r: BsRow, i: number) => {
+      const ledgerId = ledgerIdByKey.get(`${r.nature}|${r.group_name}|${r.ledger_name}`);
+      const cells = (
+        <>
+          <td className="py-0.5 pl-4 text-ink-soft">{r.ledger_name}</td>
+          <td className="py-0.5 text-right tabular-nums font-mono">{formatINR(Number(r.amount))}</td>
+          <td className="py-0.5 text-right tabular-nums font-mono text-ink-faint">
+            {hasComparative ? formatINR(comparativeOf(r)) : "—"}
+          </td>
+        </>
+      );
+      if (!ledgerId) {
+        // get_balance_sheet returns no ledger id at all (unlike
+        // get_trial_balance), so this is recovered by matching names — see
+        // the ledgerIdByKey comment above. A miss should be effectively
+        // impossible for a current-period row (verified live: 0 of 17 for a
+        // real company), so this falls back to a plain row rather than
+        // hiding the figure.
+        return <tr key={i}>{cells}</tr>;
+      }
+      return (
+        <DrillRow
+          key={i}
+          href={statementHref}
+          params={{ ledger: ledgerId, from: bookBeginning, to: period.to, branch: branchId ?? null }}
+          carry={sp}
+          label={r.ledger_name}
+        >
+          {cells}
+        </DrillRow>
+      );
+    };
+
+    // Groups the ledger rows of one nature (or one Schedule III fixed-asset
+    // bucket) by their account group, Tally's Shift+Enter semantics: a
+    // group heading + its own subtotal always shows, and its ledgers show
+    // beneath it only once that group's real id is in ?expand=. This is a
+    // strict partition of `items` by group_name (get_balance_sheet's own
+    // ORDER BY already sorts by group_name, so a single left-to-right scan
+    // is enough to keep each group's rows together) — every rupee in
+    // `items` ends up in exactly one group, so the group subtotals always
+    // sum back to the nature (or bucket) total above them, collapsed or
+    // expanded alike; the toggle only ever changes which rows are drawn,
+    // never what is summed.
+    const groupSection = (groupItems: BsRow[], wrapperClassName = "mt-1 w-full") => {
+      const order: string[] = [];
+      const byGroup = new Map<string, BsRow[]>();
+      for (const r of groupItems) {
+        if (!byGroup.has(r.group_name)) {
+          order.push(r.group_name);
+          byGroup.set(r.group_name, []);
+        }
+        byGroup.get(r.group_name)!.push(r);
+      }
+
+      return (
+        <table className={wrapperClassName}>
+          <tbody>
+            {order.map((groupName) => {
+              const rows = byGroup.get(groupName)!;
+              const groupId = groupIdByKey.get(`${rows[0].nature}|${groupName}`);
+              const groupTotal = sumAmount(rows);
+              const groupTotal2 = sumAmount(rows.map((r) => ({ ...r, amount: comparativeOf(r) })));
+              const isExpanded = groupId ? expandedGroupIds.has(groupId) : false;
+              const heading = (
+                <span className="flex items-baseline justify-between gap-2">
+                  <span className="flex items-center gap-1 text-xs font-semibold text-ink-soft">
+                    {groupId && (
+                      <ChevronDown
+                        size={11}
+                        className={cn("shrink-0 transition-transform", isExpanded && "rotate-180")}
+                        aria-hidden="true"
+                      />
+                    )}
+                    {groupName}
+                  </span>
+                  <span className="flex shrink-0 gap-4 font-mono text-xs tabular-nums text-ink-faint">
+                    <span>{formatINR(groupTotal, { showZero: true })}</span>
+                    <span>{hasComparative ? formatINR(groupTotal2, { showZero: true }) : "—"}</span>
+                  </span>
+                </span>
+              );
+              return (
+                <tr key={groupName} className={groupId ? "transition-colors hover:bg-surface-2" : undefined}>
+                  <td className="pt-1.5" colSpan={3}>
+                    {groupId ? (
+                      // A real Link, not a client onClick — this file is a
+                      // Server Component (see DrillLink's own header for why
+                      // that constraint is load-bearing), so "expand in
+                      // place" means "reload this same page with one more
+                      // id in ?expand=", exactly like the branch-switch
+                      // links further up this file.
+                      <Link
+                        href={toggleExpandHref(groupId)}
+                        aria-expanded={isExpanded}
+                        className="block w-full rounded-sm pl-2 text-left outline-none focus-visible:ring-2 focus-visible:ring-accent/30"
+                      >
+                        {heading}
+                      </Link>
+                    ) : (
+                      // No real account_groups.id resolved for this group
+                      // (see ledgerIdByKey's comment above for when that can
+                      // happen) — the subtotal still prints, it just cannot
+                      // be expanded or collapsed.
+                      <div className="pl-2">{heading}</div>
+                    )}
+                    {isExpanded && (
+                      <table className="mt-0.5 w-full">
+                        <tbody>{rows.map(ledgerRow)}</tbody>
+                      </table>
+                    )}
+                  </td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      );
+    };
 
     return (
       <div className="min-w-0">
@@ -430,9 +618,7 @@ export default async function BalanceSheetPage({
                                       </span>
                                     </span>
                                   </div>
-                                  <table className="w-full">
-                                    <tbody>{bucketItems.map(ledgerRow)}</tbody>
-                                  </table>
+                                  {groupSection(bucketItems, "w-full")}
                                 </td>
                               </tr>
                             );
@@ -440,9 +626,7 @@ export default async function BalanceSheetPage({
                         </tbody>
                       </table>
                     ) : (
-                      <table className="mt-1 w-full">
-                        <tbody>{natureItems.map(ledgerRow)}</tbody>
-                      </table>
+                      groupSection(natureItems)
                     )}
                   </td>
                 </tr>
