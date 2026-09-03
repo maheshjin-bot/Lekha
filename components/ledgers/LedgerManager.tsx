@@ -1,6 +1,7 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
+import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
 import { formatINR } from "@/lib/utils/currency";
@@ -37,6 +38,8 @@ type Group = {
 
 type TdsSection = { section_code: string; description: string; rate_percent: number };
 
+type StateOption = { code: string; name: string };
+
 // Mirrors app_private.is_valid_udyam exactly.
 const UDYAM_PATTERN = /^UDYAM-[A-Z]{2}-[0-9]{2}-[0-9]{7}$/;
 // Mirrors app_private.is_valid_pan exactly.
@@ -45,6 +48,13 @@ const PAN_PATTERN = /^[A-Z]{5}[0-9]{4}[A-Z]$/;
 // The shape half of app_private.is_valid_gstin. The check digit stays the
 // database's job — a drifting second copy would reject numbers it accepts.
 const GSTIN_PATTERN = /^[0-9]{2}[A-Z]{5}[0-9]{4}[A-Z][1-9A-Z]Z[0-9A-Z]$/;
+
+/*
+ * A GSTIN's first two characters ARE the state code (and 3-12 are the PAN) —
+ * the same derivation QuickAddLedgerModal uses, and the reason
+ * ledgers_gstin_matches_state (0735) can be a CHECK rather than a prompt.
+ */
+const stateFromGstin = (g: string) => (GSTIN_PATTERN.test(g) ? g.slice(0, 2) : "");
 
 // Registration types that mean "this party holds a GSTIN", mirroring
 // ledgers_registered_has_gstin (0735).
@@ -155,8 +165,56 @@ export function LedgerManager({
   const [sec43bCategory, setSec43bCategory] = useState("");
   const [gstRegType, setGstRegType] = useState("");
   const [gstin, setGstin] = useState("");
+  const [stateCode, setStateCode] = useState("");
+  const [states, setStates] = useState<StateOption[]>([]);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  /*
+   * ref_states is fetched here rather than threaded down from the page. This
+   * component's page already hands down five other lists and is owned by a
+   * different concern; QuickAddLedgerModal reads the same table the same way
+   * for the same reason. Forty rows, once per mount.
+   */
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      const { data } = await createClient()
+        .from("ref_states")
+        .select("code, name")
+        .order("name");
+      if (!cancelled) setStates(data ?? []);
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  /*
+   * WHY THIS SCREEN HAS A STATE FIELD AT ALL.
+   *
+   * A pilot preparer created a customer here and then could not invoice it.
+   * create_invoice resolves the place of supply from the party's state_code
+   * when the caller passes none, and raises
+   *   'Cannot determine place of supply: <uuid> has no state on file …'
+   * when there is none. This screen had no State control, so every party born
+   * on it was born without one — thirteen such party ledgers exist live across
+   * four companies as this is written. The quick-add popup inside the invoice
+   * form has always captured state; the main master screen did not, which is
+   * the whole defect: the deliberate, unhurried way of creating a party was
+   * the one that produced an unusable party.
+   *
+   * The GSTIN, when there is one, remains the source of truth — see
+   * gstinState below. This control is what answers the far more common case
+   * of a party with no GSTIN at all (an unregistered buyer, a consumer, an
+   * SEZ party being set up before its number is to hand), for which nothing on
+   * this page could previously state a state.
+   */
+  const gstinState = stateFromGstin(gstin);
+  // ledgers_gstin_matches_state (0735) is an equality, not a preference: with
+  // a well-formed GSTIN on the form the state is DERIVED, not chosen, and the
+  // control is disabled rather than left to be edited into a refusal.
+  const effectiveStateCode = gstinState || stateCode;
 
   const groupName = (id: string) => groups.find((g) => g.id === id)?.name ?? "—";
   const sectionRate = (code: string | null) =>
@@ -194,10 +252,11 @@ export function LedgerManager({
       gst_registration_type: gstRegType || null,
       gstin: gstin.trim() || null,
       // ledgers_gstin_matches_state (0735) requires state_code to be the
-      // GSTIN's own first two characters. This screen has never had a State
-      // control, so the number is the only place it can come from — deriving
-      // it here is what stops a GSTIN entered on this screen being refused.
-      ...(gstin.trim() ? { state_code: gstin.trim().slice(0, 2) } : {}),
+      // GSTIN's own first two characters when there is a GSTIN. When there
+      // isn't, the State control below is the only place it can come from —
+      // and without it the party cannot be invoiced at all. See the
+      // effectiveStateCode comment above.
+      state_code: effectiveStateCode || null,
     });
 
     if (error) {
@@ -225,6 +284,8 @@ export function LedgerManager({
     setIsLoanOrDeposit(false);
     setSec43bCategory("");
     setGstRegType("");
+    setGstin("");
+    setStateCode("");
     setBusy(false);
     router.refresh();
   }
@@ -422,6 +483,35 @@ export function LedgerManager({
           </label>
 
           <label className="flex flex-col gap-1.5">
+            <span className="text-sm font-medium">
+              State{" "}
+              <span className="font-normal text-ink-faint">
+                {gstOn ? "place of supply for invoices to this party" : "optional"}
+              </span>
+            </span>
+            <select
+              value={effectiveStateCode}
+              disabled={gstinState !== ""}
+              onChange={(e) => setStateCode(e.target.value)}
+              className={field + (gstinState ? " opacity-60" : "")}
+            >
+              <option value="">Not stated</option>
+              {states.map((s) => (
+                <option key={s.code} value={s.code}>
+                  {s.name}
+                </option>
+              ))}
+            </select>
+            <span className="text-xs text-ink-faint">
+              {gstinState
+                ? "Taken from the GSTIN below — its first two characters are the State."
+                : gstOn
+                  ? "Leave this unset and an invoice to this party cannot work out whether to charge CGST+SGST or IGST, and refuses to save."
+                  : "Only used to decide the place of supply on a GST invoice."}
+            </span>
+          </label>
+
+          <label className="flex flex-col gap-1.5">
             <span className="text-sm font-medium">Group</span>
             <select
               value={groupId}
@@ -435,6 +525,13 @@ export function LedgerManager({
                 </option>
               ))}
             </select>
+            <span className="text-xs text-ink-faint">
+              Missing the group you need?{" "}
+              <Link href={`/${companyId}/account-groups`} className="underline">
+                Add one to the chart of accounts
+              </Link>
+              .
+            </span>
           </label>
 
           <div className="grid grid-cols-[1fr_auto] gap-2">
@@ -719,7 +816,14 @@ export function LedgerManager({
                       // them from it is what satisfies
                       // ledgers_gstin_matches_state / _matches_pan (0735)
                       // rather than asking twice and risking a refusal.
-                      if (GSTIN_PATTERN.test(next)) setPan(next.slice(2, 12));
+                      // Written through to stateCode as well as derived, so
+                      // that clearing the GSTIN again leaves the State the
+                      // number had already established rather than blanking
+                      // the party back to un-invoiceable.
+                      if (GSTIN_PATTERN.test(next)) {
+                        setPan(next.slice(2, 12));
+                        setStateCode(next.slice(0, 2));
+                      }
                     }}
                     maxLength={15}
                     placeholder="07AAAAA0000A1Z5"

@@ -16,6 +16,7 @@ export default async function EmployeesPage({
     { data: branches },
     { data: company },
     { data: taxDeclarations },
+    { data: postedRuns },
   ] = await Promise.all([
     supabase
       .from("employees")
@@ -24,7 +25,9 @@ export default async function EmployeesPage({
       .order("name"),
     supabase
       .from("employee_salary_structures")
-      .select("employee_id, effective_from, basic, dearness_allowance, hra, special_allowance, other_allowance")
+      .select(
+        "id, employee_id, effective_from, basic, dearness_allowance, hra, special_allowance, other_allowance, pf_applicable, pf_wage_ceiling_applies, esi_applicable, professional_tax_monthly"
+      )
       .eq("company_id", companyId)
       .order("effective_from", { ascending: false }),
     supabase.rpc("get_company_modules", { p_company_id: companyId }),
@@ -46,6 +49,15 @@ export default async function EmployeesPage({
       .select("employee_id, financial_year_label, regime")
       .eq("company_id", companyId)
       .order("financial_year_label", { ascending: false }),
+    // Which payroll months are already in the ledger. A salary revision may
+    // not reach back into one of these — migration 1471 refuses it at the
+    // database, and the form uses this to say so before the preparer types a
+    // date that will be rejected.
+    supabase
+      .from("payroll_postings")
+      .select("period_month")
+      .eq("company_id", companyId)
+      .order("period_month", { ascending: false }),
   ]);
 
   const payrollOn = (modules ?? []).some((m) => m.code === "payroll" && m.active);
@@ -70,6 +82,24 @@ export default async function EmployeesPage({
     ...e,
     current_basic: latestByEmployee.get(e.id)?.basic ?? null,
     current_gross: latestByEmployee.get(e.id)?.gross ?? null,
+  }));
+
+  // numeric(18,2) arrives from PostgREST as a string; the revision form does
+  // arithmetic on these, so they are narrowed once here rather than at four
+  // call sites.
+  const structureRows = (structures ?? []).map((s) => ({
+    id: s.id,
+    employee_id: s.employee_id,
+    effective_from: s.effective_from,
+    basic: Number(s.basic),
+    dearness_allowance: Number(s.dearness_allowance),
+    hra: Number(s.hra),
+    special_allowance: Number(s.special_allowance),
+    other_allowance: Number(s.other_allowance),
+    pf_applicable: s.pf_applicable,
+    pf_wage_ceiling_applies: s.pf_wage_ceiling_applies,
+    esi_applicable: s.esi_applicable,
+    professional_tax_monthly: Number(s.professional_tax_monthly),
   }));
 
   return (
@@ -107,6 +137,8 @@ export default async function EmployeesPage({
         // constraint is what actually guarantees the narrower shape.
         taxDeclarations={(taxDeclarations ?? []) as { employee_id: string; financial_year_label: string; regime: "old" | "new" }[]}
         currentFinancialYearLabel={financialYearLabel(company?.financial_year_start_month ?? 4)}
+        structures={structureRows}
+        postedMonths={(postedRuns ?? []).map((p) => p.period_month)}
       />
     </main>
   );

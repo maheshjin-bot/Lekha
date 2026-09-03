@@ -24,6 +24,30 @@ type TaxDeclaration = {
   regime: "old" | "new";
 };
 
+type SalaryStructure = {
+  id: string;
+  employee_id: string;
+  /** ISO date. Compared lexicographically throughout — ISO dates sort correctly. */
+  effective_from: string;
+  basic: number;
+  dearness_allowance: number;
+  hra: number;
+  special_allowance: number;
+  other_allowance: number;
+  pf_applicable: boolean;
+  pf_wage_ceiling_applies: boolean;
+  esi_applicable: boolean;
+  professional_tax_monthly: number;
+};
+
+// First day of the month after this one, as an ISO date.
+function nextMonthStart(iso: string) {
+  const [y, m] = iso.split("-").map(Number);
+  return m === 12
+    ? `${y + 1}-01-01`
+    : `${y}-${String(m + 1).padStart(2, "0")}-01`;
+}
+
 // Mirrors app_private.is_valid_pan exactly.
 const PAN_PATTERN = /^[A-Z]{5}[0-9]{4}[A-Z]$/;
 
@@ -36,12 +60,18 @@ export function EmployeeManager({
   branches,
   taxDeclarations,
   currentFinancialYearLabel,
+  structures,
+  postedMonths,
 }: {
   companyId: string;
   employees: Employee[];
   taxDeclarations: TaxDeclaration[];
   currentFinancialYearLabel: string;
   branches: { id: string; code: string; name: string; state_code: string | null }[];
+  /** Every salary structure row for the company, newest effective date first. */
+  structures: SalaryStructure[];
+  /** payroll_postings.period_month — the months already in the ledger. */
+  postedMonths: string[];
 }) {
   const router = useRouter();
   const [name, setName] = useState("");
@@ -80,6 +110,224 @@ export function EmployeeManager({
   const [decBusy, setDecBusy] = useState(false);
   const [decError, setDecError] = useState<string | null>(null);
   const [decSaved, setDecSaved] = useState(false);
+
+  /*
+   * ==========================================================================
+   * SALARY REVISIONS — the third form on this page
+   * ==========================================================================
+   * No employee in this application had ever been given a pay rise, because
+   * there was no way to give one: this screen created an employee and their
+   * opening structure together and then said so out loud ("Editing a salary
+   * later needs a new structure row — not yet a form here"). Every employee at
+   * every company in the database had exactly one structure row. A mistyped
+   * starting salary was equally permanent.
+   *
+   * The mechanism was designed for and never exposed. get_payroll_run's
+   * `latest_structure` CTE takes the newest row with effective_from <= the
+   * payroll month's first day, which is an effective-dated history: a second
+   * row IS a pay rise. So this form writes a second row, and invents nothing.
+   *
+   * TWO OPERATIONS, NOT ONE. They answer different questions and have
+   * different rules:
+   *
+   *   REVISE   a new row from a future month. What the pay becomes.
+   *   CORRECT  the existing row, in place. What the pay always was — a typo.
+   *
+   * A correction is the only answer to "I typed 62,500 and meant 65,200",
+   * because a revision would leave the wrong figure standing for every month
+   * before it. It is also the more dangerous of the two, which is why it is
+   * withdrawn the moment the row it would change is one a posted payroll month
+   * depends on.
+   *
+   * EFFECTIVE DATES ARE MONTH STARTS, and the control below only offers month
+   * starts. `effective_from <= period start` means a row dated the 15th and a
+   * row dated the 1st of the following month behave identically, so a date
+   * picker that accepted the 15th would be offering a distinction the payroll
+   * engine cannot honour — and a preparer would reasonably read a mid-month
+   * rise as being pro-rated, which it is not.
+   */
+  const structuresByEmployee = new Map<string, SalaryStructure[]>();
+  for (const s of structures) {
+    const list = structuresByEmployee.get(s.employee_id) ?? [];
+    list.push(s);
+    structuresByEmployee.set(s.employee_id, list);
+  }
+  // The page orders newest-first, but do not rely on a caller's ordering for
+  // something this consequential.
+  for (const list of structuresByEmployee.values()) {
+    list.sort((a, b) => b.effective_from.localeCompare(a.effective_from));
+  }
+
+  const latestPostedMonth =
+    postedMonths.length > 0 ? postedMonths.slice().sort().at(-1)! : null;
+
+  // The earliest month a REVISION may take effect from: the month after the
+  // last one that has been posted. Mirrors migration 1471's own arithmetic; the
+  // database is still the authority, this is just so the form does not offer a
+  // date it knows will be refused.
+  const earliestRevisionMonth = latestPostedMonth
+    ? nextMonthStart(latestPostedMonth)
+    : null;
+
+  /*
+   * A salary is locked once it was in force during — or before — a month that
+   * has been posted. The same one-line rule as
+   * app_private.salary_structure_locked_by_payroll (1471), deliberately coarser
+   * than get_payroll_run's own row selection so that the two cannot drift: this
+   * screen must never offer a correction the database will refuse.
+   */
+  const isLocked = (s: SalaryStructure) =>
+    earliestRevisionMonth !== null && s.effective_from < earliestRevisionMonth;
+
+  const [revEmployeeId, setRevEmployeeId] = useState("");
+  const [revMode, setRevMode] = useState<"revise" | "correct">("revise");
+  const [revEffectiveFrom, setRevEffectiveFrom] = useState("");
+  const [revBasic, setRevBasic] = useState("");
+  const [revDa, setRevDa] = useState("");
+  const [revHra, setRevHra] = useState("");
+  const [revSpecial, setRevSpecial] = useState("");
+  const [revOther, setRevOther] = useState("");
+  const [revPf, setRevPf] = useState(true);
+  const [revPfCeiling, setRevPfCeiling] = useState(true);
+  const [revEsi, setRevEsi] = useState(true);
+  const [revPt, setRevPt] = useState("");
+  const [revBusy, setRevBusy] = useState(false);
+  const [revError, setRevError] = useState<string | null>(null);
+  const [revSaved, setRevSaved] = useState<string | null>(null);
+
+  const revCurrent = revEmployeeId
+    ? (structuresByEmployee.get(revEmployeeId)?.[0] ?? null)
+    : null;
+  const revCurrentLocked = revCurrent ? isLocked(revCurrent) : false;
+  const revEmployee = employees.find((e) => e.id === revEmployeeId) ?? null;
+
+  /*
+   * Seeding the form from the selected employee's current structure — during
+   * render, not in an effect, and keyed on the selection. Same pattern (and
+   * same reason) as QuickAddLedgerModal's prefill seeding: an effect would
+   * paint the form empty for a frame, and the project's
+   * react-hooks/set-state-in-effect rule refuses it outright.
+   *
+   * The key includes the current row's identity, so that after a revision is
+   * saved and the page refreshes, the form reseeds from the NEW current
+   * structure instead of leaving the old figures on screen next to a message
+   * saying they have changed. `revSaved` is deliberately not cleared here —
+   * that would wipe the confirmation in the same render that produced it; it
+   * is cleared when the preparer picks a different employee.
+   */
+  const seedKey = revEmployeeId
+    ? `${revEmployeeId}|${revCurrent?.id ?? "none"}|${revCurrent?.effective_from ?? ""}`
+    : "";
+  const [seededFor, setSeededFor] = useState("");
+  if (seedKey !== seededFor) {
+    setSeededFor(seedKey);
+    const c = revCurrent;
+    setRevBasic(c ? String(c.basic) : "0");
+    setRevDa(c ? String(c.dearness_allowance) : "0");
+    setRevHra(c ? String(c.hra) : "0");
+    setRevSpecial(c ? String(c.special_allowance) : "0");
+    setRevOther(c ? String(c.other_allowance) : "0");
+    setRevPf(c ? c.pf_applicable : true);
+    setRevPfCeiling(c ? c.pf_wage_ceiling_applies : true);
+    setRevEsi(c ? c.esi_applicable : true);
+    setRevPt(c ? String(c.professional_tax_monthly) : "0");
+    setRevEffectiveFrom("");
+    setRevMode("revise");
+    setRevError(null);
+  }
+
+  // Month starts on offer for a revision: from the earliest allowed month (or
+  // the month after the current structure begins) out to twelve months ahead.
+  const revMonthOptions: string[] = (() => {
+    if (!revCurrent) return [];
+    const floor = [
+      earliestRevisionMonth ?? "",
+      nextMonthStart(revCurrent.effective_from.slice(0, 7) + "-01"),
+    ]
+      .filter(Boolean)
+      .sort()
+      .at(-1)!;
+    const out: string[] = [];
+    let m = floor;
+    for (let i = 0; i < 24; i++) {
+      out.push(m);
+      m = nextMonthStart(m);
+    }
+    return out;
+  })();
+
+  const effectiveRevMonth =
+    revEffectiveFrom && revMonthOptions.includes(revEffectiveFrom)
+      ? revEffectiveFrom
+      : (revMonthOptions[0] ?? "");
+
+  const revGross =
+    (Number(revBasic) || 0) +
+    (Number(revDa) || 0) +
+    (Number(revHra) || 0) +
+    (Number(revSpecial) || 0) +
+    (Number(revOther) || 0);
+  const revCurrentGross = revCurrent
+    ? revCurrent.basic +
+      revCurrent.dearness_allowance +
+      revCurrent.hra +
+      revCurrent.special_allowance +
+      revCurrent.other_allowance
+    : 0;
+
+  async function onSubmitRevision(e: React.FormEvent) {
+    e.preventDefault();
+    if (!revCurrent || !revEmployee) return;
+    setRevBusy(true);
+    setRevError(null);
+    setRevSaved(null);
+
+    const supabase = createClient();
+    const values = {
+      basic: Number(revBasic) || 0,
+      dearness_allowance: Number(revDa) || 0,
+      hra: Number(revHra) || 0,
+      special_allowance: Number(revSpecial) || 0,
+      other_allowance: Number(revOther) || 0,
+      pf_applicable: revPf,
+      pf_wage_ceiling_applies: revPfCeiling,
+      esi_applicable: revEsi,
+      professional_tax_monthly: Number(revPt) || 0,
+    };
+
+    const { error: revErr } =
+      revMode === "correct"
+        ? await supabase
+            .from("employee_salary_structures")
+            .update(values)
+            .eq("id", revCurrent.id)
+        : await supabase.from("employee_salary_structures").insert({
+            employee_id: revEmployeeId,
+            company_id: companyId,
+            effective_from: effectiveRevMonth,
+            ...values,
+          });
+
+    if (revErr) {
+      // 1471 raises with an errcode and a sentence written to be read; 23505 is
+      // the unique (employee_id, effective_from) key.
+      setRevError(
+        revErr.code === "23505"
+          ? `${revEmployee.name} already has a salary effective from that month.`
+          : revErr.message
+      );
+      setRevBusy(false);
+      return;
+    }
+
+    setRevSaved(
+      revMode === "correct"
+        ? `Corrected ${revEmployee.name}'s salary effective ${revCurrent.effective_from}.`
+        : `${revEmployee.name} moves to ${formatINR(revGross)} a month from ${effectiveRevMonth}.`
+    );
+    setRevBusy(false);
+    router.refresh();
+  }
 
   const panLooksValid = pan.length === 0 || PAN_PATTERN.test(pan);
   const decFyLooksValid = decFinancialYear.length === 0 || FY_LABEL_PATTERN.test(decFinancialYear);
@@ -280,8 +528,8 @@ export function EmployeeManager({
         <h2 className="font-semibold">New employee</h2>
         <p className="mt-1 text-xs text-ink-faint">
           Creates the employee and their starting salary structure together,
-          effective from the date of joining. Editing a salary later needs a
-          new structure row — not yet a form here.
+          effective from the date of joining. A later rise or a corrected
+          figure goes through &ldquo;Pay rise or correction&rdquo; below.
         </p>
         <form onSubmit={onSubmit} className="mt-4 flex flex-col gap-3">
           <label className="flex flex-col gap-1.5">
@@ -458,6 +706,265 @@ export function EmployeeManager({
           >
             {busy ? "Adding…" : "Add employee"}
           </button>
+        </form>
+      </section>
+
+      <section className="min-w-0 rounded-lg border border-border bg-surface p-5">
+        <h2 className="font-semibold">Pay rise or correction</h2>
+        <p className="mt-1 max-w-2xl text-xs text-ink-faint">
+          A salary is effective-dated: a rise is a second salary from a later
+          month, not an edit to the old one, so every month before it keeps
+          paying what it actually paid. A typo is the other case — that is a
+          correction to the existing figures, and it is only available while no
+          posted payroll month depends on them.
+        </p>
+        <form onSubmit={onSubmitRevision} className="mt-4 flex flex-col gap-3">
+          <label className="flex flex-col gap-1.5">
+            <span className="text-sm font-medium">Employee</span>
+            <select
+              required
+              value={revEmployeeId}
+              onChange={(e) => {
+                setRevEmployeeId(e.target.value);
+                setRevSaved(null);
+              }}
+              className={field}
+            >
+              <option value="">Select…</option>
+              {employees.map((emp) => (
+                <option key={emp.id} value={emp.id}>
+                  {emp.name}
+                </option>
+              ))}
+            </select>
+          </label>
+
+          {revEmployeeId && !revCurrent && (
+            <p className="rounded-md bg-warning-soft px-3 py-2 text-sm text-warning">
+              This employee has no salary structure at all, which should not
+              happen — one is written when the employee is created. Adding a
+              first structure is not something this form does.
+            </p>
+          )}
+
+          {revCurrent && (
+            <>
+              <div className="rounded-md border border-border bg-surface-2/40 p-3 text-sm">
+                <p className="text-ink-soft">
+                  Currently{" "}
+                  <strong className="font-semibold text-ink tabular-nums">
+                    {formatINR(revCurrentGross)}
+                  </strong>{" "}
+                  a month (basic {formatINR(revCurrent.basic)}), effective from{" "}
+                  <strong className="font-medium text-ink">
+                    {revCurrent.effective_from}
+                  </strong>
+                  .
+                </p>
+                {revCurrentLocked && (
+                  <p className="mt-1.5 text-xs text-ink-faint">
+                    Posted payroll depends on these figures, so they can no
+                    longer be corrected — only superseded from a later month.
+                  </p>
+                )}
+              </div>
+
+              <div className="flex flex-col gap-1.5">
+                <span className="text-sm font-medium">What is this?</span>
+                <label className="flex items-start gap-2 text-sm">
+                  <input
+                    type="radio"
+                    name="revmode"
+                    className="mt-1"
+                    checked={revMode === "revise"}
+                    onChange={() => setRevMode("revise")}
+                  />
+                  <span>
+                    A pay rise or cut
+                    <span className="block text-xs text-ink-faint">
+                      Keeps the history. Applies from the month you choose
+                      onward.
+                    </span>
+                  </span>
+                </label>
+                <label className="flex items-start gap-2 text-sm">
+                  <input
+                    type="radio"
+                    name="revmode"
+                    className="mt-1"
+                    disabled={revCurrentLocked}
+                    checked={revMode === "correct"}
+                    onChange={() => setRevMode("correct")}
+                  />
+                  <span className={revCurrentLocked ? "text-ink-faint" : undefined}>
+                    A correction to the figures above
+                    <span className="block text-xs text-ink-faint">
+                      {revCurrentLocked
+                        ? `Not available — a posted payroll month uses this salary.`
+                        : `Rewrites the salary effective ${revCurrent.effective_from}, as if it had always been this.`}
+                    </span>
+                  </span>
+                </label>
+              </div>
+
+              {revMode === "revise" && (
+                <label className="flex flex-col gap-1.5">
+                  <span className="text-sm font-medium">Effective from</span>
+                  <select
+                    value={effectiveRevMonth}
+                    onChange={(e) => setRevEffectiveFrom(e.target.value)}
+                    className={field}
+                  >
+                    {revMonthOptions.map((m) => (
+                      <option key={m} value={m}>
+                        {m}
+                      </option>
+                    ))}
+                  </select>
+                  <span className="text-xs text-ink-faint">
+                    Whole months only — payroll reads the salary in force on the
+                    first of the month, so a mid-month date would change nothing
+                    until the month after it.
+                    {latestPostedMonth
+                      ? ` Payroll is posted up to ${latestPostedMonth}, so nothing earlier than ${earliestRevisionMonth} can be offered.`
+                      : ""}
+                  </span>
+                </label>
+              )}
+
+              <div className="rounded-md border border-border p-3">
+                <span className="text-sm font-medium">
+                  {revMode === "correct" ? "Corrected figures" : "New salary"}
+                </span>
+                <div className="mt-2 grid grid-cols-2 gap-2">
+                  <label className="flex flex-col gap-1.5">
+                    <span className="text-xs text-ink-faint">Basic</span>
+                    <input
+                      inputMode="decimal"
+                      value={revBasic}
+                      onChange={(e) => setRevBasic(e.target.value)}
+                      className={field + " text-right tabular-nums"}
+                    />
+                  </label>
+                  <label className="flex flex-col gap-1.5">
+                    <span className="text-xs text-ink-faint">Dearness allowance</span>
+                    <input
+                      inputMode="decimal"
+                      value={revDa}
+                      onChange={(e) => setRevDa(e.target.value)}
+                      className={field + " text-right tabular-nums"}
+                    />
+                  </label>
+                  <label className="flex flex-col gap-1.5">
+                    <span className="text-xs text-ink-faint">HRA</span>
+                    <input
+                      inputMode="decimal"
+                      value={revHra}
+                      onChange={(e) => setRevHra(e.target.value)}
+                      className={field + " text-right tabular-nums"}
+                    />
+                  </label>
+                  <label className="flex flex-col gap-1.5">
+                    <span className="text-xs text-ink-faint">Special allowance</span>
+                    <input
+                      inputMode="decimal"
+                      value={revSpecial}
+                      onChange={(e) => setRevSpecial(e.target.value)}
+                      className={field + " text-right tabular-nums"}
+                    />
+                  </label>
+                  <label className="flex flex-col gap-1.5">
+                    <span className="text-xs text-ink-faint">Other allowance</span>
+                    <input
+                      inputMode="decimal"
+                      value={revOther}
+                      onChange={(e) => setRevOther(e.target.value)}
+                      className={field + " text-right tabular-nums"}
+                    />
+                  </label>
+                  <label className="flex flex-col gap-1.5">
+                    <span className="text-xs text-ink-faint">Professional tax (₹/month)</span>
+                    <input
+                      inputMode="decimal"
+                      value={revPt}
+                      onChange={(e) => setRevPt(e.target.value)}
+                      className={field + " text-right tabular-nums"}
+                    />
+                  </label>
+                </div>
+
+                <label className="mt-3 flex items-center gap-2 text-sm">
+                  <input
+                    type="checkbox"
+                    checked={revPf}
+                    onChange={(e) => setRevPf(e.target.checked)}
+                  />
+                  PF applicable (12%/12% on basic + DA)
+                </label>
+                {revPf && (
+                  <label className="mt-1.5 flex items-center gap-2 pl-6 text-sm">
+                    <input
+                      type="checkbox"
+                      checked={revPfCeiling}
+                      onChange={(e) => setRevPfCeiling(e.target.checked)}
+                    />
+                    Cap PF wage at ₹15,000
+                  </label>
+                )}
+                <label className="mt-1.5 flex items-center gap-2 text-sm">
+                  <input
+                    type="checkbox"
+                    checked={revEsi}
+                    onChange={(e) => setRevEsi(e.target.checked)}
+                  />
+                  ESI applicable (0.75%/3.25%, only while gross ≤ ₹21,000)
+                </label>
+
+                <p className="mt-3 text-sm text-ink-soft">
+                  Monthly gross{" "}
+                  <strong className="font-semibold tabular-nums text-ink">
+                    {formatINR(revGross)}
+                  </strong>
+                  {revGross !== revCurrentGross && (
+                    <span className="ml-1.5 text-xs text-ink-faint">
+                      {revGross > revCurrentGross ? "up" : "down"}{" "}
+                      {formatINR(Math.abs(revGross - revCurrentGross))} from{" "}
+                      {formatINR(revCurrentGross)}
+                    </span>
+                  )}
+                </p>
+                {revPf && !revPfCeiling && revGross > revCurrentGross && (
+                  <p className="mt-1 text-xs text-ink-faint">
+                    The ₹15,000 PF wage cap is off for this employee, so the
+                    employer&rsquo;s PF cost rises with the basic.
+                  </p>
+                )}
+              </div>
+
+              {revError && (
+                <p className="rounded-md bg-error-soft px-3 py-2 text-sm text-error">
+                  {revError}
+                </p>
+              )}
+              {revSaved && !revError && (
+                <p className="rounded-md bg-success-soft px-3 py-2 text-sm text-success">
+                  {revSaved}
+                </p>
+              )}
+
+              <button
+                type="submit"
+                disabled={revBusy || (revMode === "revise" && !effectiveRevMonth)}
+                className="mt-1 self-start rounded-lg bg-accent px-4 py-2 text-sm font-semibold text-accent-ink transition-colors hover:opacity-90 disabled:opacity-50"
+              >
+                {revBusy
+                  ? "Saving…"
+                  : revMode === "correct"
+                    ? "Correct this salary"
+                    : "Record the revision"}
+              </button>
+            </>
+          )}
         </form>
       </section>
 
