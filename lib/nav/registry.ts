@@ -569,6 +569,20 @@ const reports: NavEntry[] = [
     group: "Reports",
   },
   {
+    href: `${C}/reports/purchase-analysis`,
+    label: "Purchase analysis",
+    workspace: "purchases",
+    keywords: ["supplier", "top suppliers", "vendor", "purchase by item", "spend analysis"],
+    group: "Reports",
+  },
+  {
+    href: `${C}/reports/sales-analysis`,
+    label: "Sales analysis",
+    workspace: "reports",
+    keywords: ["customer", "top customers", "party wise sales", "item wise sales", "best sellers", "sales analysis", "top items", "who buys the most"],
+    group: "Reports",
+  },
+  {
     href: `${C}/reports/ledger-statement`,
     label: "Ledger statement",
     workspace: "reports",
@@ -665,6 +679,14 @@ const reports: NavEntry[] = [
     keywords: ["actual vs budget", "variance report"],
     group: "Reports",
     module: "budgets",
+  },
+  {
+    href: `${C}/reports/margin-by-item`,
+    label: "Margin by item",
+    workspace: "reports",
+    keywords: ["profitability", "gross margin", "cost of goods sold", "cogs", "item wise margin"],
+    group: "Reports",
+    module: "inventory",
   },
   {
     href: `${C}/reports/cma-ratios`,

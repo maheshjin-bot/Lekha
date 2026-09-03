@@ -6,6 +6,7 @@ import {
   type Bill,
   type Settlement,
 } from "@/components/allocations/AllocationManager";
+import { AllocationWorklist } from "@/components/allocations/AllocationWorklist";
 
 /**
  * Bill-by-bill allocation (1490/1491).
@@ -30,6 +31,13 @@ export default async function AllocationsPage({
     typeof sp.as_at === "string" && /^\d{4}-\d{2}-\d{2}$/.test(sp.as_at)
       ? sp.as_at
       : new Date().toISOString().slice(0, 10);
+  // Worklist is the default: the dashboard's "N unallocated settlements"
+  // alert links straight here with no query string at all, and the whole
+  // point of following that link is to clear the backlog, not to browse a
+  // table of everything including what is already done. `?mode=browse`
+  // keeps the original browse-everything screen (AllocationManager) reachable
+  // for anyone reconciling rather than clearing.
+  const mode: "worklist" | "browse" = sp.mode === "browse" ? "browse" : "worklist";
   const supabase = await createClient();
 
   // get_unallocated_settlements / get_bill_wise_outstanding / voucher_allocations
@@ -153,13 +161,53 @@ export default async function AllocationsPage({
         from it — an invoice correctly still reads as open on a date the money had not yet arrived.
       </p>
 
-      <AllocationManager
-        companyId={companyId}
-        role={role}
-        settlements={settlementRows}
-        bills={billRows}
-        allocations={allocationRows}
-      />
+      <div className="mb-5 flex flex-wrap items-center gap-2 text-sm">
+        <Link
+          href={`?role=${role}&as_at=${asAt}`}
+          className={
+            mode === "worklist"
+              ? "rounded-full bg-accent-soft px-3 py-1 font-semibold text-accent"
+              : "rounded-full px-3 py-1 text-ink-soft hover:bg-surface-2"
+          }
+        >
+          Worklist
+        </Link>
+        <Link
+          href={`?role=${role}&as_at=${asAt}&mode=browse`}
+          className={
+            mode === "browse"
+              ? "rounded-full bg-accent-soft px-3 py-1 font-semibold text-accent"
+              : "rounded-full px-3 py-1 text-ink-soft hover:bg-surface-2"
+          }
+        >
+          Browse all
+        </Link>
+        <span className="text-xs text-ink-faint">
+          {mode === "worklist"
+            ? "Oldest unallocated first, grouped by party — for clearing a backlog in one sitting."
+            : "Every settlement and every bill, applied or not — for reconciling."}
+        </span>
+      </div>
+
+      {mode === "worklist" ? (
+        <AllocationWorklist
+          key={`${role}-${asAt}`}
+          companyId={companyId}
+          role={role}
+          asAt={asAt}
+          settlements={settlementRows}
+          bills={billRows}
+          allocations={allocationRows}
+        />
+      ) : (
+        <AllocationManager
+          companyId={companyId}
+          role={role}
+          settlements={settlementRows}
+          bills={billRows}
+          allocations={allocationRows}
+        />
+      )}
     </main>
   );
 }
