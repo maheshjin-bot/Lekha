@@ -7189,6 +7189,8 @@ export type Database = {
           p_to?: string
         }
         Returns: {
+          after_data: Json | null
+          before_data: Json | null
           changed_at: string
           changed_by: string
           changed_by_name: string
