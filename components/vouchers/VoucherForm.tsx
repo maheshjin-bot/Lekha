@@ -247,6 +247,7 @@ export function VoucherForm({
   branches,
   tdsSections = [],
   tdsPayableLedgerId = null,
+  gstLedgerIds = [],
   numbering = {},
   existing,
 }: {
@@ -255,6 +256,16 @@ export function VoucherForm({
   branches: Branch[];
   tdsSections?: TdsSection[];
   tdsPayableLedgerId?: string | null;
+  /**
+   * The exact ledgers a line's amount is split against for GST — the eight
+   * input/output CGST/SGST/IGST/Cess purposes in tax_ledger_map, across every
+   * GST registration this company holds (1781). Used only to net a sibling
+   * GST leg out of the base a TDS hint computes against; NOT the same as
+   * ledger_role === "duty_tax", which also covers PF/ESI/PT/TCS/RCM/TDS
+   * Payable/GST Payable/GST TDS Receivable — none of which are a per-line GST
+   * split and must never be netted out.
+   */
+  gstLedgerIds?: string[];
   /**
    * The company's numbering policy per branch and voucher type (migration
    * 0725), fetched by the page exactly as ledgers and branches are. Absent on
@@ -977,18 +988,21 @@ export function VoucherForm({
           dossier's own audit (F-12) flagged. Both share suggestionFor() so
           the TDS hint can never disagree between the two views. */}
       {(() => {
-        // 1780: the portion of a line's amount that is GST rather than the
-        // underlying value, inferred from sibling lines in the SAME voucher
-        // posted to a "duty_tax"-role ledger (Input/Output CGST/SGST/IGST/
-        // Cess — see 0006's seed_gst_ledgers) — zero when none exist. The
-        // TDS Payable ledger itself also lives under Duties & Taxes (0030)
-        // and is excluded by id, not role, so an already-split OTHER line's
-        // TDS leg is never mistaken for GST and netted out of this one.
+        // 1780/1781: the portion of a line's amount that is GST rather than
+        // the underlying value, inferred from sibling lines in the SAME
+        // voucher posted to one of the eight input/output CGST/SGST/IGST/
+        // Cess ledgers this company's GST registration(s) actually use
+        // (gstLedgerIds, resolved from tax_ledger_map by the page) — zero
+        // when none exist. NOT ledger_role === "duty_tax": that role also
+        // covers PF/ESI/Professional Tax/TCS/RCM/TDS Payable/GST Payable/GST
+        // TDS Receivable, every one of which sits in the same seeded "Duties
+        // & Taxes" group and would otherwise be wrongly netted out of a TDS
+        // base the moment a preparer bundles a month-end statutory line into
+        // the same journal — an ordinary thing to do, not a contrived case.
         function gstComponentFor(i: number) {
           return lines.reduce((sum, l, idx) => {
             if (idx === i || !l.ledgerId || l.ledgerId === tdsPayableLedgerId) return sum;
-            const led = allLedgers.find((x) => x.id === l.ledgerId);
-            if (led?.ledger_role !== "duty_tax") return sum;
+            if (!gstLedgerIds.includes(l.ledgerId)) return sum;
             const amt = Number(l.amount);
             return Number.isFinite(amt) ? sum + amt : sum;
           }, 0);

@@ -20,7 +20,14 @@ export default async function EditVoucherPage({
 
   if (!voucher) notFound();
 
-  const [{ data: entries }, { data: ledgers }, { data: branches }, { data: tdsSections }, { data: tdsPayableMap }] =
+  const [
+    { data: entries },
+    { data: ledgers },
+    { data: branches },
+    { data: tdsSections },
+    { data: tdsPayableMap },
+    { data: gstLedgerRows },
+  ] =
     await Promise.all([
       supabase
         .from("voucher_entries")
@@ -55,7 +62,25 @@ export default async function EditVoucherPage({
         .eq("purpose", "tds_payable")
         .is("gst_registration_id", null)
         .maybeSingle(),
+      // 1781: same GST-specific ledger set as vouchers/new — see that page
+      // for why ledger_role='duty_tax' is too broad to net out of a TDS base.
+      supabase
+        .from("tax_ledger_map")
+        .select("ledger_id")
+        .eq("company_id", companyId)
+        .in("purpose", [
+          "input_cgst",
+          "input_sgst",
+          "input_igst",
+          "input_cess",
+          "output_cgst",
+          "output_sgst",
+          "output_igst",
+          "output_cess",
+        ]),
     ]);
+
+  const gstLedgerIds = (gstLedgerRows ?? []).map((r) => r.ledger_id);
 
   return (
     <main className="mx-auto max-w-5xl px-6 py-10">
@@ -92,6 +117,7 @@ export default async function EditVoucherPage({
         branches={branches ?? []}
         tdsSections={tdsSections ?? []}
         tdsPayableLedgerId={tdsPayableMap?.ledger_id ?? null}
+        gstLedgerIds={gstLedgerIds}
         existing={{
           id: voucher.id,
           voucherNumber: voucher.voucher_number,
