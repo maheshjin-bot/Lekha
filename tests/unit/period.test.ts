@@ -69,6 +69,42 @@ describe("defaultPeriod", () => {
     expect(p.to).toBe("2025-06-30");
   });
 
+  it("anchors a `to`-only override's default `from` to THAT date's own financial year, not today's", () => {
+    // The Balance Sheet bug: today sits in FY26-27, but ?as_at=2027-04-15 (a
+    // Balance Sheet's own override shape — `to` only, no `from`) is in
+    // FY27-28. Before this fix, `from` came back "2026-04-01" (today's FY
+    // start) paired with a "2027-04-15" `to` in a LATER year — a range that
+    // straddles two financial years and silently spans a wrong window for
+    // any P&L read over it. It must instead be FY27-28's own start.
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-09-03T12:00:00+05:30"));
+    const p = defaultPeriod(4, { to: "2027-04-15" });
+    expect(p.from).toBe("2027-04-01");
+    expect(p.to).toBe("2027-04-15");
+  });
+
+  it("anchors a `to`-only override the same way when it lands BEFORE today's financial year", () => {
+    // The symmetric case — an as-at date in a year that has already closed,
+    // e.g. requesting the balance sheet as it stood on 15 Aug 2024 while
+    // today is in FY26-27. `from` must be 2024's own FY start, not today's.
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-09-03T12:00:00+05:30"));
+    const p = defaultPeriod(4, { to: "2024-08-15" });
+    expect(p.from).toBe("2024-04-01");
+    expect(p.to).toBe("2024-08-15");
+  });
+
+  it("still gives today's FY start for a `to`-only override that falls inside today's own financial year", () => {
+    // The un-dramatic case the fix must not disturb: an as-at date that
+    // happens to sit in the SAME financial year as today gets exactly the
+    // `from` it always did.
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-09-03T12:00:00+05:30"));
+    const p = defaultPeriod(4, { to: "2026-06-15" });
+    expect(p.from).toBe("2026-04-01");
+    expect(p.to).toBe("2026-06-15");
+  });
+
   it("defaults to the financial year to date for a July-year company", () => {
     // F-01: the FY label shown to the user must be derived from the company's
     // own year start, not from a cached or April-assumed value.

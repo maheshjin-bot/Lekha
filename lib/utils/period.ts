@@ -66,6 +66,26 @@ function formatDate(date: string): string {
 /**
  * Resolves an explicit from/to if given, otherwise the financial year to date.
  * The result is guaranteed never to run backwards.
+ *
+ * When only `to` is overridden (a Balance Sheet's `?as_at=`, a Stock
+ * Summary's `?as_at=`, or any caller that pins an end date without also
+ * pinning a start), the default `from` is the start of the financial year
+ * that CONTAINS THAT `to` — never wall-clock today's financial year. Reading
+ * today's FY start alongside an as-at date in some other year silently
+ * produced a `from`/`to` pair straddling two financial years: a P&L window
+ * opened with that pair pulls in both years' results as "the current
+ * period", and the brought-forward window computed as bookBeginning..that
+ * wrong `from` then runs backwards and returns zero instead of the true
+ * prior-year figure — a loss quietly relabelled as this year's and the real
+ * prior year silently zeroed, while assets = liabilities + equity still
+ * ties, because both sides used the same (wrong) profit number. Reproduced
+ * live against TEST Vantage Consulting (get_profit_and_loss): as_at
+ * 2027-04-15 with today in FY26-27 gave a "current period" figure of
+ * -302397.60 built from 2026-04-01..2027-04-15 (spanning parts of TWO
+ * years) and a "brought forward" figure of 0 from a backwards
+ * 2026-04-01..2026-03-31 range, instead of the correct 0 (FY27-28 to date,
+ * no postings yet) and -302397.60 (FY26-27's real, complete result) that a
+ * from anchored to the as-at date itself produces.
  */
 export function defaultPeriod(
   startMonth: number,
@@ -76,7 +96,13 @@ export function defaultPeriod(
   const today = todayLocal();
   const reference = atNoonUTC(today);
 
-  const from = override?.from ?? isoUTC(financialYearStart(startMonth, reference));
+  // Only matters when `from` needs a default: anchor that default's
+  // financial year to the SAME reference point as `to` (its own override
+  // when one was given, today otherwise) rather than always today — see the
+  // header above for why anchoring it to today regardless of `to` is the bug.
+  const fromReference = override?.to ? atNoonUTC(override.to) : reference;
+
+  const from = override?.from ?? isoUTC(financialYearStart(startMonth, fromReference));
   let to = override?.to ?? today;
 
   // Clamp rather than trust: a period that starts after it ends returns
