@@ -95,11 +95,21 @@ export default async function BudgetVariancePage({
   // income line, an unfavourable variance is a shortfall against target, the
   // opposite direction of wrong. "Unfavourable" is the one word that is
   // accurate for both, so that is what the status badge says.
+  //
+  // Deliberately NOT gated on Number(r.budgeted) > 0: a ledger that was never
+  // budgeted at all (0 budget lines cover it) but has real spend posted
+  // against it has variance = actual - 0 = actual, which is already positive
+  // for an expense — so the direction check below counts it correctly on its
+  // own. Requiring budgeted > 0 used to hide exactly that case: an entirely
+  // unplanned expense category with zero budget headroom, which a preparer
+  // triaging by this badge most needs flagged. The symmetric zero-budget
+  // income case (actual > 0, budgeted = 0) yields variance > 0, which is
+  // favourable for income, so it is correctly left uncounted without any
+  // extra guard.
   const unfavourable = rows.filter(
     (r) =>
-      Number(r.budgeted) > 0 &&
-      ((r.nature.includes("expense") && Number(r.variance) > 0) ||
-        (r.nature.includes("income") && Number(r.variance) < 0))
+      (r.nature.includes("expense") && Number(r.variance) > 0) ||
+      (r.nature.includes("income") && Number(r.variance) < 0)
   ).length;
 
   return (
