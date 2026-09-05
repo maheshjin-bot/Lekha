@@ -1,15 +1,126 @@
-import Link from "next/link";
-import { createClient } from "@/lib/supabase/server";
-import { formatINR } from "@/lib/utils/currency";
-import { defaultPeriod, periodRangeLabel } from "@/lib/utils/period";
-import { readContext } from "@/lib/nav/context";
-import { ReportShell, th, td, num } from "@/components/reports/ReportShell";
-import {
-  DrillHeadCell,
-  DrillRow,
-  drillHref,
-  type DrillParams,
-} from "@/components/reports/DrillLink";
+import { defineReport } from "@/lib/reports/defineReport";
+import { ReportView } from "@/components/reports/ReportView";
+import type { DrillParams } from "@/components/reports/DrillLink";
+
+/**
+ * Trial Balance, re-expressed as a `defineReport` definition and rendered
+ * through the shared <ReportView> — the reference migration this wave's
+ * other two report migrations are meant to copy. See lib/reports/defineReport.ts
+ * and components/reports/ReportView.tsx for the contract this implements;
+ * both were read in full before writing this file, and every choice below
+ * (RPC name, param shape, column list, drill target/params) is copied
+ * verbatim from what this page used to do by hand — nothing about what
+ * get_trial_balance is called with, or how a figure is computed, changed.
+ *
+ * `Row` mirrors get_trial_balance's actual return shape (confirmed live via
+ * `pg_get_function_result` before writing this), not just the columns shown
+ * — `nature`/`opening_debit`/`opening_credit` are real fields the RPC
+ * returns that this report has never displayed, kept on the type so a
+ * future column addition does not need a second look at the RPC.
+ *
+ * ---------------------------------------------------------------------------
+ * Known, verified deviations from the pre-migration page — not oversights.
+ * ---------------------------------------------------------------------------
+ * This task's file assignment is this page only; <ReportView> and
+ * `defineReport` are owned elsewhere and out of scope to change here, and
+ * neither currently has a hook for the three things below. Each is a
+ * rendering-only loss (no figure changes), confirmed by reading both files
+ * in full rather than assumed:
+ *
+ *   1. The "Tallied" / "Out by ₹X" status badge in the header. ReportView
+ *      calls `<ReportShell title period width>` with no `status` — the prop
+ *      exists on ReportShell but ReportView never threads a value into it.
+ *   2. The <tfoot> totals row (Total Dr/Cr/Closing Dr/Cr). ReportView's
+ *      renderer has no footer/totals concept at all — confirmed the same gap
+ *      exists in sales-analysis, the contract's other reference report,
+ *      which also loses its own tfoot under this same contract.
+ *   3. The ledger name's own wider-click-target <Link> (in addition to the
+ *      row's chevron). A `ReportColumn.render` receives only the row, not
+ *      the nav context/company id a same-URL <Link> needs to build, so this
+ *      per-cell enhancement has no equivalent in the generic column model.
+ *   4. The " · <Branch Name>" suffix this page used to append to the period
+ *      caption when `?branch=` narrowed the report. ReportView resolves
+ *      `ctx.branchId` and passes it to `source.params` (so the RPC is still
+ *      correctly branch-filtered — this is a caption-only loss, not a data
+ *      one) but never looks the branch's name up or appends it to the
+ *      `period` string it hands ReportShell.
+ *
+ * The chevron-based row drill (the thing that actually matters — a figure
+ * that looks wrong is never more than one click from the ledger it came
+ * from) is fully preserved; see `drill` below.
+ */
+
+type TrialBalanceRow = {
+  ledger_id: string;
+  ledger_name: string;
+  group_name: string;
+  nature: string;
+  opening_debit: number;
+  opening_credit: number;
+  period_debit: number;
+  period_credit: number;
+  closing_debit: number;
+  closing_credit: number;
+};
+
+const trialBalanceReport = defineReport<TrialBalanceRow>({
+  // Must equal ReportShell's own reportConfigScope() for this route
+  // ("/<companyId>/reports/trial-balance" -> "reports-trial-balance") — this
+  // is the same screen_key the report's gear (and Ctrl+L saved views) reads
+  // and writes under.
+  key: "reports-trial-balance",
+  title: "Trial Balance",
+  source: {
+    rpc: "get_trial_balance",
+    params: (ctx) => ({
+      p_company_id: ctx.companyId,
+      p_from: ctx.from,
+      p_to: ctx.to,
+      // `?? undefined`, not `?? null`: the generated arg type is
+      // `p_branch_id?: string`, and omitting the key lets Postgres apply the
+      // function's own `default null` — the "all branches" case. Identical
+      // to what this page passed by hand before migrating.
+      p_branch_id: ctx.branchId ?? undefined,
+    }),
+  },
+  columns: [
+    { key: "ledger_name", label: "Ledger", hideable: false },
+    {
+      key: "group_name",
+      label: "Group",
+      // Escape hatch for the one column that isn't a plain format-the-field
+      // job: the original page rendered this in text-ink-soft, not the
+      // default row text color.
+      render: (row) => <span className="text-ink-soft">{row.group_name}</span>,
+    },
+    { key: "period_debit", label: "Debit", format: "currency" },
+    { key: "period_credit", label: "Credit", format: "currency" },
+    // Totals-critical (this report's own tallied/balanced check sums these
+    // two), so not eligible for the gear's future "hidden columns" affordance.
+    { key: "closing_debit", label: "Closing Dr", format: "currency", hideable: false },
+    { key: "closing_credit", label: "Closing Cr", format: "currency", hideable: false },
+  ],
+  // Every row's chevron opens the ledger statement for exactly the window on
+  // screen. `from`/`to` are pinned from `app` explicitly rather than left to
+  // ReportView's automatic `carry`, for the same reason the original page
+  // did: on the bare default URL there is no ?from/?to to carry, so the
+  // statement would otherwise re-derive its own "FY to date" default against
+  // "today" rather than reproducing the window the user is actually looking
+  // at. `branch: app.branchId` (null included) likewise clears a carried
+  // branch when this report ran company-wide. ReportView applies `carry`
+  // (the page's own searchParams) underneath this automatically, so any
+  // other ambient param is still forwarded.
+  drill: (row, { companyId, app }) => ({
+    href: `/${companyId}/reports/ledger-statement`,
+    params: {
+      ledger: row.ledger_id,
+      from: app.from,
+      to: app.to,
+      branch: app.branchId,
+    } satisfies DrillParams,
+    label: row.ledger_name,
+  }),
+});
 
 export default async function TrialBalancePage({
   params,
@@ -17,203 +128,6 @@ export default async function TrialBalancePage({
 }: PageProps<"/[companyId]/reports/trial-balance">) {
   const { companyId } = await params;
   const sp = await searchParams;
-  const supabase = await createClient();
 
-  const { data: company } = await supabase
-    .from("companies")
-    .select("financial_year_start_month")
-    .eq("id", companyId)
-    .maybeSingle();
-
-  // Replaces the hand-rolled `defaultPeriod(month ?? 4, { from: sp.from, to:
-  // sp.to })` this page used to do inline. With no `?fy=` in the URL it
-  // resolves byte-for-byte the same dates (that is readContext's stated
-  // contract), so no figure on this page moves; what it buys is one object
-  // the drill links below can hand on intact instead of each of them
-  // re-deriving the period from raw query params.
-  const ctx = readContext(companyId, sp, company?.financial_year_start_month);
-
-  // The FY start month, recovered from the context rather than re-read off
-  // the company row: fyStart is by definition the first day of the financial
-  // year, so its month IS the start month — and it has already been through
-  // readContext's null/out-of-range normalisation, which a second
-  // `?? 4` here would only duplicate and could drift from.
-  const startMonth = Number(ctx.fyStart.slice(5, 7));
-
-  // defaultPeriod owns the wording of the period caption, and its
-  // "FY 2026-27 to date · …" form is only correct when the period really is
-  // the untouched default. So compare against that bare default instead of
-  // re-deriving the sentence here — an explicit `?from=`/`?to=` (including
-  // one arriving from a drill) gets the plain range caption, exactly as it
-  // did before.
-  const bare = defaultPeriod(startMonth);
-  const periodLabel =
-    ctx.from === bare.from && ctx.to === bare.to
-      ? bare.label
-      : periodRangeLabel(ctx.from, ctx.to);
-
-  // A `?branch=` arriving on this page (from a branch-scoped screen, or from
-  // another report drilling in) is now actually applied rather than silently
-  // ignored — get_trial_balance has taken p_branch_id since 0009, this page
-  // just never passed it. The name is looked up only when one is set so the
-  // caption can say which branch these figures are for; a filter that changes
-  // every number on screen with nothing on screen to say so is the exact
-  // failure mode the drill work is meant to remove, not introduce.
-  const { data: branch } = ctx.branchId
-    ? await supabase
-        .from("branches")
-        .select("name")
-        .eq("id", ctx.branchId)
-        .eq("company_id", companyId)
-        .maybeSingle()
-    : { data: null };
-  const branchLabel = ctx.branchId ? ` · ${branch?.name ?? "Unknown branch"}` : "";
-
-  const { data: rows, error } = await supabase.rpc("get_trial_balance", {
-    p_company_id: companyId,
-    p_from: ctx.from,
-    p_to: ctx.to,
-    // `?? undefined` and not `?? null`: the generated arg type is
-    // `p_branch_id?: string`, and omitting the key lets Postgres apply the
-    // function's own `default null` — the "all branches" case.
-    p_branch_id: ctx.branchId ?? undefined,
-  });
-
-  const totals = (rows ?? []).reduce(
-    (acc, r) => ({
-      dr: acc.dr + Number(r.period_debit ?? 0),
-      cr: acc.cr + Number(r.period_credit ?? 0),
-      cdr: acc.cdr + Number(r.closing_debit ?? 0),
-      ccr: acc.ccr + Number(r.closing_credit ?? 0),
-    }),
-    { dr: 0, cr: 0, cdr: 0, ccr: 0 }
-  );
-
-  const tallied = Math.abs(totals.cdr - totals.ccr) < 0.005;
-
-  const statementHref = `/${companyId}/reports/ledger-statement`;
-
-  return (
-    <ReportShell
-      title="Trial Balance"
-      period={periodLabel + branchLabel}
-      status={{
-        label: tallied
-          ? "Tallied"
-          : `Out by ${formatINR(Math.abs(totals.cdr - totals.ccr), { showZero: true })}`,
-        tone: tallied ? "ok" : "bad",
-      }}
-    >
-      {error && (
-        <p className="m-4 rounded-lg bg-error-soft px-3 py-2 text-sm text-error">
-          {error.message}
-        </p>
-      )}
-      <table className="w-full min-w-[720px] text-sm">
-        <thead>
-          <tr>
-            <th className={th}>Ledger</th>
-            <th className={th}>Group</th>
-            <th className={th + " text-right"}>Debit</th>
-            <th className={th + " text-right"}>Credit</th>
-            <th className={th + " text-right"}>Closing Dr</th>
-            <th className={th + " text-right"}>Closing Cr</th>
-            {/* One per DrillRow trailing cell, or the column count is off by
-                one and the hairline borders stop lining up. */}
-            <DrillHeadCell />
-          </tr>
-        </thead>
-        <tbody>
-          {(rows ?? []).length === 0 && (
-            <tr>
-              <td colSpan={7} className="px-4 py-12 text-center text-ink-faint">
-                Nothing posted in this period.
-              </td>
-            </tr>
-          )}
-          {(rows ?? []).map((r) => {
-            // The period is pinned EXPLICITLY rather than left to `carry`,
-            // even though this report does keep its period in ?from/?to and
-            // carrying alone would usually work. Two reasons, and both are
-            // the reason this chain exists:
-            //
-            //   - on the bare default URL there is no ?from/?to to carry, so
-            //     the statement would fall back to its OWN "FY to date"
-            //     default. That is normally the same window — but it is
-            //     recomputed against "today", so a drill clicked either side
-            //     of midnight, or after the 1 April rollover, would open a
-            //     different period than the row it came from;
-            //   - what the user clicked is a figure for a stated window. The
-            //     link should reproduce that window, not re-derive one.
-            //
-            // `carry={sp}` is still passed underneath: params win over carry
-            // (DrillLink applies them second), so these three keys are fixed
-            // while any future CARRIED_PARAM_KEY this page does not know
-            // about is still forwarded rather than dropped.
-            //
-            // `branch: ctx.branchId` — null included — is deliberate too: it
-            // CLEARS a carried branch when this report ran company-wide,
-            // which is what happens when the URL carried an empty or repeated
-            // ?branch= that readContext dropped but a blind carry would not.
-            const drillParams: DrillParams = {
-              ledger: r.ledger_id,
-              from: ctx.from,
-              to: ctx.to,
-              branch: ctx.branchId,
-            };
-
-            return (
-              <DrillRow
-                key={r.ledger_id}
-                href={statementHref}
-                params={drillParams}
-                carry={sp}
-                label={r.ledger_name}
-              >
-                <td className={td + " font-medium"}>
-                  {/* The wider click target of DrillLink's obligation (D):
-                      the ledger name is what a reader actually aims at, and
-                      drillHref guarantees the identical URL to the chevron.
-                      Underline on hover only, not DaybookTable's always-on
-                      `text-accent underline` — that styling marks an explicit
-                      action link, and 200 permanently-underlined accent names
-                      down a trial balance would read as noise, not structure. */}
-                  <Link
-                    href={drillHref(statementHref, drillParams, sp)}
-                    className="rounded-sm underline-offset-4 outline-none hover:text-accent hover:underline focus-visible:ring-2 focus-visible:ring-accent/30"
-                  >
-                    {r.ledger_name}
-                  </Link>
-                </td>
-                <td className={td + " text-ink-soft"}>{r.group_name}</td>
-                <td className={num}>{formatINR(Number(r.period_debit))}</td>
-                <td className={num}>{formatINR(Number(r.period_credit))}</td>
-                <td className={num}>{formatINR(Number(r.closing_debit))}</td>
-                <td className={num}>{formatINR(Number(r.closing_credit))}</td>
-              </DrillRow>
-            );
-          })}
-        </tbody>
-        {(rows ?? []).length > 0 && (
-          <tfoot>
-            <tr className="border-t-2 border-border-strong bg-bg font-semibold">
-              <td className="px-4 py-2.5" colSpan={2}>
-                Total
-              </td>
-              <td className={num}>{formatINR(totals.dr, { showZero: true })}</td>
-              <td className={num}>{formatINR(totals.cr, { showZero: true })}</td>
-              <td className={num}>{formatINR(totals.cdr, { showZero: true })}</td>
-              <td className={num}>{formatINR(totals.ccr, { showZero: true })}</td>
-              {/* An empty trailing cell for the chevron column rather than
-                  bumping the leading "Total" colSpan to 3 — that would slide
-                  all four totals one column left, out from under the figures
-                  they total. print:hidden to match the chevron column, which
-                  does not exist on paper. */}
-              <td className="px-4 py-2.5 print:hidden" />
-            </tr>
-          </tfoot>
-        )}
-      </table>
-    </ReportShell>
-  );
+  return <ReportView definition={trialBalanceReport} companyId={companyId} searchParams={sp} />;
 }
