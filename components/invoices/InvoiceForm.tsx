@@ -126,6 +126,17 @@ const TYPES = [
   { value: "debit_note", label: "Debit note", party: "Supplier", trading: "Purchase ledger", roles: ["creditor", "cash_bank"] },
 ] as const;
 
+// vouchers_rate_source_check's own four values. Kept as a local copy rather
+// than imported from ForexManager.tsx (which does not export its own
+// identical list) — same values and labels, so a preparer sees one vocabulary
+// for "where did this rate come from" everywhere it is asked.
+const RATE_SOURCES = [
+  { value: "rbi", label: "RBI reference rate" },
+  { value: "bank", label: "Bank-advised rate" },
+  { value: "cbic", label: "CBIC notified rate" },
+  { value: "manual", label: "Manual" },
+] as const;
+
 // The trading-ledger role lists live in lib/invoices/trading-roles.ts, not
 // here: the edit page needs the same lists to recover a saved invoice's
 // trading ledger, and a server component cannot import a value out of a
@@ -329,6 +340,20 @@ export function InvoiceForm({
   // the party-change effect below silently override it with a guess.
   const [placeOfSupplyTouched, setPlaceOfSupplyTouched] = useState(isEdit);
   const [reference, setReference] = useState(existing?.reference ?? "");
+  // create_invoice has taken p_txn_currency/p_exchange_rate correctly since
+  // 0065 — zero CGST/SGST/IGST posted, fc_amount populated, forex settlement
+  // closes it correctly — but no screen ever offered them, so every export
+  // invoice raised through this form was silently forced to INR with no
+  // foreign-currency figure printed anywhere on the document. CREATE only:
+  // update_invoice's own signature has never accepted these two arguments,
+  // so an existing invoice's currency cannot be changed retroactively through
+  // this form either, and that is not something this change takes on.
+  const [txnCurrency, setTxnCurrency] = useState("");
+  const [exchangeRate, setExchangeRate] = useState("");
+  // vouchers_fc_needs_rate_source (0065): any non-INR voucher must say where
+  // its rate came from. Same four values and labels as ForexManager.tsx's
+  // own RATE_SOURCES, "rbi" first to match its own default there.
+  const [rateSource, setRateSource] = useState("rbi");
   // Migration 0865. Kept separate from `reference` on purpose: on a sale the
   // reference is the customer's PO number and this is our own outgoing
   // delivery challan's number, and an invoice raised after goods moved on a
@@ -530,6 +555,14 @@ export function InvoiceForm({
   const partyState = allLedgers.find((l) => l.id === partyId)?.state_code ?? null;
   const shipToIsElsewhere =
     shipToOn && shipTo.stateCode !== "" && partyState !== null && shipTo.stateCode !== partyState;
+
+  // Foreign-currency billing only ever applies to an overseas party — a
+  // domestic B2B/B2C invoice has no reason to carry a currency other than
+  // INR, and offering the fields unconditionally would just be a place to
+  // fill in nonsense on an ordinary sale. Not shown on edit: update_invoice
+  // cannot change currency after the fact (see the state declaration above).
+  const isOverseasParty = allLedgers.find((l) => l.id === partyId)?.gst_registration_type === "overseas";
+  const showCurrencyFields = isOverseasParty && !isEdit;
 
   const supplyType =
     gstOn && branch?.registeredState && placeOfSupply
@@ -745,6 +778,14 @@ export function InvoiceForm({
     if (!tradingId) return `Select a ${config.trading.toLowerCase()}.`;
     if (taxable <= 0) return "The invoice must come to more than zero.";
     if (gstOn && !placeOfSupply) return "Select a place of supply.";
+    if (showCurrencyFields) {
+      const code = txnCurrency.trim().toUpperCase();
+      if (!/^[A-Z]{3}$/.test(code)) return "Currency is a 3-letter code, like USD or EUR.";
+      const rate = Number(exchangeRate);
+      if (!exchangeRate.trim() || !Number.isFinite(rate) || rate <= 0) {
+        return "Enter the exchange rate (1 unit of the invoice currency, in rupees).";
+      }
+    }
     // The same rule app_private.assert_rule46b_number applies, checked here so
     // the preparer reads a sentence rather than waiting for a round trip that
     // fails — and, on a tax invoice, so a number the IRP would reject never
@@ -853,6 +894,15 @@ export function InvoiceForm({
           p_narration: narration.trim() || undefined,
           p_reference_number: reference.trim() || undefined,
           p_place_of_supply: placeOfSupply || undefined,
+          // undefined for an ordinary domestic invoice, exactly as before
+          // this change — create_invoice's own defaults (INR, rate 1) apply.
+          p_txn_currency: showCurrencyFields ? txnCurrency.trim().toUpperCase() : undefined,
+          p_exchange_rate: showCurrencyFields ? Number(exchangeRate) : undefined,
+          // vouchers_fc_needs_rate_source requires this the moment currency
+          // is not INR — undefined here would fail at the database instead
+          // of the form, which validateForm's own check above never lets
+          // happen.
+          p_rate_source: showCurrencyFields ? rateSource : undefined,
           // Exactly one of these, and only when the mode calls for it.
           // next_voucher_number REFUSES a series it was not asked for in
           // automatic mode, and resolve_manual_voucher_number refuses a typed
@@ -1367,6 +1417,70 @@ export function InvoiceForm({
           </label>
         )}
       </div>
+
+      {showCurrencyFields && (
+        <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+          <p className="text-xs text-ink-faint sm:col-span-2 lg:col-span-4">
+            Item rates below are still entered in rupees, exactly as on any other invoice — this
+            just records what foreign currency this bill is in and prints the equivalent amount.
+          </p>
+          <label className="flex flex-col gap-1.5">
+            <span className="text-sm font-medium">Currency</span>
+            <input
+              value={txnCurrency}
+              onChange={(e) => setTxnCurrency(e.target.value.toUpperCase())}
+              placeholder="USD"
+              maxLength={3}
+              className={field + " font-mono uppercase"}
+            />
+          </label>
+          <label className="flex flex-col gap-1.5">
+            <span className="text-sm font-medium">Exchange rate</span>
+            <input
+              inputMode="decimal"
+              value={exchangeRate}
+              onChange={(e) => setExchangeRate(e.target.value)}
+              placeholder="e.g. 84.00"
+              className={field + " text-right tabular-nums"}
+            />
+            <span className="text-xs text-ink-faint">
+              Rupees per 1 unit of {txnCurrency.trim() || "the invoice currency"}.
+            </span>
+          </label>
+          <label className="flex flex-col gap-1.5">
+            <span className="text-sm font-medium">Rate source</span>
+            <select
+              value={rateSource}
+              onChange={(e) => setRateSource(e.target.value)}
+              className={field}
+            >
+              {RATE_SOURCES.map((r) => (
+                <option key={r.value} value={r.value}>
+                  {r.label}
+                </option>
+              ))}
+            </select>
+          </label>
+          <div className="flex flex-col gap-1.5 sm:col-span-1">
+            <span className="text-sm font-medium">
+              In {txnCurrency.trim() || "the invoice currency"}
+            </span>
+            {/* Item rates are entered in rupees, same as any other invoice —
+                app_private.set_invoice_fc_exposure derives fc_amount as
+                INR ÷ exchange_rate, not the other way round, so this preview
+                divides too. Read the trigger before ever "fixing" this to
+                multiply — the arithmetic already went the wrong way once. */}
+            <p className="rounded-lg border border-dashed border-border-strong px-3 py-2 text-sm tabular-nums text-ink-faint">
+              {Number(exchangeRate) > 0
+                ? (Math.round((taxable / Number(exchangeRate)) * 100) / 100).toLocaleString(
+                    "en-IN",
+                    { minimumFractionDigits: 2, maximumFractionDigits: 2 },
+                  )
+                : "—"}
+            </p>
+          </div>
+        </div>
+      )}
 
       {/* Bill-to / ship-to (migration 0805). A disclosure, not five more
           fields: almost every invoice delivers to the billing address, and
