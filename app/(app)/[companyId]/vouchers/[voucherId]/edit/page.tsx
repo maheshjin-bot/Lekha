@@ -1,7 +1,7 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { createClient } from "@/lib/supabase/server";
-import { VoucherForm } from "@/components/vouchers/VoucherForm";
+import { VoucherScreen, type VoucherScreenExisting } from "@/components/vouchers/VoucherScreen";
 
 export default async function EditVoucherPage({
   params,
@@ -34,10 +34,14 @@ export default async function EditVoucherPage({
         .select("ledger_id, debit_amount, credit_amount, narration, line_order")
         .eq("voucher_id", voucherId)
         .order("line_order"),
+      // state_code/pan are added here beyond what VoucherForm ever needed —
+      // VoucherScreen's own unified Ledger type requires both (Recon B1b).
+      // They render nothing on this fixed-mode edit screen (Ctrl+H is
+      // disabled whenever isEdit — B6), but the prop type still requires them.
       supabase
         .from("ledgers")
         .select(
-          "id, name, account_groups(ledger_role), is_tds_deductee, default_tds_section, ldc_rate, ldc_valid_from, ldc_valid_to, ldc_amount_cap"
+          "id, name, account_groups(ledger_role), is_tds_deductee, default_tds_section, ldc_rate, ldc_valid_from, ldc_valid_to, ldc_amount_cap, state_code, pan"
         )
         .eq("company_id", companyId)
         .eq("is_active", true)
@@ -99,8 +103,17 @@ export default async function EditVoucherPage({
         in the audit trail with a before and after snapshot.
       </p>
 
-      <VoucherForm
+      <VoucherScreen
         companyId={companyId}
+        // Ctrl+H is disabled for the whole life of an edit screen (B6) — a
+        // saved voucher's row-shape (voucher_entries here) is fixed forever
+        // — so none of these three ever render anything on this route.
+        items={[]}
+        godowns={[]}
+        states={[]}
+        gstOn={false}
+        tcsOn={false}
+        tcsSections={[]}
         ledgers={(ledgers ?? []).map((l) => ({
           id: l.id,
           name: l.name,
@@ -113,29 +126,36 @@ export default async function EditVoucherPage({
           ldc_valid_from: l.ldc_valid_from,
           ldc_valid_to: l.ldc_valid_to,
           ldc_amount_cap: l.ldc_amount_cap,
+          state_code: l.state_code,
+          pan: l.pan,
         }))}
-        branches={branches ?? []}
+        branches={(branches ?? []).map((b) => ({ ...b, registeredState: null }))}
         tdsSections={tdsSections ?? []}
         tdsPayableLedgerId={tdsPayableMap?.ledger_id ?? null}
         gstLedgerIds={gstLedgerIds}
-        existing={{
-          id: voucher.id,
-          voucherNumber: voucher.voucher_number,
-          voucherType: voucher.voucher_type,
-          financialYearLabel: voucher.financial_year_label,
-          date: voucher.voucher_date,
-          narration: voucher.narration ?? "",
-          reference: voucher.reference_number ?? "",
-          branchId: voucher.branch_id,
-          lines: (entries ?? []).map((e) => ({
-            ledgerId: e.ledger_id,
-            side: Number(e.debit_amount) > 0 ? ("dr" as const) : ("cr" as const),
-            amount: String(
-              Number(e.debit_amount) > 0 ? e.debit_amount : e.credit_amount
-            ),
-            narration: e.narration ?? "",
-          })),
-        }}
+        existing={
+          {
+            mode: "raw-voucher",
+            data: {
+              id: voucher.id,
+              voucherNumber: voucher.voucher_number,
+              voucherType: voucher.voucher_type,
+              financialYearLabel: voucher.financial_year_label,
+              date: voucher.voucher_date,
+              narration: voucher.narration ?? "",
+              reference: voucher.reference_number ?? "",
+              branchId: voucher.branch_id,
+              lines: (entries ?? []).map((e) => ({
+                ledgerId: e.ledger_id,
+                side: Number(e.debit_amount) > 0 ? ("dr" as const) : ("cr" as const),
+                amount: String(
+                  Number(e.debit_amount) > 0 ? e.debit_amount : e.credit_amount
+                ),
+                narration: e.narration ?? "",
+              })),
+            },
+          } satisfies VoucherScreenExisting
+        }
       />
     </main>
   );

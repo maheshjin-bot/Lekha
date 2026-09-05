@@ -1,7 +1,12 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { createClient } from "@/lib/supabase/server";
-import { InvoiceForm, type ExistingInvoice, type ShipTo } from "@/components/invoices/InvoiceForm";
+import {
+  VoucherScreen,
+  type ExistingInvoice,
+  type ShipTo,
+  type VoucherScreenExisting,
+} from "@/components/vouchers/VoucherScreen";
 import { Alert } from "@/components/ui/Alert";
 import { TRADING_ROLES } from "@/lib/invoices/trading-roles";
 
@@ -227,7 +232,7 @@ export default async function EditInvoicePage({
       TRADING_ROLES.includes(e.ledgers?.account_groups?.ledger_role ?? "")
     )?.ledger_id ?? "";
 
-  const existing: ExistingInvoice = {
+  const existingInvoice: ExistingInvoice = {
     id: voucher.id,
     voucherNumber: voucher.voucher_number,
     voucherType: voucher.voucher_type as ExistingInvoice["voucherType"],
@@ -251,6 +256,17 @@ export default async function EditInvoicePage({
     })),
     shipTo,
   };
+
+  // B6 of the Recon contract: an existing invoice is always tagged
+  // "item-invoice", never "accounting-invoice" — migration 1480 means a
+  // sales/purchase invoice can itself carry service (non-stock) lines too,
+  // so "which mode" for an EDIT is really just "item-invoice" always, with
+  // per-line stock/non-stock handled inside ItemInvoiceGrid regardless of
+  // which type the voucher itself is (sales/purchase/credit_note/debit_note
+  // all render through the same grid on this screen). Ctrl+H is hidden for
+  // the whole life of an edit either way (isEdit === true), so this tag only
+  // ever selects which of ExistingInvoice/ExistingVoucher `data` is.
+  const existing: VoucherScreenExisting = { mode: "item-invoice", data: existingInvoice };
 
   return (
     <main className="mx-auto max-w-5xl px-6 py-10">
@@ -307,7 +323,7 @@ export default async function EditInvoicePage({
           This voucher has been deleted and can no longer be edited.
         </p>
       ) : (
-        <InvoiceForm
+        <VoucherScreen
           companyId={companyId}
           items={items ?? []}
           ledgers={flatLedgers}

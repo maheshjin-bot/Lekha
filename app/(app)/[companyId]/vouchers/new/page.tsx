@@ -1,6 +1,6 @@
 import Link from "next/link";
 import { createClient } from "@/lib/supabase/server";
-import { VoucherForm } from "@/components/vouchers/VoucherForm";
+import { VoucherScreen } from "@/components/vouchers/VoucherScreen";
 import {
   buildNumberingByBranch,
   type NumberingSettingsRow,
@@ -18,12 +18,21 @@ export default async function NewVoucherPage({
     { data: tdsSections },
     { data: tdsPayableMap },
     { data: gstLedgerRows },
+    { data: modules },
+    { data: states },
+    { data: tcsSections },
   ] =
     await Promise.all([
+      // state_code/pan are added here (beyond what VoucherForm ever needed)
+      // because VoucherScreen's own unified Ledger type requires both —
+      // Ctrl+H can swap this route into item-invoice/accounting-invoice mode,
+      // whose party Combobox and GST tax preview read them. See the Recon
+      // contract's B1b for the full "why the two forms' Ledger types had to
+      // widen into one" reasoning.
       supabase
         .from("ledgers")
         .select(
-          "id, name, account_groups(name, ledger_role), is_tds_deductee, default_tds_section, ldc_rate, ldc_valid_from, ldc_valid_to, ldc_amount_cap"
+          "id, name, account_groups(name, ledger_role), is_tds_deductee, default_tds_section, ldc_rate, ldc_valid_from, ldc_valid_to, ldc_amount_cap, state_code, pan, gstin, gst_registration_type, party_type"
         )
         .eq("company_id", companyId)
         .eq("is_active", true)
@@ -69,6 +78,19 @@ export default async function NewVoucherPage({
           "output_igst",
           "output_cess",
         ]),
+      // gstOn/tcsOn, states and TCS sections — cheap, company/reference-scale
+      // reads, fetched so a Ctrl+H swap into item-invoice mode from this
+      // route renders its GST/TCS-dependent fields correctly rather than
+      // silently behaving as if neither module were active. items/godowns/
+      // priceListItems are deliberately left [] below (Recon B1's own
+      // sanctioned default for "a pure raw-voucher route") — those scale with
+      // company size, unlike these three reference-table reads.
+      supabase.rpc("get_company_modules", { p_company_id: companyId }),
+      supabase.from("ref_states").select("code, name").order("name"),
+      supabase
+        .from("ref_tcs_sections")
+        .select("section_code, rate_percent, no_pan_rate_percent, threshold_rupees")
+        .eq("is_active", true),
     ]);
 
   const flatLedgers = (ledgers ?? []).map((l) => ({
@@ -83,7 +105,15 @@ export default async function NewVoucherPage({
     ldc_valid_from: l.ldc_valid_from,
     ldc_valid_to: l.ldc_valid_to,
     ldc_amount_cap: l.ldc_amount_cap,
+    state_code: l.state_code,
+    pan: l.pan,
+    gstin: l.gstin,
+    gst_registration_type: l.gst_registration_type,
+    party_type: l.party_type,
   }));
+
+  const gstOn = (modules ?? []).some((m) => m.code === "gst" && m.active);
+  const tcsOn = (modules ?? []).some((m) => m.code === "tcs" && m.active);
 
   // The numbering policy per voucher type (migration 0725) — fetched here, as
   // a prop, for the same reason the ledgers and branches above are: the form
@@ -138,10 +168,24 @@ export default async function NewVoucherPage({
           .
         </p>
       ) : (
-        <VoucherForm
+        <VoucherScreen
           companyId={companyId}
+          defaultMode="raw-voucher"
+          items={[]}
           ledgers={flatLedgers}
-          branches={branches ?? []}
+          // registeredState is never fetched on this route (VoucherForm
+          // never needed it) — B1c's own sanctioned default for a
+          // raw-voucher-originating route: null per branch, read only by
+          // item/accounting mode's tax preview, which this route's Ctrl+H
+          // swap into either of those modes will not have a GST-registration
+          // fact to show either way.
+          branches={(branches ?? []).map((b) => ({ ...b, registeredState: null }))}
+          godowns={[]}
+          states={states ?? []}
+          gstOn={gstOn}
+          tcsOn={tcsOn}
+          tcsSections={tcsSections ?? []}
+          priceListItems={[]}
           tdsSections={tdsSections ?? []}
           tdsPayableLedgerId={tdsPayableMap?.ledger_id ?? null}
           gstLedgerIds={gstLedgerIds}

@@ -1,6 +1,6 @@
 import Link from "next/link";
 import { createClient } from "@/lib/supabase/server";
-import { InvoiceForm } from "@/components/invoices/InvoiceForm";
+import { VoucherScreen } from "@/components/vouchers/VoucherScreen";
 import {
   buildNumberingByBranch,
   type NumberingSettingsRow,
@@ -208,7 +208,7 @@ export default async function NewInvoicePage({
               links below to create them without leaving this invoice.
             </p>
           )}
-          <InvoiceForm
+          <VoucherScreen
             companyId={companyId}
             items={items ?? []}
             ledgers={flatLedgers}
