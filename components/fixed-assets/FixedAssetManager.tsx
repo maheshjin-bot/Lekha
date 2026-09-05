@@ -4,6 +4,7 @@ import { Fragment, useState } from "react";
 import { useRouter } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
 import { formatINR } from "@/lib/utils/currency";
+import { DocumentAttachments } from "@/components/documents/DocumentAttachments";
 
 type Category = {
   category_code: string;
@@ -49,16 +50,28 @@ function todayLocal(): string {
 const field =
   "rounded-lg border border-border-strong bg-surface px-3 py-2 text-sm text-ink outline-none focus-visible:border-accent focus-visible:ring-2 focus-visible:ring-accent/30";
 
+type Doc = {
+  id: string;
+  storage_path: string;
+  file_name: string;
+  mime_type: string;
+  size_bytes: number;
+  created_at: string;
+  entity_id: string | null;
+};
+
 export function FixedAssetManager({
   companyId,
   assets,
   categories,
   blocks,
+  docs = [],
 }: {
   companyId: string;
   assets: AssetRow[];
   categories: Category[];
   blocks: Block[];
+  docs?: Doc[];
 }) {
   const router = useRouter();
 
@@ -76,6 +89,7 @@ export function FixedAssetManager({
 
   // Two-step reveal for disposal — same pattern as YearEndPanel's reopen
   // section, not a confirm() and not a modal.
+  const [attachingId, setAttachingId] = useState<string | null>(null);
   const [disposingId, setDisposingId] = useState<string | null>(null);
   const [disposalDate, setDisposalDate] = useState("");
   const [disposalValue, setDisposalValue] = useState("");
@@ -221,28 +235,51 @@ export function FixedAssetManager({
                         {formatINR(Number(a.net_book_value))}
                       </td>
                       <td className="px-4 py-2.5">
-                        {disposed ? (
-                          <span className="rounded bg-surface-2 px-2 py-0.5 text-xs font-medium text-ink-soft">
-                            Disposed
-                          </span>
-                        ) : (
-                          <div className="flex items-center gap-2">
-                            <span className="rounded bg-success-soft px-2 py-0.5 text-xs font-medium text-success">
-                              Active
+                        <div className="flex flex-col items-start gap-1">
+                          {disposed ? (
+                            <span className="rounded bg-surface-2 px-2 py-0.5 text-xs font-medium text-ink-soft">
+                              Disposed
                             </span>
-                            {disposingId !== a.asset_id && (
-                              <button
-                                type="button"
-                                onClick={() => startDispose(a.asset_id)}
-                                className="text-xs text-ink-faint underline underline-offset-4 hover:text-ink"
-                              >
-                                Dispose
-                              </button>
-                            )}
-                          </div>
-                        )}
+                          ) : (
+                            <div className="flex items-center gap-2">
+                              <span className="rounded bg-success-soft px-2 py-0.5 text-xs font-medium text-success">
+                                Active
+                              </span>
+                              {disposingId !== a.asset_id && (
+                                <button
+                                  type="button"
+                                  onClick={() => startDispose(a.asset_id)}
+                                  className="text-xs text-ink-faint underline underline-offset-4 hover:text-ink"
+                                >
+                                  Dispose
+                                </button>
+                              )}
+                            </div>
+                          )}
+                          <button
+                            type="button"
+                            onClick={() =>
+                              setAttachingId(attachingId === a.asset_id ? null : a.asset_id)
+                            }
+                            className="text-xs text-ink-faint underline underline-offset-4 hover:text-ink"
+                          >
+                            Files ({docs.filter((d) => d.entity_id === a.asset_id).length})
+                          </button>
+                        </div>
                       </td>
                     </tr>
+                    {attachingId === a.asset_id && (
+                      <tr className="border-b border-border bg-bg">
+                        <td colSpan={8} className="px-4 py-3">
+                          <DocumentAttachments
+                            companyId={companyId}
+                            entityType="fixed_asset"
+                            entityId={a.asset_id}
+                            docs={docs.filter((d) => d.entity_id === a.asset_id)}
+                          />
+                        </td>
+                      </tr>
+                    )}
                     {disposingId === a.asset_id && (
                       <tr className="border-b border-border bg-bg">
                         <td colSpan={8} className="px-4 py-3">

@@ -2,6 +2,7 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 import { createClient } from "@/lib/supabase/server";
 import { VoucherDetailView } from "@/components/vouchers/VoucherDetailView";
+import { DocumentAttachments } from "@/components/documents/DocumentAttachments";
 import { isInvoiceType } from "@/lib/utils/voucher";
 
 export default async function VoucherDetailPage({
@@ -76,7 +77,14 @@ export default async function VoucherDetailPage({
   const { data: userData } = await supabase.auth.getUser();
   const user = userData.user;
 
-  const [{ data: entries }, { data: branch }, { data: membership }, { data: activeAdmins }, { data: items }] =
+  const [
+    { data: entries },
+    { data: branch },
+    { data: membership },
+    { data: activeAdmins },
+    { data: items },
+    { data: docs },
+  ] =
     await Promise.all([
       supabase
         .from("voucher_entries")
@@ -114,6 +122,16 @@ export default async function VoucherDetailPage({
             .eq("voucher_id", voucherId)
             .order("line_order")
         : Promise.resolve({ data: null }),
+      // A signed bill scan, a delivery proof, a signed engagement letter —
+      // DocumentAttachments (0060) is entity-generic and was already built
+      // for this call site (its own header names "a voucher" as the exact
+      // two-line addition this is); nothing wired it in until now.
+      supabase
+        .from("documents")
+        .select("id, storage_path, file_name, mime_type, size_bytes, created_at")
+        .eq("company_id", companyId)
+        .eq("entity_type", "voucher")
+        .eq("entity_id", voucherId),
     ]);
 
   // Maker-checker: only an admin who didn't create this voucher can approve
@@ -168,6 +186,15 @@ export default async function VoucherDetailPage({
         lines={entries ?? []}
         items={items ?? undefined}
       />
+
+      <div className="mt-6 print:hidden">
+        <DocumentAttachments
+          companyId={companyId}
+          entityType="voucher"
+          entityId={voucherId}
+          docs={docs ?? []}
+        />
+      </div>
     </main>
   );
 }

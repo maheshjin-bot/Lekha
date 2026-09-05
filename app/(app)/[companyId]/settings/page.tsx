@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { createClient } from "@/lib/supabase/server";
 import { CompanySettingsForm } from "@/components/companies/CompanySettingsForm";
+import { DocumentAttachments } from "@/components/documents/DocumentAttachments";
 
 export default async function SettingsPage({
   params,
@@ -8,13 +9,25 @@ export default async function SettingsPage({
   const { companyId } = await params;
   const supabase = await createClient();
 
-  const { data: company } = await supabase
-    .from("companies")
-    .select(
-      "id, name, pan, tan, udyam_number, udyam_category, entity_type, company_tax_regime, is_professional, stock_margin_percent, debtor_margin_percent, debtor_eligibility_days, password_protected, upi_vpa"
-    )
-    .eq("id", companyId)
-    .maybeSingle();
+  const [{ data: company }, { data: docs }] = await Promise.all([
+    supabase
+      .from("companies")
+      .select(
+        "id, name, pan, tan, udyam_number, udyam_category, entity_type, company_tax_regime, is_professional, stock_margin_percent, debtor_margin_percent, debtor_eligibility_days, password_protected, upi_vpa"
+      )
+      .eq("id", companyId)
+      .maybeSingle(),
+    // The incorporation certificate, a lease deed, a board resolution — filed
+    // once against the company itself rather than any one voucher or asset.
+    // DocumentAttachments (0060) was already built entity-generic for this
+    // exact call site; nothing wired it in until now.
+    supabase
+      .from("documents")
+      .select("id, storage_path, file_name, mime_type, size_bytes, created_at")
+      .eq("company_id", companyId)
+      .eq("entity_type", "company")
+      .eq("entity_id", companyId),
+  ]);
 
   return (
     <main className="mx-auto max-w-2xl px-6 py-10">
@@ -97,6 +110,25 @@ export default async function SettingsPage({
         </span>
         <span aria-hidden className="text-ink-faint">→</span>
       </Link>
+
+      <div className="mt-8">
+        <h2 className="font-display text-lg font-semibold tracking-tight text-ink">
+          Company documents
+        </h2>
+        <p className="mt-1 text-sm text-ink-soft">
+          Filed against the company itself — the incorporation certificate,
+          a lease deed, a board resolution — rather than any one voucher or
+          asset.
+        </p>
+        <div className="mt-3">
+          <DocumentAttachments
+            companyId={companyId}
+            entityType="company"
+            entityId={companyId}
+            docs={docs ?? []}
+          />
+        </div>
+      </div>
     </main>
   );
 }
