@@ -1,6 +1,7 @@
 "use client";
 
 import { useRef, useState } from "react";
+import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { toast } from "sonner";
 import { createClient } from "@/lib/supabase/client";
@@ -666,7 +667,11 @@ export function PrintTemplateForm({
                   ) : (
                     <>
                       No UPI ID is set for this company yet, so nothing prints either way. Add one
-                      under Settings → Company profile.
+                      under{" "}
+                      <Link href={`/${companyId}/settings`} className="underline">
+                        Settings
+                      </Link>
+                      , in the &ldquo;UPI payment QR&rdquo; section.
                     </>
                   )}
                 </span>

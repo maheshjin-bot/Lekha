@@ -74,6 +74,16 @@ comment on table public.statutory_update_notes is
 -- ----------------------------------------------------------------------------
 alter table public.statutory_update_notes enable row level security;
 
+-- REFINED BY 1844, deliberately not rewritten here. Everything above stayed:
+-- the table is still global rather than company-scoped, and any authenticated
+-- user may still file a note and advance someone else's. What 1844 changed is
+-- the one thing this header never actually decided — `for all` also granted
+-- DELETE, so any user of any company could silently erase another's entry
+-- from something whose own comment calls it an audit trail. 1844 splits the
+-- write policy into INSERT and UPDATE, adds no DELETE policy, defaults
+-- created_by to auth.uid() (it was always null, so notes were authorless),
+-- and pins authorship on update. Left standing here as the record of what
+-- was decided when; see 1844 for the reasoning on what was not.
 create policy statutory_update_notes_read on public.statutory_update_notes
   for select to authenticated using (true);
 create policy statutory_update_notes_write on public.statutory_update_notes

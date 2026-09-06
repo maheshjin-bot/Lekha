@@ -240,7 +240,12 @@ comment on table public.income_tax_statement_lines is
 
 alter table public.income_tax_statement_lines enable row level security;
 
+-- `to authenticated` was missing here until 1844. Without it a policy defaults
+-- to PUBLIC, which includes anon — and anon does hold SELECT on this table, so
+-- only the USING clause was standing between an unauthenticated caller and
+-- real rows. Corrected in place so a fresh database never reproduces it.
 create policy income_tax_statement_lines_read on public.income_tax_statement_lines for select
+  to authenticated
   using (app_private.is_company_member(company_id));
 
 -- ----------------------------------------------------------------------------

@@ -630,7 +630,7 @@ export function buildPostPreview(input: PreviewInput, facts: PreviewFacts): Post
         const resolved = facts.taxLedgers[purpose] ?? null;
         if (!resolved) {
           blockers.push(
-            `No ${taxPrefix} ${kind.toUpperCase()} ledger is mapped for this registration, so create_invoice refuses the post. Seed the GST ledgers for it first.`
+            `No ${taxPrefix} ${kind.toUpperCase()} ledger is mapped for this registration, so create_invoice refuses the post. Open Registrations → Tax ledgers and press Repair for this GSTIN.`
           );
           continue;
         }
@@ -647,7 +647,7 @@ export function buildPostPreview(input: PreviewInput, facts: PreviewFacts): Post
       const rcmLedger = facts.taxLedgers["rcm_payable"] ?? null;
       if (!rcmLedger) {
         blockers.push(
-          "A line on this bill is flagged for reverse charge but no RCM Payable ledger is mapped for this registration, so create_invoice refuses the post."
+          "A line on this bill is flagged for reverse charge but no RCM Payable ledger is mapped for this registration, so create_invoice refuses the post. Open Registrations → Tax ledgers and press Repair for this GSTIN."
         );
       } else {
         entries.push({

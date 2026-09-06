@@ -1,3 +1,4 @@
+import Link from "next/link";
 import { createClient } from "@/lib/supabase/server";
 import { RegistrationManager } from "@/components/registrations/RegistrationManager";
 
@@ -11,8 +12,11 @@ export default async function RegistrationsPage({
     await Promise.all([
       supabase
         .from("gst_registrations")
+        // legal_name / trade_name / registered_to have existed on this table
+        // since 0005 and were never once fetched here, which is half of why
+        // nothing could write them — see migration 1390.
         .select(
-          "id, gstin, state_code, registration_type, filing_frequency, registered_from, is_active, lut_number, lut_valid_from, lut_valid_to, lut_arn"
+          "id, gstin, state_code, registration_type, filing_frequency, registered_from, registered_to, is_active, legal_name, trade_name, lut_number, lut_valid_from, lut_valid_to, lut_arn"
         )
         .eq("company_id", companyId)
         .order("registered_from"),
@@ -39,6 +43,25 @@ export default async function RegistrationsPage({
         branches={branches ?? []}
         states={states ?? []}
       />
+
+      {/* The only entry point to the repair screen: components/nav/NavRail.tsx
+          is owned by a concurrent session and must not be edited here, and
+          /registrations is where the tax-ledger map is created in the first
+          place. Same arrangement as the Error log card on /settings — the
+          integration pass should add a proper nav entry. */}
+      <Link
+        href={`/${companyId}/registrations/tax-ledgers`}
+        className="mt-6 flex items-center justify-between rounded-lg border border-border bg-surface p-5 transition-colors hover:bg-surface-2"
+      >
+        <span>
+          <span className="block font-semibold text-ink">Tax ledgers</span>
+          <span className="mt-0.5 block text-sm text-ink-soft">
+            Which ledger each GST amount posts to, per GSTIN — and a repair for when
+            one is missing, which is what stops an invoice saving at all.
+          </span>
+        </span>
+        <span aria-hidden className="text-ink-faint">→</span>
+      </Link>
     </main>
   );
 }

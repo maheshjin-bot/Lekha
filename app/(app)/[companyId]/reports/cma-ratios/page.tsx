@@ -129,6 +129,20 @@ export default async function CmaRatiosPage({
     p_fy_end: period.to,
   });
 
+  // A CC/OD facility is entered on the Stock statement report (the only screen
+  // holding NewFacilityForm), and that report is gated behind the
+  // stock_statement module. This page is NOT gated, so for a company without
+  // the module the honest instruction is two steps, not one — sending them
+  // straight to a screen that answers "Not turned on for this company" is the
+  // same broken-signpost defect as the "Settings → Bank facility" text this
+  // replaced.
+  const { data: modules } = await supabase.rpc("get_company_modules", {
+    p_company_id: companyId,
+  });
+  const stockStatementOn = (modules ?? []).some(
+    (m) => m.code === "stock_statement" && m.active
+  );
+
   const rows = (data ?? []) as Row[];
   const bySection = (s: string) => rows.filter((r) => r.section === s);
 
@@ -180,12 +194,22 @@ export default async function CmaRatiosPage({
       {sanctioned === 0 && (
         <div className="border-t border-border bg-warning-soft px-4 py-3 text-xs text-ink">
           No banking facility is on record, so the sanctioned limit reads zero and
-          the headroom figure is just Method II itself. Add your CC/OD sanction
-          under{" "}
-          <Link href={`/${companyId}/settings`} className="underline">
-            Settings → Bank facility
+          the headroom figure is just Method II itself. A CC/OD sanction is entered
+          on the{" "}
+          <Link href={`/${companyId}/reports/stock-statement`} className="underline">
+            Stock statement
           </Link>{" "}
-          to compare properly.
+          — that being the report you submit against the facility each month.
+          {!stockStatementOn && (
+            <>
+              {" "}
+              That report needs the Banking and Inventory modules on first, under{" "}
+              <Link href={`/${companyId}/settings/modules`} className="underline">
+                Settings → Modules
+              </Link>
+              .
+            </>
+          )}
         </div>
       )}
 

@@ -613,12 +613,22 @@ describeDb(`document storage (${hasDb ? "live" : noDbReason})`, () => {
     // the tenancy suite already runs for every public-schema table, applied
     // to storage.objects specifically — RLS on a table outside the public
     // schema is easy to forget when auditing "every policy in this app".
+    // The scoping helper list has to keep up with the features that add
+    // legitimately non-membership-scoped objects. 0575's external signer link
+    // and 0745's WhatsApp inbound capture both create storage policies that
+    // anon reaches by TOKEN rather than by company membership — that is their
+    // whole design — so they scope through signature_request_signer_upload_
+    // allowed / signature_request_source_doc_visible /
+    // whatsapp_inbound_draft_ready instead. They were never added here, so
+    // this assertion has been red since 0575 shipped; found once the database
+    // suite was actually run. What still must not exist is a policy scoped by
+    // nothing at all.
     const rows = await sql(`
       select policyname, cmd, coalesce(qual, with_check) as expr
         from pg_policies
        where schemaname = 'storage' and tablename = 'objects'
-         and coalesce(qual, '') !~ 'is_company_member|can_write_company'
-         and coalesce(with_check, '') !~ 'is_company_member|can_write_company'
+         and coalesce(qual, '') !~ 'is_company_member|can_write_company|signature_request_signer_upload_allowed|signature_request_source_doc_visible|whatsapp_inbound_draft_ready'
+         and coalesce(with_check, '') !~ 'is_company_member|can_write_company|signature_request_signer_upload_allowed|signature_request_source_doc_visible|whatsapp_inbound_draft_ready'
     `);
     expect(rows, `storage.objects policies with no company scope:\n${offenders(rows)}`).toEqual([]);
   });
@@ -2183,7 +2193,15 @@ describeDb(`tenancy and RLS, catalog-level (${hasDb ? "live" : noDbReason})`, ()
     // RLS with no policy denies everything. That is correct for tables written
     // exclusively by SECURITY DEFINER functions, and a mistake anywhere else.
     // Listing them explicitly means adding a new one is a decision, not a slip.
-    const denyAllByDesign = ["voucher_number_sequences"];
+    //
+    // voucher_number_sequences was on this list until 0094 deliberately gave it
+    // a SELECT policy (a SECURITY INVOKER report function needs the table
+    // itself readable, and "permission denied for table
+    // voucher_number_sequences" was the symptom). The list was never updated,
+    // so this assertion has been red ever since — caught once the database
+    // suite was actually run. Writes are still policy-less and still go only
+    // through next_voucher_number, which is what the invariant was protecting.
+    const denyAllByDesign: string[] = [];
     const rows = await sql<{ table_name: string }>(`
       select c.relname as table_name
         from pg_class c join pg_namespace n on n.oid = c.relnamespace
@@ -2270,6 +2288,21 @@ describeDb(`write paths (${hasDb ? "live" : noDbReason})`, () => {
       // table -> the functions that are meant to write it
       company_modules: ["set_module", "resolve_conditional_modules"],
       voucher_number_sequences: ["next_voucher_number"],
+      // The allowlist stopped growing with the schema years ago — every table
+      // below is a real, working feature whose writer was checked live and
+      // confirmed SECURITY DEFINER; this test had simply never been told
+      // about them, so it was silently not checking any table added since
+      // whichever migration first added company_modules/
+      // voucher_number_sequences.
+      delivery_challan_receipts: ["create_delivery_challan_receipt"],
+      delivery_challans: ["create_delivery_challan", "create_delivery_challan_receipt"],
+      job_work_challans: ["create_job_work_challan", "create_job_work_return"],
+      job_work_returns: ["create_job_work_return"],
+      gstr2b_lines: ["import_gstr2b_lines"],
+      payment_webhook_events: ["receive_payment_webhook_event"],
+      income_tax_statement_lines: ["import_income_tax_statement_lines"],
+      notifications: ["create_notifications_from_needs_attention"],
+      error_log: ["write_error_log"],
     };
 
     const noInsertPolicy = await sql<{ table_name: string }>(`
@@ -4177,10 +4210,16 @@ describeDb(`payroll cluster: leave, gratuity, F&F (${hasDb ? "live" : noDbReason
   });
 
   it("no gratuity computation shows a positive amount for an ineligible (under 5 years, non-death/disablement) employee", async () => {
+    // Called get_gratuity_computation(company, as_at) when written. That name
+    // now belongs to the per-employee, four-argument form
+    // (uuid, uuid, date, text); the company-wide as-at-a-date one is
+    // get_gratuity_estimates. So this threw 42883 "function does not exist"
+    // rather than asserting anything — invisible for as long as the database
+    // suite never ran. Same columns, so the fix is the name.
     const rows = await sql(`
       select c.name, g.employee_id, g.completed_years_for_formula, g.gratuity_payable, g.eligible
         from companies c
-        cross join lateral get_gratuity_computation(c.id, current_date) g
+        cross join lateral get_gratuity_estimates(c.id, current_date) g
        where not g.eligible and g.gratuity_payable > 0
     `);
     expect(rows, `an ineligible employee has a nonzero gratuity amount:\n${offenders(rows)}`).toEqual([]);
@@ -4190,7 +4229,7 @@ describeDb(`payroll cluster: leave, gratuity, F&F (${hasDb ? "live" : noDbReason
     const rows = await sql(`
       select c.name, g.employee_id, g.gratuity_payable
         from companies c
-        cross join lateral get_gratuity_computation(c.id, current_date) g
+        cross join lateral get_gratuity_estimates(c.id, current_date) g
        where g.gratuity_payable > 2000000
     `);
     expect(rows, `gratuity exceeds the Sec 53 ceiling of ₹20 lakh:\n${offenders(rows)}`).toEqual([]);
@@ -4974,4 +5013,86 @@ describe.skip("resolve_conditional_modules [needs seed]", () => {
   // so a module activated and deactivated on the same day stays active for that
   // day per module_active(). Assert whichever behaviour is decided to be right.
   it("a module activated and deactivated on the same day is not active", async () => {});
+});
+
+// ---------------------------------------------------------------------------
+// PUBLIC-grant containment (1844)
+// ---------------------------------------------------------------------------
+// The bug class these guard against has now shipped three times — 0064, 0231,
+// and again in 1844 — always the same way: `revoke execute ... from anon` on
+// its own is a NO-OP, because Postgres grants EXECUTE to the PUBLIC
+// pseudo-role at creation time and every real role inherits it. The existing
+// coverage was per-wave ("no new function from THIS wave is anon-reachable"),
+// which by construction cannot catch a function that predates the wave or one
+// created directly in the live database. These two are schema-wide instead.
+describeDb(`PUBLIC-grant containment (${hasDb ? "live" : noDbReason})`, () => {
+  it("no function in public carries the incidental PUBLIC grant", async () => {
+    // A bare `=X/...` entry in proacl is the PUBLIC grant. Nothing in this
+    // schema should rely on it: the roles that need EXECUTE (authenticated,
+    // service_role, anon for the deliberate exceptions below) all hold
+    // explicit grants. Catching it here rather than per-wave is the whole
+    // point — 1844 found four write RPCs and three getters still carrying it
+    // years after two migrations had supposedly closed this.
+    const rows = await sql(`
+      select p.oid::regprocedure::text as sig,
+             array_to_string(p.proacl::text[], ' | ') as acl
+        from pg_proc p
+        join pg_namespace n on n.oid = p.pronamespace
+       where n.nspname = 'public'
+         and p.prokind = 'f'
+         and '=X/postgres' = any(p.proacl::text[])
+       order by 1
+    `);
+    expect(rows, `functions still carrying the PUBLIC grant:\n${offenders(rows)}`).toEqual([]);
+  });
+
+  it("exactly the intended functions are executable by anon, and each says so explicitly", async () => {
+    // The allowlist, and why each one is on it:
+    //   api_get_trial_balance / api_get_dashboard_kpis  0063 public API, keyed
+    //   get_signature_request_by_token                  0575 external signer link
+    //   record_signed_document_by_token                 0575 external signer link
+    //   receive_payment_webhook_event                   payment gateway callback
+    //   receive_whatsapp_inbound_message                WhatsApp inbound webhook
+    //   log_error_global                                client error reporting
+    // Anything else appearing here is either a revoke that was written as
+    // `from anon` instead of `from public, anon`, or — as 1844 found with
+    // public.zz_gpr_copy, a payroll-shaped debug copy that existed only in the
+    // live database and in no migration — something created by hand and never
+    // cleaned up. Both are worth failing a build over.
+    const expected = [
+      "api_get_dashboard_kpis",
+      "api_get_trial_balance",
+      "get_signature_request_by_token",
+      "log_error_global",
+      "receive_payment_webhook_event",
+      "receive_whatsapp_inbound_message",
+      "record_signed_document_by_token",
+    ];
+    const rows = await sql<{ proname: string }>(`
+      select distinct p.proname
+        from pg_proc p
+        join pg_namespace n on n.oid = p.pronamespace
+       where n.nspname = 'public'
+         and p.prokind = 'f'
+         and has_function_privilege('anon', p.oid, 'EXECUTE')
+       order by 1
+    `);
+    expect(rows.map((r) => r.proname)).toEqual(expected);
+  });
+
+  it("anon cannot reach app_private at all", async () => {
+    // 95 of the 147 app_private functions still carry the PUBLIC grant, and
+    // 1844 deliberately left them that way: anon holds no USAGE on the schema
+    // so it cannot call any of them, PostgREST refuses to expose a non-exposed
+    // schema (PGRST106), and revoking PUBLIC there would silently strip
+    // service_role — which reaches all 95 ONLY through the PUBLIC grant, since
+    // none of them grants it explicitly. That decision is only safe for as
+    // long as the USAGE assumption holds, so this asserts the assumption
+    // instead of trusting it. If anyone ever grants anon USAGE on app_private,
+    // 61 SECURITY DEFINER functions become reachable at once and this goes red.
+    const rows = await sql<{ usage: boolean }>(`
+      select has_schema_privilege('anon', 'app_private', 'USAGE') as usage
+    `);
+    expect(rows[0].usage, "anon has been granted USAGE on app_private").toBe(false);
+  });
 });

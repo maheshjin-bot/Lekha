@@ -198,7 +198,9 @@ export default async function PfEcrPage({
         confirmed upload-ready file</strong> — the field order and delimiter are taken from EPFO&rsquo;s
         published format, cross-checked against independent sources describing it identically, but
         not verified byte-for-byte against the employer portal&rsquo;s own upload validator (no
-        sandbox exists to test that against). Figures are rounded to the nearest rupee, matching
+        sandbox exists to test that against). The CSV button above exports this table as a plain
+        spreadsheet — it is not the <code>#~#</code>-delimited ECR file itself, which still has to be
+        assembled and uploaded on the EPFO portal. Figures are rounded to the nearest rupee, matching
         EPFO&rsquo;s own instruction that ECR contributions carry no paise. EPS contribution is
         8.33% of EPF wages capped at the ₹15,000 pension-wage ceiling (prorated for a part month);
         the EPF-EPS difference column is the balance of the employer&rsquo;s 12% after EPS is taken

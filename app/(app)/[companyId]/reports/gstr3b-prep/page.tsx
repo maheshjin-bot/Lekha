@@ -265,7 +265,8 @@ export default async function Gstr3bPrepPage({
         are portal-auto-populated from GSTR-1 and locked for edit once GSTR-1 is filed for the
         period — there is nothing for LEKHA to prepare there. This screen covers Table 4 (ITC),
         Table 5.1 (interest and late fee) and Table 6.1 (payment of tax) — the tables a filer
-        actually needs source figures for.
+        actually needs source figures for. Nothing here is submitted anywhere: LEKHA has no GSTN
+        API access to file directly, so these are figures to key into the portal, not a return.
       </div>
 
       {error && (

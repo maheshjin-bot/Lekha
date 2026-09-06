@@ -195,11 +195,18 @@ create index recurring_voucher_templates_due_idx
 alter table public.recurring_voucher_templates enable row level security;
 revoke all on public.recurring_voucher_templates from anon;
 
+-- `to authenticated` was missing on all six policies in this migration until
+-- 1844. A policy with no `to` clause defaults to PUBLIC, which includes anon.
+-- The `revoke all ... from anon` above is what actually kept these three
+-- tables unreachable, so nothing was exposed — but the policies said
+-- something nobody meant, and the repo's own "no policy grants anything to
+-- anon or public" invariant was red on them. Corrected in place.
 create policy recurring_voucher_templates_read on public.recurring_voucher_templates
-  for select using (app_private.is_company_member(company_id));
+  for select to authenticated
+  using (app_private.is_company_member(company_id));
 
 create policy recurring_voucher_templates_write on public.recurring_voucher_templates
-  for all
+  for all to authenticated
   using (app_private.can_write_company(company_id) and app_private.can_access_branch(branch_id))
   with check (app_private.can_write_company(company_id) and app_private.can_access_branch(branch_id));
 
@@ -244,10 +251,11 @@ alter table public.recurring_voucher_template_lines enable row level security;
 revoke all on public.recurring_voucher_template_lines from anon;
 
 create policy recurring_voucher_template_lines_read on public.recurring_voucher_template_lines
-  for select using (app_private.is_company_member(company_id));
+  for select to authenticated
+  using (app_private.is_company_member(company_id));
 
 create policy recurring_voucher_template_lines_write on public.recurring_voucher_template_lines
-  for all
+  for all to authenticated
   using (app_private.can_write_company(company_id))
   with check (app_private.can_write_company(company_id));
 
@@ -279,10 +287,11 @@ alter table public.recurring_voucher_generation_log enable row level security;
 revoke all on public.recurring_voucher_generation_log from anon;
 
 create policy recurring_voucher_generation_log_read on public.recurring_voucher_generation_log
-  for select using (app_private.is_company_member(company_id));
+  for select to authenticated
+  using (app_private.is_company_member(company_id));
 
 create policy recurring_voucher_generation_log_write on public.recurring_voucher_generation_log
-  for all
+  for all to authenticated
   using (app_private.can_write_company(company_id))
   with check (app_private.can_write_company(company_id));
 

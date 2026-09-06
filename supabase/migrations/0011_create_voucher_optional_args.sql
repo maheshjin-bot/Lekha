@@ -178,4 +178,7 @@ begin
 end;
 $$;
 
-revoke execute on function public.update_voucher(uuid, date, jsonb, text, text, date, uuid) from anon;
+-- `from anon` alone is a NO-OP: Postgres grants EXECUTE to the PUBLIC
+-- pseudo-role at creation time and anon inherits it, so the function stayed
+-- anon-callable until 1844. Must revoke from both. Corrected in place.
+revoke execute on function public.update_voucher(uuid, date, jsonb, text, text, date, uuid) from public, anon;

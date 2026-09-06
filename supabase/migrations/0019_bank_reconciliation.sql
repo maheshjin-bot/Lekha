@@ -269,6 +269,10 @@ create policy bank_statement_lines_write on public.bank_statement_lines
   using ((select app_private.can_write_company(company_id)))
   with check ((select app_private.can_write_company(company_id)));
 
-revoke execute on function public.match_bank_line(uuid, uuid) from anon;
-revoke execute on function public.unmatch_bank_line(uuid) from anon;
-revoke execute on function public.auto_match_bank_lines(uuid, uuid) from anon;
+-- `from anon` alone is a NO-OP: Postgres grants EXECUTE to the PUBLIC
+-- pseudo-role at creation time and anon inherits it, so all three of these
+-- write RPCs stayed anon-callable until 1844. Must revoke from both.
+-- Corrected in place.
+revoke execute on function public.match_bank_line(uuid, uuid) from public, anon;
+revoke execute on function public.unmatch_bank_line(uuid) from public, anon;
+revoke execute on function public.auto_match_bank_lines(uuid, uuid) from public, anon;

@@ -90,18 +90,23 @@ function resolvePrefix(template: string, branchCode: string, fyLabel: string): s
 }
 
 /**
- * Postgres lpad, not String.padStart: lpad TRUNCATES when the value is longer
- * than the width — lpad('20', 1, '0') is '2', verified live. padStart would
- * quietly show '20' and the preview would then disagree with the number the
- * database actually mints, which is the one thing this screen must never do.
+ * The client twin of app_private.pad_voucher_counter (migration 1340).
+ *
+ * This used to mirror bare Postgres lpad, which TRUNCATES when the value is
+ * longer than the width — lpad('10000', 4, '0') is '1000' — because that was
+ * exactly what the minting path did, and a preview that disagrees with the
+ * number the database issues is the one thing this screen must never show.
+ * 1340 stopped the minting path truncating: a truncated counter reissues an
+ * earlier document's number and is then refused by vouchers' UNIQUE key
+ * mid-year, so beyond the padding width the number grows a digit instead. This
+ * pads and never shortens, which is what the database now does.
  */
-function lpad(value: number, width: number): string {
-  const s = String(value);
-  return s.length >= width ? s.slice(0, width) : s.padStart(width, "0");
+function padCounter(value: number, width: number): string {
+  return String(value).padStart(width, "0");
 }
 
 function previewOf(template: string, branchCode: string, fyLabel: string, next: number, padding: number) {
-  return resolvePrefix(template, branchCode, fyLabel) + lpad(next, padding);
+  return resolvePrefix(template, branchCode, fyLabel) + padCounter(next, padding);
 }
 
 const PREFIX_RE = /^([A-Za-z0-9/-]|\{(BRANCH|FY|FYS|YY|YYYY)\})*$/;
@@ -179,6 +184,19 @@ export function NumberingSettings({
   // conditioned on this rather than applied to everybody.
   const multiBranch = branches.length > 1;
   const branchCodes = branches.map((b) => b.code).join(" and ");
+
+  // The shape migration 1340 ships as the default for every newly created
+  // company: {BRANCH} + the type code + {YY} + '/' with 4 digits, e.g.
+  // HOSAL26/0001. Worked out from THIS company's longest branch code rather
+  // than from a two-letter example, because the number grows with the code and
+  // advice that overflows for the company reading it is worse than no advice.
+  // At six characters — the longest branches.code allows — it lands on exactly
+  // the sixteen Rule 46(b) permits.
+  const longestBranchCode = branches.reduce(
+    (worst, b) => (b.code.length > worst.length ? b.code : worst),
+    branches[0]?.code ?? "HO"
+  );
+  const defaultShapeExample = `${longestBranchCode}SAL26/0020`;
   const prefixChanging =
     editor !== null && (editor.originalPrefix === null || editor.prefix !== editor.originalPrefix);
   const prefixBranchOk = editor === null || !multiBranch || prefixNamesTheBranch(editor.prefix);
@@ -458,12 +476,13 @@ export function NumberingSettings({
             // characters and keeps the branches distinguishable.
             <>
               <span className="font-mono">
-                {"{BRANCH}"}SAL/{"{YY}"}/
+                {"{BRANCH}"}SAL{"{YY}"}/
               </span>{" "}
               with 4 digits gives{" "}
-              <span className="font-mono">{branches[0]?.code ?? "HO"}SAL/26/0020</span>, thirteen
-              characters — and because it still carries {"{BRANCH}"}, each of this company&rsquo;s{" "}
-              {branches.length} branches keeps its own numbers.
+              <span className="font-mono">{defaultShapeExample}</span>,{" "}
+              {defaultShapeExample.length} characters — and because it still carries{" "}
+              {"{BRANCH}"}, each of this company&rsquo;s {branches.length} branches keeps its own
+              numbers. That is the format a company created today starts with.
             </>
           ) : (
             <>
@@ -784,11 +803,13 @@ export function NumberingSettings({
             financial year, not unique per branch. If that makes the number too long, drop the
             slashes around the token rather than the token:{" "}
             <span className="font-mono">
-              {"{BRANCH}"}SAL/{"{YY}"}/
+              {"{BRANCH}"}SAL{"{YY}"}/
             </span>{" "}
-            with 4 digits gives <span className="font-mono">{branches[0]?.code ?? "HO"}SAL/26/0001</span>. The
-            alternative Rule 46(b) also allows is one series per branch, each with its own distinct
-            prefix.{" "}
+            with 4 digits gives{" "}
+            <span className="font-mono">{longestBranchCode}SAL26/0001</span> — the format a
+            company created today starts with, and at most sixteen characters even at the longest
+            branch code this app allows. The alternative Rule 46(b) also allows is one series per
+            branch, each with its own distinct prefix.{" "}
             {!multiBranch &&
               `This company has one branch, so nothing here is restricted — the rule only starts to apply if a second branch is opened.`}
           </p>

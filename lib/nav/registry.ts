@@ -1061,6 +1061,17 @@ const bottom: NavEntry[] = [
     workspace: "setup",
     keywords: ["2fa", "two factor", "password", "mfa"],
   },
+  {
+    // Also not under /:companyId, alongside /scan and /security above: a
+    // circular/notification feed belongs to the person keeping an eye on
+    // deadlines, not to whichever company they last opened. The route has
+    // existed on disk since it shipped but carried no nav entry anywhere —
+    // fe286c9 named this exact gap; wired here.
+    href: "/statutory-updates",
+    label: "Statutory updates",
+    workspace: "setup",
+    keywords: ["circulars", "notifications", "compliance calendar", "gst updates"],
+  },
 ];
 
 // ---------------------------------------------------------------------------

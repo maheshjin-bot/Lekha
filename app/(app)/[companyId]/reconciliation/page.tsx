@@ -35,6 +35,7 @@ export default async function ReconciliationPage({
     { data: summary },
     { data: unmatchedEntries },
     { data: unmatchedLines },
+    { data: matchedLines },
     { data: existingLines },
     { data: suggestionEvents },
   ] = await Promise.all([
@@ -56,6 +57,26 @@ export default async function ReconciliationPage({
       .eq("ledger_id", ledgerId)
       .is("matched_entry_id", null)
       .order("txn_date"),
+    // The other half of the reconciliation, and until now the invisible
+    // half: once a line was matched it was filtered out of the query above
+    // and appeared nowhere else on this screen. A wrong match — especially
+    // one auto-match made in bulk — was therefore permanent and unseen, and
+    // re-importing the statement cannot undo it (the upsert skips rows whose
+    // fingerprint is already on file). Loading them here is what makes
+    // unmatch_bank_line reachable at all.
+    //
+    // is_deleted is read, not filtered on: a line matched to a voucher that
+    // has since been deleted is exactly the stale match that most needs
+    // unmatching, so it must show rather than silently vanish again.
+    supabase
+      .from("bank_statement_lines")
+      .select(
+        "id, txn_date, description, reference, debit_amount, credit_amount, matched_at, matched_entry_id, voucher_entries!inner(id, debit_amount, credit_amount, vouchers!inner(voucher_number, voucher_date, narration, is_deleted))"
+      )
+      .eq("company_id", companyId)
+      .eq("ledger_id", ledgerId)
+      .not("matched_entry_id", "is", null)
+      .order("matched_at", { ascending: false }),
     // external_txn_id (0164) predates the generated types being
     // refreshed — same "as any" escape hatch the manufacturing/backup
     // code already uses for a column/table ahead of codegen.
@@ -121,15 +142,9 @@ export default async function ReconciliationPage({
 
   // The unmatched-entries query can't filter matched_entry_id from here (it
   // lives on the other table), so exclude client-side against the same
-  // matched set the summary counted.
-  const { data: matchedIds } = await supabase
-    .from("bank_statement_lines")
-    .select("matched_entry_id")
-    .eq("company_id", companyId)
-    .eq("ledger_id", ledgerId)
-    .not("matched_entry_id", "is", null);
-
-  const matchedSet = new Set((matchedIds ?? []).map((m) => m.matched_entry_id));
+  // matched set the summary counted — now taken straight off the matched-lines
+  // query above rather than fetched a second time, since it is the same set.
+  const matchedSet = new Set((matchedLines ?? []).map((m) => m.matched_entry_id));
   const trulyUnmatchedEntries = (unmatchedEntries ?? []).filter((e) => !matchedSet.has(e.id));
 
   return (
@@ -164,6 +179,21 @@ export default async function ReconciliationPage({
           debit_amount: Number(l.debit_amount),
           credit_amount: Number(l.credit_amount),
           suggestion: suggestionByLineId.get(l.id) ?? null,
+        }))}
+        matchedLines={(matchedLines ?? []).map((l) => ({
+          id: l.id,
+          txn_date: l.txn_date,
+          description: l.description,
+          reference: l.reference,
+          debit_amount: Number(l.debit_amount),
+          credit_amount: Number(l.credit_amount),
+          matched_at: l.matched_at,
+          entry_debit: Number(l.voucher_entries!.debit_amount),
+          entry_credit: Number(l.voucher_entries!.credit_amount),
+          voucher_number: l.voucher_entries!.vouchers!.voucher_number,
+          voucher_date: l.voucher_entries!.vouchers!.voucher_date,
+          narration: l.voucher_entries!.vouchers!.narration,
+          voucher_is_deleted: l.voucher_entries!.vouchers!.is_deleted,
         }))}
         existingLines={(existingLines ?? []).map((l) => ({
           externalTxnId: l.external_txn_id,

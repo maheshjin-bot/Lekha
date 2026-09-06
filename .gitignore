@@ -32,6 +32,10 @@ yarn-error.log*
 
 # env files (can opt-in for committing if needed)
 .env*
+# ...except the template, which holds variable NAMES and where to get their
+# values, never a value. LEKHA_TEST_DATABASE_URL in particular was undocumented
+# anywhere, which is why the whole tests/db suite skipped silently for months.
+!.env.example
 
 # vercel
 .vercel

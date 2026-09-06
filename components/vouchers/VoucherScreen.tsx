@@ -41,6 +41,7 @@
  */
 
 import { useEffect, useMemo, useRef, useState } from "react";
+import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import { toast } from "sonner";
 import { ChevronDown, ChevronUp, Settings } from "lucide-react";
@@ -279,6 +280,17 @@ export type ExistingInvoice = {
   narration: string;
   lines: ItemLine[];
   shipTo: ShipTo | null;
+};
+
+/** One bill already on file under this supplier and this bill number
+ * (find_duplicate_bills, migration 0007) — byte-identical to InvoiceForm.tsx's
+ * own DuplicateBill, ported here per fe286c9 since InvoiceForm.tsx is no
+ * longer rendered by any route. */
+type DuplicateBill = {
+  id: string;
+  voucher_number: string;
+  voucher_date: string;
+  total_amount: number;
 };
 
 /** An existing raw-voucher — byte-identical to VoucherForm.tsx's own
@@ -645,6 +657,15 @@ export function VoucherScreen({
   // ---- shared, unchanged shape from both forms today (B2) ----
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // Duplicate-bill check (find_duplicate_bills, migration 0007). Purchases
+  // and debit notes only — see the effect below for why. Both the answer and
+  // the acknowledgement are stored WITH the question they belong to and read
+  // back derived, so a supplier or bill-number change can never leave last
+  // question's answer on screen, nor last question's tick standing in for
+  // this one's. Ported from InvoiceForm.tsx (fe286c9) since that file is no
+  // longer rendered by any route.
+  const [dupResult, setDupResult] = useState<{ key: string; rows: DuplicateBill[] } | null>(null);
+  const [ackKey, setAckKey] = useState<string | null>(null);
   const [manualNumber, setManualNumber] = useState("");
   const [seriesId, setSeriesId] = useState<string | null>(null);
   const [addedLedgers, setAddedLedgers] = useState<Ledger[]>([]);
@@ -1086,6 +1107,78 @@ export function VoucherScreen({
     }
   }
 
+  /**
+   * Have we already booked a bill from this supplier carrying this bill
+   * number? find_duplicate_bills (migration 0007) has answered that question
+   * since the voucher engine was written and had never been asked from any
+   * screen — ported here from InvoiceForm.tsx (fe286c9) since that file is
+   * no longer rendered by any route.
+   *
+   * Entering the same purchase bill twice claims its input tax credit twice,
+   * which is the department's single easiest reconciliation catch: GSTR-2B
+   * carries the supplier's document number, so a second copy of one bill
+   * shows up as ITC with no counterpart. Sec 16 allows the credit once.
+   *
+   * PURCHASES AND DEBIT NOTES ONLY. `reference` means different things on the
+   * two sides: on a purchase it is the SUPPLIER'S bill number, which is
+   * unique per supplier and is exactly the duplicate key; on a sale it is the
+   * customer's PO number, and several invoices against one purchase order is
+   * ordinary trade, not a mistake. Warning there would train people to
+   * dismiss the warning here.
+   *
+   * Supplier + bill number, not amount. The database's own check is
+   * party + normalised reference (case and punctuation folded, so
+   * "VIS-4417", "vis/4417" and "VIS 4417" are one number), and that is the
+   * right key: a re-keyed bill often differs slightly in amount — a rounding
+   * difference, one line missed — and keying on the amount too would let
+   * exactly the sloppiest re-entry through. The amount is shown in the
+   * warning instead, so the preparer can see for themselves whether it is
+   * the same bill or a genuine clash of numbering.
+   *
+   * On the edit screen the voucher excludes itself, which is what
+   * p_exclude_voucher_id exists for. Only in item-invoice/accounting-invoice
+   * mode (isItemMode) — raw-voucher mode has no single "the" party field in
+   * the same sense and no config.party/isSale to key off.
+   */
+  const dupKey =
+    mode !== "raw-voucher" && !isSale && partyId && reference.trim()
+      ? `${partyId}|${reference.trim()}`
+      : null;
+
+  useEffect(() => {
+    if (!dupKey) return;
+    const [party, ref] = [dupKey.slice(0, dupKey.indexOf("|")), dupKey.slice(dupKey.indexOf("|") + 1)];
+    let abandoned = false;
+    // Debounced: this would otherwise fire once per keystroke in the bill
+    // number box. The setState is inside the timer's own callback, never in
+    // the effect body — see react-hooks/set-state-in-effect.
+    const timer = setTimeout(async () => {
+      const { data } = await createClient().rpc("find_duplicate_bills", {
+        p_company_id: companyId,
+        p_party_ledger_id: party,
+        p_reference_number: ref,
+        p_exclude_voucher_id: existingId ?? undefined,
+      });
+      if (abandoned) return;
+      setDupResult({
+        key: dupKey,
+        rows: (data ?? []).map((d) => ({
+          id: d.id,
+          voucher_number: d.voucher_number,
+          voucher_date: d.voucher_date,
+          total_amount: Number(d.total_amount),
+        })),
+      });
+    }, 400);
+    return () => {
+      abandoned = true;
+      clearTimeout(timer);
+    };
+  }, [companyId, dupKey, existingId]);
+
+  const duplicateBills = dupKey && dupResult?.key === dupKey ? dupResult.rows : [];
+  const duplicatesAcknowledged = ackKey !== null && ackKey === dupKey;
+
   // Allocation trio #1's own sync key (item/accounting mode).
   const allocationSyncKey = `${partyId}|${voucherType}`;
   const [syncedAllocationKey, setSyncedAllocationKey] = useState(allocationSyncKey);
@@ -1168,6 +1261,13 @@ export function VoucherScreen({
     if (!tradingId) return `Select a ${config.trading.toLowerCase()}.`;
     if (taxable <= 0) return "The invoice must come to more than zero.";
     if (gstOn && !placeOfSupply) return "Select a place of supply.";
+    // Stops the save once, rather than warning and letting it through: the
+    // warning panel is already on screen by the time anyone presses Save, so
+    // a preparer who has genuinely looked at it can tick the box and press
+    // Save again. Claiming one bill's ITC twice is not worth saving a click.
+    if (duplicateBills.length > 0 && !duplicatesAcknowledged) {
+      return `A bill numbered "${reference.trim()}" from this ${config.party.toLowerCase()} is already on file. Check the box above if this really is a different bill.`;
+    }
     if (policy?.mode === "manual") {
       const problem = validateManualNumber(manualNumber);
       if (problem) return problem;
@@ -1711,6 +1811,75 @@ export function VoucherScreen({
               className={field}
             />
           </label>
+
+          {/* Duplicate purchase bill — find_duplicate_bills. Placed here, one
+              row under the bill-number box that produced the answer, rather
+              than saved for a dialog at Save: the preparer is still looking
+              at the field they can correct. Ported from InvoiceForm.tsx
+              (fe286c9). */}
+          {duplicateBills.length > 0 && (
+            <div className="rounded-lg border border-warning/40 bg-warning-soft p-4 sm:col-span-3">
+              <p className="text-sm font-medium text-ink">
+                This bill number is already on file for this{" "}
+                {config.party.toLowerCase()}
+              </p>
+              <p className="mt-1 text-xs text-ink-soft">
+                Booking one supplier bill twice claims its input tax credit
+                twice, and GSTR-2B carries the supplier&rsquo;s own document
+                number — so the second copy shows up as credit with nothing
+                behind it. Sec 16 allows it once.
+              </p>
+              <ul className="mt-3 flex flex-col gap-1">
+                {duplicateBills.map((d) => (
+                  <li key={d.id} className="text-sm">
+                    <Link
+                      href={`/${companyId}/vouchers/${d.id}`}
+                      className="font-mono text-accent underline underline-offset-2"
+                    >
+                      {d.voucher_number}
+                    </Link>{" "}
+                    <span className="tabular-nums font-mono text-ink-faint">{d.voucher_date}</span>{" "}
+                    <span className="tabular-nums font-mono">
+                      {formatINR(d.total_amount, { showZero: true })}
+                    </span>
+                    {/* The amount is deliberately NOT part of the match, so
+                        say which way this one falls rather than leaving the
+                        preparer to compare two numbers by eye. Suppressed
+                        until there is something to compare against — see
+                        fe286c9's own note on the "0.00" bug this avoids. */}
+                    {taxable <= 0 ? null : Math.abs(d.total_amount - grandTotal) < 0.005 ? (
+                      <span className="text-ink-soft"> — same total as this one</span>
+                    ) : (
+                      <span className="text-ink-soft">
+                        {" "}
+                        — a different total from this one (
+                        {formatINR(grandTotal, { showZero: true })})
+                      </span>
+                    )}
+                  </li>
+                ))}
+              </ul>
+              <label className="mt-3 flex items-start gap-2.5">
+                <input
+                  type="checkbox"
+                  checked={duplicatesAcknowledged}
+                  onChange={(e) => {
+                    setAckKey(e.target.checked ? dupKey : null);
+                    // The refusal message says to tick this box, so it has to
+                    // stop saying it the moment the box is ticked — otherwise
+                    // the instruction and the screen disagree until the next
+                    // Save.
+                    if (e.target.checked) setError(null);
+                  }}
+                  className="mt-0.5 h-4 w-4 accent-[var(--color-accent)]"
+                />
+                <span className="text-sm text-ink">
+                  I have checked — this is a different bill that happens to
+                  carry the same number
+                </span>
+              </label>
+            </div>
+          )}
 
           {isItemMode && (
             <>

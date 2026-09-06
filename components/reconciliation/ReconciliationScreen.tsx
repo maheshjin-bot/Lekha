@@ -53,6 +53,17 @@ type Line = {
   suggestion?: Suggestion;
 };
 
+/** A statement line that has already been paired with a book entry. */
+type MatchedLine = Line & {
+  matched_at: string | null;
+  entry_debit: number;
+  entry_credit: number;
+  voucher_number: string;
+  voucher_date: string;
+  narration: string | null;
+  voucher_is_deleted: boolean;
+};
+
 // One downloadable sample per adapter, in that bank's own real column
 // layout — see lib/csv/bank-format-adapters.ts for the sourcing behind
 // each layout. "generic" is this app's own pre-existing template.
@@ -90,6 +101,7 @@ export function ReconciliationScreen({
   summary,
   unmatchedEntries,
   unmatchedLines,
+  matchedLines,
   existingLines,
 }: {
   companyId: string;
@@ -98,6 +110,7 @@ export function ReconciliationScreen({
   summary: Summary;
   unmatchedEntries: Entry[];
   unmatchedLines: Line[];
+  matchedLines: MatchedLine[];
   existingLines: ExistingLine[];
 }) {
   const router = useRouter();
@@ -106,6 +119,7 @@ export function ReconciliationScreen({
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [autoMatchedJustNow, setAutoMatchedJustNow] = useState<number | null>(null);
+  const [unmatchedJustNow, setUnmatchedJustNow] = useState<string | null>(null);
 
   // ---- import ---------------------------------------------------------
   const [rawRows, setRawRows] = useState<BankCsvRow[]>([]);
@@ -315,6 +329,27 @@ export function ReconciliationScreen({
     router.refresh();
   }
 
+  // The only way back out of a match. Deliberately not behind a confirmation:
+  // unmatching destroys nothing — it clears matched_entry_id/matched_at and
+  // both sides return to their unmatched lists, ready to be paired correctly.
+  // The dangerous direction is the other one.
+  async function undoMatch(lineId: string) {
+    setBusy(true);
+    setError(null);
+    setUnmatchedJustNow(null);
+    const { error } = await createClient().rpc("unmatch_bank_line", {
+      p_statement_line_id: lineId,
+    });
+    if (error) {
+      setError(error.message);
+      setBusy(false);
+      return;
+    }
+    setUnmatchedJustNow(lineId);
+    setBusy(false);
+    router.refresh();
+  }
+
   async function runAutoMatch() {
     setBusy(true);
     setError(null);
@@ -456,7 +491,7 @@ export function ReconciliationScreen({
         <p className="mt-2 text-sm text-ink-soft">
           {autoMatchedJustNow === 0
             ? "Nothing unambiguous to match automatically."
-            : `Matched ${autoMatchedJustNow} pair${autoMatchedJustNow === 1 ? "" : "s"}.`}
+            : `Matched ${autoMatchedJustNow} pair${autoMatchedJustNow === 1 ? "" : "s"} — check them under “Already matched” below and unmatch anything that is wrong.`}
         </p>
       )}
 
@@ -634,6 +669,89 @@ export function ReconciliationScreen({
           right.
         </p>
       )}
+
+      {/* ---- already matched ------------------------------------------- */}
+      {/* Everything above this point shows only what is still UNMATCHED, so
+          before this section a matched line left the screen for good and a
+          wrong match — one bulk auto-match away — could never be found again,
+          let alone corrected. The reconciliation statement behind an audited
+          balance sheet depends on these pairings being right, so they have to
+          be inspectable. Shown open rather than behind a disclosure for the
+          same reason, and scrollable so a long list does not bury the
+          matching panes above. */}
+      <section className="mt-8">
+        <h2 className="mb-2 text-sm font-semibold">
+          Already matched ({matchedLines.length})
+        </h2>
+        <p className="mb-2 max-w-3xl text-xs text-ink-faint">
+          Each pair below is a statement line this ledger treats as reconciled.
+          Unmatching one destroys nothing — the line and the entry simply return
+          to the two lists above to be paired again.
+        </p>
+        <div className="max-h-[480px] overflow-y-auto rounded-lg border border-border bg-surface">
+          {matchedLines.length === 0 && (
+            <p className="px-4 py-8 text-center text-sm text-ink-faint">
+              Nothing matched yet on this ledger.
+            </p>
+          )}
+          {matchedLines.map((m) => (
+            <div
+              key={m.id}
+              className="flex flex-wrap items-center justify-between gap-3 border-b border-border px-4 py-2.5 text-sm last:border-0"
+            >
+              <div className="min-w-0 flex-1">
+                <div>
+                  <span className="tabular-nums text-ink-faint font-mono">{m.txn_date}</span>{" "}
+                  {m.description ?? "—"}{" "}
+                  <span className="whitespace-nowrap tabular-nums font-medium font-mono">
+                    {m.credit_amount > 0 ? "Cr " : "Dr "}
+                    {formatINR(m.credit_amount || m.debit_amount)}
+                  </span>
+                </div>
+                <div className="mt-0.5 text-xs text-ink-soft">
+                  matched to{" "}
+                  <span className="font-mono">{m.voucher_number}</span>{" "}
+                  <span className="tabular-nums font-mono text-ink-faint">{m.voucher_date}</span>{" "}
+                  <span className="tabular-nums font-mono">
+                    {m.entry_debit > 0 ? "Dr " : "Cr "}
+                    {formatINR(m.entry_debit || m.entry_credit)}
+                  </span>
+                  {m.narration ? ` · ${m.narration}` : ""}
+                  {m.matched_at && (
+                    <span className="text-ink-faint">
+                      {" "}
+                      · on {m.matched_at.slice(0, 10)}
+                    </span>
+                  )}
+                </div>
+                {/* delete_voucher soft-deletes, so the entry survives and the
+                    pairing keeps counting as reconciled against a voucher that
+                    is no longer in the books. Say so where the fix is. */}
+                {m.voucher_is_deleted && (
+                  <div className="mt-0.5 text-xs text-warning">
+                    That voucher has since been deleted — this line is
+                    reconciled against nothing. Unmatch it.
+                  </div>
+                )}
+              </div>
+              <button
+                type="button"
+                disabled={busy}
+                onClick={() => undoMatch(m.id)}
+                className="shrink-0 rounded-lg border border-border-strong px-3 py-1.5 text-xs transition-colors hover:bg-accent-soft disabled:opacity-50"
+              >
+                Unmatch
+              </button>
+            </div>
+          ))}
+        </div>
+        {unmatchedJustNow && (
+          <p className="mt-2 rounded-md bg-success-soft px-3 py-2 text-sm text-success">
+            Unmatched. That statement line and its entry are back in the two
+            lists above.
+          </p>
+        )}
+      </section>
     </div>
   );
 }
