@@ -1,6 +1,8 @@
 import Link from "next/link";
 import { createClient } from "@/lib/supabase/server";
 import { ReportShell, td, th } from "@/components/reports/ReportShell";
+import { AuditEntryChanges } from "@/components/audit/AuditEntryChanges";
+import { mergeLineSetEvents, operationLabel, voucherIdOf, type AuditEntry } from "@/lib/audit/snapshot";
 
 const RANGES = [
   { key: "7", label: "Last 7 days", days: 7 },
@@ -11,12 +13,19 @@ const RANGES = [
 
 /** Tables worth offering as a filter, in the order an auditor would ask for
  * them: the postings first, then the masters they refer to, then the
- * governance trail. Anything not listed still appears under "All". */
+ * governance trail. Anything not listed still appears under "All".
+ *
+ * "Voucher stock lines" used to be here with nothing behind it — voucher_items
+ * carried no audit trigger at all, so the filter could never return a row.
+ * 1580 attached app_private.audit_voucher_lines() to voucher_items, and
+ * "Items" / "Godowns" for the two other tables 1580 also closed. */
 const TABLE_FILTERS = [
   { value: "vouchers", label: "Vouchers" },
   { value: "voucher_entries", label: "Voucher lines" },
   { value: "voucher_items", label: "Voucher stock lines" },
   { value: "ledgers", label: "Ledgers" },
+  { value: "items", label: "Items" },
+  { value: "godowns", label: "Godowns" },
   { value: "account_groups", label: "Account groups" },
   { value: "employees", label: "Employees" },
   { value: "employee_salary_structures", label: "Salary structures" },
@@ -73,7 +82,15 @@ export default async function AuditTrailPage({
     p_limit: 500,
   });
 
-  const entries = rows ?? [];
+  // update_invoice (0055) deletes an invoice's voucher_items in one statement
+  // but re-inserts them one line at a time, so a single edit can write more
+  // than one voucher_items audit row for the same voucher in the same
+  // transaction. Folded back into one event per operation before rendering —
+  // see lib/audit/snapshot.ts for why, and why only line-set rows are ever
+  // folded.
+  const entries: AuditEntry[] = rows ?? [];
+  const events = mergeLineSetEvents(entries);
+
   const base = `/${companyId}/audit-trail`;
   const qs = (over: { range?: string; table?: string }) => {
     const r = over.range ?? rangeKey;
@@ -148,23 +165,24 @@ export default async function AuditTrailPage({
             <tr className="border-b border-border text-left">
               <th className={th}>When</th>
               <th className={th}>Who</th>
-              <th className={th}>What changed</th>
+              <th className={th}>Record</th>
               <th className={th}>Action</th>
-              <th className={th}>Fields</th>
+              <th className={th}>What changed</th>
             </tr>
           </thead>
           <tbody>
-            {!error && entries.length === 0 && (
+            {!error && events.length === 0 && (
               <tr>
                 <td colSpan={5} className="px-4 py-10 text-center text-ink-faint">
                   Nothing was recorded in this period.
                 </td>
               </tr>
             )}
-            {entries.map((e) => {
+            {events.map((e) => {
               const when = formatWhen(e.changed_at);
+              const voucherId = voucherIdOf(e);
               return (
-                <tr key={e.id} className="border-b border-border last:border-0">
+                <tr key={e.id} className="border-b border-border align-top last:border-0">
                   <td className={td}>
                     {when.date}
                     <div className="font-mono text-xs text-ink-faint">{when.time}</div>
@@ -182,9 +200,18 @@ export default async function AuditTrailPage({
                     {e.derived_note && (
                       <div className="text-xs text-ink-faint">{e.derived_note}</div>
                     )}
-                    <div className="font-mono text-[11px] text-ink-faint">
-                      {String(e.record_id).slice(0, 8)}…
-                    </div>
+                    {voucherId ? (
+                      <Link
+                        href={`/${companyId}/vouchers/${voucherId}`}
+                        className="block font-mono text-[11px] text-accent underline"
+                      >
+                        {voucherId.slice(0, 8)}…
+                      </Link>
+                    ) : (
+                      <div className="font-mono text-[11px] text-ink-faint">
+                        {e.record_id ? `${e.record_id.slice(0, 8)}…` : "—"}
+                      </div>
+                    )}
                   </td>
                   <td className={td}>
                     <span
@@ -193,15 +220,11 @@ export default async function AuditTrailPage({
                         (OPERATION_TONE[e.operation] ?? "bg-surface-2 text-ink-soft")
                       }
                     >
-                      {e.operation}
+                      {operationLabel(e)}
                     </span>
                   </td>
                   <td className={td}>
-                    {e.changed_fields && e.changed_fields.length > 0 ? (
-                      <span className="font-mono text-xs">{e.changed_fields.join(", ")}</span>
-                    ) : (
-                      <span className="text-ink-faint">—</span>
-                    )}
+                    <AuditEntryChanges event={e} />
                   </td>
                 </tr>
               );
@@ -230,7 +253,9 @@ export default async function AuditTrailPage({
         <Link href={`/${companyId}/reports/daybook`} className="underline">
           daybook
         </Link>
-        .
+        . Some values — passwords, invite tokens, full bank account numbers — are never shown here
+        even to an admin or auditor, though a change to them is still recorded as a change; see the
+        1580 migration header for exactly what is redacted and why.
       </p>
     </ReportShell>
   );

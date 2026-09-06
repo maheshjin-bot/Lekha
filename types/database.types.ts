@@ -7189,6 +7189,8 @@ export type Database = {
           p_to?: string
         }
         Returns: {
+          after_data: Json | null
+          before_data: Json | null
           changed_at: string
           changed_by: string
           changed_by_name: string
@@ -9891,6 +9893,9 @@ export type Database = {
       }
       update_item: {
         Args: {
+          // 1370: defaults to null server-side, meaning "leave unchanged" —
+          // see that migration's header for why.
+          p_batch_tracking?: string | null
           p_cess_rate_percent: number
           p_default_tcs_section: string | null
           p_gst_rate_percent: number
