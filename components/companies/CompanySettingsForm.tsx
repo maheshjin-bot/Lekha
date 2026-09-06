@@ -4,11 +4,20 @@ import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
 import { UPI_VPA_PATTERN } from "@/lib/utils/upi";
+import {
+  CIN_PATTERN,
+  CIN_STRUCTURE_HINT,
+  IEC_PATTERN,
+  PAN_PATTERN,
+  TAN_PATTERN,
+  UDYAM_PATTERN,
+  panHolderTypeWarning,
+} from "@/lib/companies/fieldPatterns";
+import { friendlyCompanyError } from "@/lib/companies/friendlyError";
 
-const TAN_PATTERN = /^[A-Z]{4}[0-9]{5}[A-Z]$/;
-// Mirrors app_private.is_valid_udyam exactly.
-const UDYAM_PATTERN = /^UDYAM-[A-Z]{2}-[0-9]{2}-[0-9]{7}$/;
-
+// Also the three entity types ref_entity_types.roc_forms lists AOC-4 against,
+// and so the three the AOC-4 XBRL screen accepts — which is why the CIN field
+// below is gated on the same set. An LLP has an LLPIN, not a CIN.
 const COMPANY_ENTITY_TYPES = new Set(["opc", "pvt_ltd", "ltd"]);
 // Sec 44AB's flat Rs 50 lakh "profession" threshold only makes sense for
 // entity types a sole-practitioner or professional-partnership structure
@@ -26,6 +35,9 @@ export function CompanySettingsForm({
   entityType,
   pan,
   tan,
+  cin,
+  iec,
+  registeredGstins,
   udyamNumber,
   udyamCategory,
   companyTaxRegime,
@@ -40,6 +52,9 @@ export function CompanySettingsForm({
   entityType: string;
   pan: string | null;
   tan: string | null;
+  cin: string | null;
+  iec: string | null;
+  registeredGstins: string[];
   udyamNumber: string | null;
   udyamCategory: string | null;
   companyTaxRegime: string;
@@ -55,6 +70,28 @@ export function CompanySettingsForm({
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [saved, setSaved] = useState(false);
+
+  // PAN is the one identifier on this screen whose change is not routine, so
+  // it gets the same two-step reveal as removing the company password rather
+  // than sitting in an always-editable box: it is embedded in every GSTIN the
+  // company holds, and it is the identity the ITR, every TDS return and every
+  // Form 16 are filed under. First-time entry needs no confirmation — there
+  // is nothing to break yet — so the reveal only guards a *change*.
+  const [editingPan, setEditingPan] = useState(false);
+  const [panInput, setPanInput] = useState(pan ?? "");
+  const [panBusy, setPanBusy] = useState(false);
+  const [panError, setPanError] = useState<string | null>(null);
+  const [panSaved, setPanSaved] = useState(false);
+
+  const [cinInput, setCinInput] = useState(cin ?? "");
+  const [cinBusy, setCinBusy] = useState(false);
+  const [cinError, setCinError] = useState<string | null>(null);
+  const [cinSaved, setCinSaved] = useState(false);
+
+  const [iecInput, setIecInput] = useState(iec ?? "");
+  const [iecBusy, setIecBusy] = useState(false);
+  const [iecError, setIecError] = useState<string | null>(null);
+  const [iecSaved, setIecSaved] = useState(false);
 
   const [udyamInput, setUdyamInput] = useState(udyamNumber ?? "");
   const [udyamCategoryInput, setUdyamCategoryInput] = useState(udyamCategory ?? "");
@@ -95,13 +132,17 @@ export function CompanySettingsForm({
   const [passwordError, setPasswordError] = useState<string | null>(null);
   const [passwordSaved, setPasswordSaved] = useState(false);
 
-  // Structural pre-check only — app_private.is_valid_tan on the companies.tan
-  // check constraint is the real gate; this just catches an obvious typo
-  // before the round trip, same pattern as the GSTIN check in
-  // RegistrationManager.
+  // Structural pre-checks only — the CHECK constraints on public.companies are
+  // the real gate; these just catch an obvious typo before the round trip,
+  // same pattern as the GSTIN check in RegistrationManager. Anything they miss
+  // comes back through friendlyCompanyError rather than as a constraint name.
   const looksValid = tanInput.length === 0 || TAN_PATTERN.test(tanInput);
   const udyamLooksValid = udyamInput.length === 0 || UDYAM_PATTERN.test(udyamInput);
   const upiVpaLooksValid = upiVpaInput.length === 0 || UPI_VPA_PATTERN.test(upiVpaInput);
+  const panLooksValid = panInput.length === 0 || PAN_PATTERN.test(panInput);
+  const cinLooksValid = cinInput.length === 0 || CIN_PATTERN.test(cinInput);
+  const iecLooksValid = iecInput.length === 0 || IEC_PATTERN.test(iecInput);
+  const panTypeWarning = panHolderTypeWarning(entityType, panInput);
 
   async function onSubmit(e: React.FormEvent) {
     e.preventDefault();
@@ -116,10 +157,82 @@ export function CompanySettingsForm({
 
     setBusy(false);
     if (error) {
-      setError(error.message);
+      setError(friendlyCompanyError(error));
       return;
     }
     setSaved(true);
+    router.refresh();
+  }
+
+  function startEditPan() {
+    setPanInput(pan ?? "");
+    setEditingPan(true);
+    setPanError(null);
+    setPanSaved(false);
+  }
+
+  async function onPanSubmit(e: React.FormEvent) {
+    e.preventDefault();
+    setPanBusy(true);
+    setPanError(null);
+    setPanSaved(false);
+
+    const { error } = await createClient()
+      .from("companies")
+      // Not `|| null`: clearing a PAN is refused outright in compliance mode
+      // by companies_compliance_requires_pan, and blanking it by accident on a
+      // books-only company would quietly close its statutory modules. An empty
+      // box means "I didn't mean to change this", so send nothing.
+      .update({ pan: panInput.trim().toUpperCase() || null })
+      .eq("id", companyId);
+
+    setPanBusy(false);
+    if (error) {
+      setPanError(friendlyCompanyError(error));
+      return;
+    }
+    setPanSaved(true);
+    setEditingPan(false);
+    router.refresh();
+  }
+
+  async function onCinSubmit(e: React.FormEvent) {
+    e.preventDefault();
+    setCinBusy(true);
+    setCinError(null);
+    setCinSaved(false);
+
+    const { error } = await createClient()
+      .from("companies")
+      .update({ cin: cinInput.trim() || null })
+      .eq("id", companyId);
+
+    setCinBusy(false);
+    if (error) {
+      setCinError(friendlyCompanyError(error));
+      return;
+    }
+    setCinSaved(true);
+    router.refresh();
+  }
+
+  async function onIecSubmit(e: React.FormEvent) {
+    e.preventDefault();
+    setIecBusy(true);
+    setIecError(null);
+    setIecSaved(false);
+
+    const { error } = await createClient()
+      .from("companies")
+      .update({ iec: iecInput.trim() || null })
+      .eq("id", companyId);
+
+    setIecBusy(false);
+    if (error) {
+      setIecError(friendlyCompanyError(error));
+      return;
+    }
+    setIecSaved(true);
     router.refresh();
   }
 
@@ -139,7 +252,7 @@ export function CompanySettingsForm({
 
     setUdyamBusy(false);
     if (error) {
-      setUdyamError(error.message);
+      setUdyamError(friendlyCompanyError(error));
       return;
     }
     setUdyamSaved(true);
@@ -159,7 +272,7 @@ export function CompanySettingsForm({
 
     setTaxRegimeBusy(false);
     if (error) {
-      setTaxRegimeError(error.message);
+      setTaxRegimeError(friendlyCompanyError(error));
       return;
     }
     setTaxRegimeSaved(true);
@@ -179,7 +292,7 @@ export function CompanySettingsForm({
 
     setProfessionalBusy(false);
     if (error) {
-      setProfessionalError(error.message);
+      setProfessionalError(friendlyCompanyError(error));
       return;
     }
     setProfessionalSaved(true);
@@ -203,7 +316,7 @@ export function CompanySettingsForm({
 
     setDrawingPowerBusy(false);
     if (error) {
-      setDrawingPowerError(error.message);
+      setDrawingPowerError(friendlyCompanyError(error));
       return;
     }
     setDrawingPowerSaved(true);
@@ -223,7 +336,7 @@ export function CompanySettingsForm({
 
     setUpiVpaBusy(false);
     if (error) {
-      setUpiVpaError(error.message);
+      setUpiVpaError(friendlyCompanyError(error));
       return;
     }
     setUpiVpaSaved(true);
@@ -299,12 +412,107 @@ export function CompanySettingsForm({
     <div className="mt-8 flex flex-col gap-8">
       <section className="rounded-lg border border-border bg-surface p-5">
         <h2 className="font-semibold">Identifiers</h2>
+        <p className="mt-1 text-sm text-ink-soft">
+          The income tax numbers this company files under. GST registrations
+          are separate and live under Registrations, because one PAN can hold
+          a GSTIN in every state it operates in.
+        </p>
 
         <div className="mt-4 flex flex-col gap-1.5">
-          <span className="text-sm font-medium">PAN</span>
-          <p className="rounded-md bg-bg px-3 py-2 font-mono text-sm text-ink-soft">
-            {pan ?? "Not set"}
-          </p>
+          <span className="text-sm font-medium">
+            PAN{" "}
+            <span className="font-normal text-ink-faint">
+              the identity the ITR, every TDS return and every Form 16 are filed under
+            </span>
+          </span>
+
+          {!editingPan ? (
+            <div className="flex items-center justify-between gap-3">
+              <p className="flex-1 rounded-md bg-bg px-3 py-2 font-mono text-sm text-ink-soft">
+                {pan ?? "Not set"}
+              </p>
+              <button
+                type="button"
+                onClick={startEditPan}
+                className="shrink-0 rounded-lg border border-border-strong px-3 py-1.5 text-xs font-semibold text-ink transition-colors hover:bg-surface-2"
+              >
+                {pan ? "Change PAN" : "Set PAN"}
+              </button>
+            </div>
+          ) : (
+            <form onSubmit={onPanSubmit} className="flex flex-col gap-1.5">
+              {pan && (
+                <div className="mb-1 flex flex-col gap-1.5 rounded-md bg-warning-soft px-3 py-2 text-sm text-warning">
+                  <p>
+                    Changing a PAN is not routine. Correct a mistyped one by all
+                    means — but a different PAN is a different legal entity, and
+                    moving books between entities means a new company here, not
+                    a new number on this one.
+                  </p>
+                  {registeredGstins.length > 0 && (
+                    <p>
+                      This company already holds{" "}
+                      {registeredGstins.length === 1
+                        ? "the GST registration"
+                        : `${registeredGstins.length} GST registrations`}{" "}
+                      <span className="font-mono">{registeredGstins.join(", ")}</span>. A
+                      GSTIN has its holder&rsquo;s PAN embedded in characters 3
+                      to 12, so LEKHA will refuse a PAN that contradicts{" "}
+                      {registeredGstins.length === 1 ? "it" : "them"} — correct
+                      or remove the registration first.
+                    </p>
+                  )}
+                </div>
+              )}
+
+              <input
+                value={panInput}
+                onChange={(e) => setPanInput(e.target.value.toUpperCase())}
+                maxLength={10}
+                autoFocus
+                placeholder="AAAAA9999A"
+                className={field + " font-mono uppercase"}
+              />
+              {panInput.length > 0 && !panLooksValid && (
+                <span className="text-xs text-warning">
+                  That doesn&rsquo;t match the PAN format (5 letters, 4 digits, 1
+                  letter).
+                </span>
+              )}
+              {panTypeWarning && (
+                <span className="text-xs text-ink-faint">{panTypeWarning}</span>
+              )}
+
+              {panError && (
+                <p className="mt-2 rounded-md bg-error-soft px-3 py-2 text-sm text-error">
+                  {panError}
+                </p>
+              )}
+
+              <div className="mt-3 flex gap-2">
+                <button
+                  type="submit"
+                  disabled={panBusy}
+                  className="self-start rounded-lg bg-accent px-4 py-2 text-sm font-semibold text-accent-ink transition-colors hover:opacity-90 disabled:opacity-50"
+                >
+                  {panBusy ? "Saving…" : "Save PAN"}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setEditingPan(false)}
+                  className="self-start rounded-lg border border-border-strong px-4 py-2 text-sm font-semibold text-ink hover:bg-surface-2"
+                >
+                  Cancel
+                </button>
+              </div>
+            </form>
+          )}
+
+          {panSaved && !editingPan && !panError && (
+            <p className="mt-2 rounded-md bg-success-soft px-3 py-2 text-sm text-success">
+              PAN saved.
+            </p>
+          )}
         </div>
 
         <form onSubmit={onSubmit} className="mt-4 flex flex-col gap-1.5">
@@ -348,6 +556,125 @@ export function CompanySettingsForm({
             className="mt-3 self-start rounded-lg bg-accent px-4 py-2 text-sm font-semibold text-accent-ink transition-colors hover:opacity-90 disabled:opacity-50"
           >
             {busy ? "Saving…" : "Save"}
+          </button>
+        </form>
+      </section>
+
+      {COMPANY_ENTITY_TYPES.has(entityType) && (
+        <section className="rounded-lg border border-border bg-surface p-5">
+          <h2 className="font-semibold">Corporate Identity Number (CIN)</h2>
+          <p className="mt-1 text-sm text-ink-soft">
+            The 21-character number the Registrar of Companies allotted on
+            incorporation — printed on the certificate of incorporation and on
+            every MCA challan. LEKHA uses it as the entity identifier inside
+            the AOC-4 XBRL instance documents, which is why neither the Balance
+            Sheet nor the Profit &amp; Loss instance can be generated until it
+            is on file.
+          </p>
+          <form onSubmit={onCinSubmit} className="mt-4 flex flex-col gap-1.5">
+            <label className="flex flex-col gap-1.5">
+              <span className="text-sm font-medium">CIN</span>
+              <input
+                value={cinInput}
+                onChange={(e) => setCinInput(e.target.value.toUpperCase())}
+                maxLength={21}
+                placeholder="U72900MH2019PTC330045"
+                className={field + " font-mono uppercase"}
+              />
+            </label>
+            {cinInput.length > 0 && !cinLooksValid && (
+              <span className="text-xs text-warning">
+                That doesn&rsquo;t match the CIN format. {CIN_STRUCTURE_HINT}
+              </span>
+            )}
+
+            {cinError && (
+              <p className="mt-2 rounded-md bg-error-soft px-3 py-2 text-sm text-error">
+                {cinError}
+              </p>
+            )}
+            {cinSaved && !cinError && (
+              <p className="mt-2 rounded-md bg-success-soft px-3 py-2 text-sm text-success">
+                Saved.
+                {cinInput ? " AOC-4 XBRL can now be generated for this company." : ""}
+              </p>
+            )}
+
+            <button
+              type="submit"
+              disabled={cinBusy}
+              className="mt-3 self-start rounded-lg bg-accent px-4 py-2 text-sm font-semibold text-accent-ink transition-colors hover:opacity-90 disabled:opacity-50"
+            >
+              {cinBusy ? "Saving…" : "Save"}
+            </button>
+          </form>
+          <p className="mt-3 text-xs text-ink-faint">
+            Only a company has a CIN. An LLP&rsquo;s LLPIN, a partnership
+            firm&rsquo;s registration number and a society&rsquo;s registration
+            number are different identifiers and do not belong in this box —
+            which is why it only appears for a Private Limited, Public Limited
+            or One Person Company.
+          </p>
+        </section>
+      )}
+
+      <section className="rounded-lg border border-border bg-surface p-5">
+        <h2 className="font-semibold">Importer-Exporter Code (IEC)</h2>
+        <p className="mt-1 text-sm text-ink-soft">
+          DGFT&rsquo;s code, needed by anyone importing or exporting. Entering
+          it is what switches on the Foreign currency and Export/import
+          modules: both are conditional, so the Modules screen deliberately
+          won&rsquo;t let you flip them by hand — they follow this number
+          instead. Books stay in rupees either way; foreign currency is a
+          property of a transaction, never of the ledger.
+        </p>
+        <form onSubmit={onIecSubmit} className="mt-4 flex flex-col gap-1.5">
+          <label className="flex flex-col gap-1.5">
+            <span className="text-sm font-medium">IEC</span>
+            <input
+              value={iecInput}
+              onChange={(e) => setIecInput(e.target.value.toUpperCase())}
+              maxLength={10}
+              placeholder="AAAAA9999A"
+              className={field + " font-mono uppercase"}
+            />
+          </label>
+          {iecInput.length > 0 && !iecLooksValid && (
+            <span className="text-xs text-warning">
+              That doesn&rsquo;t match the IEC format. Since 2017 DGFT issues an
+              IEC identical to the holder&rsquo;s PAN, so it has the same shape
+              (5 letters, 4 digits, 1 letter).
+            </span>
+          )}
+          {pan && iecInput.trim() !== pan && (
+            <button
+              type="button"
+              onClick={() => setIecInput(pan)}
+              className="self-start text-xs font-semibold text-accent underline underline-offset-2"
+            >
+              Use this company&rsquo;s PAN ({pan})
+            </button>
+          )}
+
+          {iecError && (
+            <p className="mt-2 rounded-md bg-error-soft px-3 py-2 text-sm text-error">
+              {iecError}
+            </p>
+          )}
+          {iecSaved && !iecError && (
+            <p className="mt-2 rounded-md bg-success-soft px-3 py-2 text-sm text-success">
+              {iecInput
+                ? "Saved. Foreign currency and Export/import are now active — see Modules."
+                : "Saved. Foreign currency and Export/import are switched off from today; the period they were active for stays on record."}
+            </p>
+          )}
+
+          <button
+            type="submit"
+            disabled={iecBusy}
+            className="mt-3 self-start rounded-lg bg-accent px-4 py-2 text-sm font-semibold text-accent-ink transition-colors hover:opacity-90 disabled:opacity-50"
+          >
+            {iecBusy ? "Saving…" : "Save"}
           </button>
         </form>
       </section>

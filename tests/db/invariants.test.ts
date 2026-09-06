@@ -3562,6 +3562,144 @@ describeDb(`companies column-grant allowlist (${hasDb ? "live" : noDbReason})`, 
 });
 
 // ---------------------------------------------------------------------------
+// CIN / IEC / PAN from Company Settings (1360)
+// ---------------------------------------------------------------------------
+// Before 1360 nothing in the app could write any of these three, which meant
+// AOC-4 XBRL was unreachable for every company (no CIN, no xbrli:identifier)
+// and the 'exim'/'foreign_currency' conditional modules could never resolve to
+// applicable (no IEC to resolve from).
+// ---------------------------------------------------------------------------
+describeDb(`company CIN/IEC/PAN identifiers (${hasDb ? "live" : noDbReason})`, () => {
+  it("cin, iec and pan each carry a working column-level grant for authenticated (SELECT and UPDATE)", async () => {
+    // The form writes public.companies directly, so a missing column grant is
+    // the difference between a working save and a silent no-op. Asserted per
+    // column rather than relying on the generic allowlist test above, because
+    // this is the specific thing the feature stands on.
+    const rows = await sql(`
+      select column_name, privilege_type from information_schema.column_privileges
+       where table_name = 'companies' and grantee = 'authenticated'
+         and column_name in ('cin', 'iec', 'pan')
+         and privilege_type in ('SELECT', 'UPDATE')
+    `);
+    for (const column of ["cin", "iec", "pan"]) {
+      for (const privilege of ["SELECT", "UPDATE"]) {
+        expect(
+          rows.some((r) => r.column_name === column && r.privilege_type === privilege),
+          `authenticated lacks ${privilege} on companies.${column}`
+        ).toBe(true);
+      }
+    }
+  });
+
+  it("companies.cin is format-checked, so a typo cannot become an invalid XBRL entity identifier", async () => {
+    const rows = await sql(`
+      select conname from pg_constraint
+       where conrelid = 'public.companies'::regclass and conname = 'companies_cin_check'
+    `);
+    expect(rows, "companies_cin_check is missing — a mistyped CIN would reach MCA's validator").toHaveLength(1);
+  });
+
+  it("app_private.is_valid_cin accepts every real CIN shape and refuses the near misses", async () => {
+    const [r] = await sql<Record<string, boolean>>(`
+      select app_private.is_valid_cin('L74999MH2010PLC205678') as listed_plc,
+             app_private.is_valid_cin('U72900MH2019PTC330045') as unlisted_ptc,
+             app_private.is_valid_cin('U72900TN2021OPC145678') as opc,
+             app_private.is_valid_cin('U74999DL2015NPL123456') as sec8_npl,
+             app_private.is_valid_cin(null)                    as null_tolerant,
+             app_private.is_valid_cin('U72900MH2019PTC33004')  as too_short,
+             app_private.is_valid_cin('X72900MH2019PTC330045') as not_l_or_u,
+             app_private.is_valid_cin('U7290AMH2019PTC330045') as letter_in_nic_code,
+             app_private.is_valid_cin('u72900mh2019ptc330045') as lower_case,
+             app_private.is_valid_cin('AAB-1234')              as an_llpin
+    `);
+    // Accepted: the two live values, an OPC, and a Section 8 company — the
+    // class code is deliberately not enumerated.
+    expect(r.listed_plc).toBe(true);
+    expect(r.unlisted_ptc).toBe(true);
+    expect(r.opc).toBe(true);
+    expect(r.sec8_npl).toBe(true);
+    // Null-tolerant, like every other validator in 0001, so it can sit in a
+    // CHECK constraint without forcing NOT NULL.
+    expect(r.null_tolerant).toBe(true);
+    expect(r.too_short).toBe(false);
+    expect(r.not_l_or_u).toBe(false);
+    expect(r.letter_in_nic_code).toBe(false);
+    expect(r.lower_case).toBe(false);
+    // An LLP's LLPIN is a different identifier and must not be launderable
+    // into companies.cin — there is no llpin column, a named gap.
+    expect(r.an_llpin).toBe(false);
+  });
+
+  it("every stored cin and iec satisfies its own CHECK format", async () => {
+    const rows = await sql(`
+      select id, name, cin, iec from companies
+       where not app_private.is_valid_cin(cin) or not app_private.is_valid_iec(iec)
+    `);
+    expect(rows, `a stored cin/iec doesn't match its own validator:\n${offenders(rows)}`).toEqual([]);
+  });
+
+  it("a PAN change can no longer contradict a GST registration the company already holds", async () => {
+    // app_private.enforce_gstin_state (0005) guards the gst_registrations
+    // side. Its companies-side counterpart did not exist until PAN became
+    // editable, which is exactly when the hole opens.
+    const rows = await sql(`
+      select t.tgname, t.tgtype from pg_trigger t
+       where t.tgrelid = 'public.companies'::regclass
+         and t.tgname = 'enforce_company_pan_matches_registrations'
+         and not t.tgisinternal
+    `);
+    expect(rows, "the companies-side PAN guard trigger is missing").toHaveLength(1);
+    // tgtype bit 0 = BEFORE (row-level ROW bit 0x1, BEFORE is bit 0x2 unset
+    // meaning AFTER; 0x2 set means BEFORE). Assert it fires BEFORE, since an
+    // AFTER trigger would have already written the contradicting row.
+    expect(Number(rows[0].tgtype) & 2, "the PAN guard must fire BEFORE the write").toBe(2);
+  });
+
+  it("no company's own PAN contradicts a GSTIN registered to it", async () => {
+    // The invariant the trigger exists to hold. A GSTIN embeds its holder's
+    // PAN in characters 3-12; a company whose own PAN differs is claiming a
+    // registration belonging to another legal entity, and every GSTR-1/3B,
+    // e-invoice and e-way-bill payload is built from it.
+    const rows = await sql(`
+      select c.id, c.name, c.pan, g.gstin, app_private.gstin_pan(g.gstin) as gstin_pan
+        from companies c
+        join gst_registrations g on g.company_id = c.id
+       where c.pan is not null and app_private.gstin_pan(g.gstin) <> c.pan
+    `);
+    expect(rows, `a company's PAN contradicts a GSTIN it holds:\n${offenders(rows)}`).toEqual([]);
+  });
+
+  it("the exim and foreign_currency modules are active for exactly the companies that have an IEC", async () => {
+    // Both are tier='conditional' with activates_when '{"has_iec":true}'
+    // (0004), and exim additionally depends_on foreign_currency — so the
+    // resolver's fixpoint has to open both, in one pass over the company
+    // update. This assertion is what proves setting an IEC in Company
+    // Settings genuinely reaches the Modules screen, in both directions.
+    const rows = await sql(`
+      select c.id, c.name, c.iec is not null as has_iec, m.module_code,
+             exists (
+               select 1 from company_modules x
+                where x.company_id = c.id and x.module_code = m.module_code
+                  and x.effective_from <= current_date
+                  and (x.effective_to is null or x.effective_to >= current_date)
+             ) as module_active
+        from companies c
+        cross join (values ('exim'), ('foreign_currency')) as m(module_code)
+       where (c.iec is not null) is distinct from exists (
+               select 1 from company_modules x
+                where x.company_id = c.id and x.module_code = m.module_code
+                  and x.effective_from <= current_date
+                  and (x.effective_to is null or x.effective_to >= current_date)
+             )
+    `);
+    expect(
+      rows,
+      `an IEC and its conditional modules disagree — the resolver did not fire, or fired the wrong way:\n${offenders(rows)}`
+    ).toEqual([]);
+  });
+});
+
+// ---------------------------------------------------------------------------
 // Company backup / full export (0112, application-layer)
 // ---------------------------------------------------------------------------
 describeDb(`company backup export (${hasDb ? "live" : noDbReason})`, () => {

@@ -9,11 +9,15 @@ export default async function SettingsPage({
   const { companyId } = await params;
   const supabase = await createClient();
 
-  const [{ data: company }, { data: docs }] = await Promise.all([
+  // The GSTINs are read only so the PAN section can name, up front, what a PAN
+  // change would contradict: app_private.enforce_company_pan_matches_
+  // registrations (1360) refuses one that does, and being told which
+  // registration is in the way beats finding out on the round trip.
+  const [{ data: company }, { data: docs }, { data: registrations }] = await Promise.all([
     supabase
       .from("companies")
       .select(
-        "id, name, pan, tan, udyam_number, udyam_category, entity_type, company_tax_regime, is_professional, stock_margin_percent, debtor_margin_percent, debtor_eligibility_days, password_protected, upi_vpa"
+        "id, name, pan, tan, cin, iec, udyam_number, udyam_category, entity_type, company_tax_regime, is_professional, stock_margin_percent, debtor_margin_percent, debtor_eligibility_days, password_protected, upi_vpa"
       )
       .eq("id", companyId)
       .maybeSingle(),
@@ -27,14 +31,15 @@ export default async function SettingsPage({
       .eq("company_id", companyId)
       .eq("entity_type", "company")
       .eq("entity_id", companyId),
+    supabase.from("gst_registrations").select("gstin").eq("company_id", companyId),
   ]);
 
   return (
     <main className="mx-auto max-w-2xl px-6 py-10">
       <h1 className="font-display text-2xl font-semibold tracking-tight text-ink">Settings</h1>
       <p className="mt-1.5 max-w-xl text-sm text-ink-soft">
-        Admin only. PAN is shown for reference; editing it isn&rsquo;t
-        supported here yet.
+        Admin only. What this company is registered as, in the numbers every
+        statutory output is filed under.
       </p>
 
       <CompanySettingsForm
@@ -42,6 +47,9 @@ export default async function SettingsPage({
         entityType={company?.entity_type ?? ""}
         pan={company?.pan ?? null}
         tan={company?.tan ?? null}
+        cin={company?.cin ?? null}
+        iec={company?.iec ?? null}
+        registeredGstins={(registrations ?? []).map((r) => r.gstin)}
         udyamNumber={company?.udyam_number ?? null}
         udyamCategory={company?.udyam_category ?? null}
         companyTaxRegime={company?.company_tax_regime ?? "default_30"}
