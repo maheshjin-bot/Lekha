@@ -65,6 +65,7 @@ import { AllocationDrawer, type DrawerAllocation } from "@/components/allocation
 import { ItemInvoiceGrid } from "@/components/vouchers/grids/ItemInvoiceGrid";
 import { AccountingInvoiceGrid } from "@/components/vouchers/grids/AccountingInvoiceGrid";
 import { RawVoucherGrid } from "@/components/vouchers/grids/RawVoucherGrid";
+import { classifySupplyType, isLutActive, lineGstSplit } from "@/lib/invoices/foreign-currency";
 import {
   PURCHASE_TRADING_ROLES,
   SALE_TRADING_ROLES,
@@ -130,8 +131,23 @@ export type Ledger = {
 };
 
 /** B1c — registeredState kept required; a raw-voucher-only route passes null
- * per branch when it never selected gst_registrations at all. */
-export type Branch = { id: string; code: string; name: string; registeredState: string | null };
+ * per branch when it never selected gst_registrations at all.
+ *
+ * lutNumber/lutValidFrom/lutValidTo (cf65288, ported) mirror the LUT columns
+ * create_invoice itself reads off gst_registrations to decide export_lut vs
+ * export_igst (Sec 16(3)) — optional because the raw-voucher and journal/
+ * receipt/payment routes never select them and have no export-tax preview to
+ * feed; isLutActive() treats a missing/undefined LUT the same as "no LUT on
+ * file", so those routes are unaffected. */
+export type Branch = {
+  id: string;
+  code: string;
+  name: string;
+  registeredState: string | null;
+  lutNumber?: string | null;
+  lutValidFrom?: string | null;
+  lutValidTo?: string | null;
+};
 export type Godown = { id: string; code: string; name: string };
 export type StateOption = { code: string; name: string };
 export type TcsSection = {
@@ -730,12 +746,48 @@ export function VoucherScreen({
   const isOverseasParty = allLedgers.find((l) => l.id === partyId)?.gst_registration_type === "overseas";
   const showCurrencyFields = mode !== "raw-voucher" && isOverseasParty && !isEdit;
 
-  const supplyType =
-    gstOn && branch?.registeredState && placeOfSupply
-      ? branch.registeredState === placeOfSupply
-        ? "intra"
-        : "inter"
-      : null;
+  // Mirrors app_private.gst_supply_type's real 4-argument classification
+  // (0087) — export_lut/export_igst/sez/deemed_export, not just plain
+  // intra/inter (cf65288, ported). Before this the preview only ever computed
+  // intra/inter off branch.registeredState vs placeOfSupply, so an export
+  // shipped under a valid LUT (Sec 16(3)(a), zero tax) showed a full IGST
+  // figure on screen that create_invoice was never actually going to charge.
+  //
+  // Memoized (rather than a plain const, as the old intra/inter comparison
+  // was) because it now feeds the tax/tcs useMemo hooks below as a dependency,
+  // and the React Compiler declines to optimize a memoized hook whose
+  // dependency is a freshly-computed, not-itself-memoized value on every
+  // render.
+  const partyGstRegistrationType = allLedgers.find((l) => l.id === partyId)?.gst_registration_type;
+  const isIntrastate = useMemo(
+    () => Boolean(gstOn && branch?.registeredState && placeOfSupply && branch.registeredState === placeOfSupply),
+    [gstOn, branch, placeOfSupply]
+  );
+  const lutActive = useMemo(() => isLutActive(branch, date), [branch, date]);
+  const supplyType = useMemo(
+    () =>
+      gstOn && branch?.registeredState && placeOfSupply
+        ? classifySupplyType(branch.registeredState, placeOfSupply, partyGstRegistrationType, lutActive)
+        : null,
+    [gstOn, branch, placeOfSupply, partyGstRegistrationType, lutActive]
+  );
+
+  // GST law does not let LEKHA's tax engine self-compute a credit here: an
+  // import purchase's IGST is assessed by Customs at the port (Sec 3(7)
+  // Customs Tariff Act / Sec 5(1) IGST Act) against the Bill of Entry, not
+  // against this item's own rate on an ordinary purchase invoice. A purchase
+  // from a party whose gst_registration_type is 'overseas' still runs through
+  // the SAME export_lut/export_igst branch a SALE to that party would — which
+  // for a purchase means create_invoice fabricates an "Input IGST" line at
+  // the item's ordinary GST rate that was never actually paid to Indian
+  // Customs, and that a real Bill of Entry would show a completely different
+  // assessable value for. This is independent of currency and pre-existing —
+  // not introduced by this port — but exposing currency on this screen is
+  // exactly what makes recording a real import bill through it newly
+  // plausible (cf65288's own finding), so the form says so rather than
+  // shipping it silently. Fixing the import side properly needs a
+  // Bill-of-Entry-driven ITC path this port does not attempt.
+  const overseasPurchaseWarning = !isSale && partyGstRegistrationType === "overseas";
 
   const hasChargeLine = useMemo(
     () =>
@@ -768,16 +820,13 @@ export function VoucherScreen({
       const item = allItems.find((x) => x.id === l.itemId);
       if (!item || !item.gst_rate_percent) continue;
       const amount = lineAmounts(l.quantity, l.rate, l.discountPercent).net;
-      if (supplyType === "intra") {
-        const half = Math.round(((amount * item.gst_rate_percent) / 2 / 100) * 100) / 100;
-        cgst += half;
-        sgst += half;
-      } else {
-        igst += Math.round(((amount * item.gst_rate_percent) / 100) * 100) / 100;
-      }
+      const split = lineGstSplit(amount, item.gst_rate_percent, supplyType, lutActive, isIntrastate);
+      cgst += split.cgst;
+      sgst += split.sgst;
+      igst += split.igst;
     }
     return { cgst, sgst, igst };
-  }, [itemLines, allItems, supplyType, allLedgers, partyId, isSale]);
+  }, [itemLines, allItems, supplyType, allLedgers, partyId, isSale, lutActive, isIntrastate]);
 
   const tcs = useMemo(() => {
     if (!tcsOn || !isSale) return 0;
@@ -791,21 +840,21 @@ export function VoucherScreen({
       if (!section) continue;
       const amount = lineAmounts(l.quantity, l.rate, l.discountPercent).net;
       if (section.threshold_rupees != null && amount <= section.threshold_rupees) continue;
+      // Same classification as `tax` above (not reused from it directly,
+      // since that memo only keeps invoice-wide totals) — includes the
+      // export_lut/export_igst/sez/deemed_export routes now, same reason
+      // `tax` needed them (cf65288, ported).
       let lineGst = 0;
       if (supplyType && item.gst_rate_percent) {
-        if (supplyType === "intra") {
-          const half = Math.round(((amount * item.gst_rate_percent) / 2 / 100) * 100) / 100;
-          lineGst = half + half;
-        } else {
-          lineGst = Math.round(((amount * item.gst_rate_percent) / 100) * 100) / 100;
-        }
+        const split = lineGstSplit(amount, item.gst_rate_percent, supplyType, lutActive, isIntrastate);
+        lineGst = split.cgst + split.sgst + split.igst;
       }
       const base = amount + lineGst;
       const rate = hasPan ? section.rate_percent : section.no_pan_rate_percent;
       total += Math.round(((base * rate) / 100) * 100) / 100;
     }
     return total;
-  }, [tcsOn, isSale, itemLines, allItems, tcsSections, allLedgers, partyId, supplyType]);
+  }, [tcsOn, isSale, itemLines, allItems, tcsSections, allLedgers, partyId, supplyType, lutActive, isIntrastate]);
 
   const grandTotal = taxable + tax.cgst + tax.sgst + tax.igst + tcs;
 
@@ -1879,6 +1928,23 @@ export function VoucherScreen({
               </p>
             </div>
           </div>
+        )}
+
+        {/* GST law does not let an import's tax be self-computed off this
+            item's own rate the way this screen (and create_invoice) does for
+            every other purchase — see the overseasPurchaseWarning comment
+            above for the full reasoning. Independent of currency: shown for
+            an INR purchase from this party too, not gated on showCurrencyFields. */}
+        {overseasPurchaseWarning && (
+          <p className="rounded-lg border border-warning/40 bg-warning-soft px-3 py-2 text-xs text-warning">
+            This supplier is registered as “overseas”. LEKHA&rsquo;s GST engine currently
+            computes this purchase&rsquo;s tax the same way it computes an export
+            SALE&rsquo;s — which for a purchase produces an Input IGST figure that was
+            never actually charged or paid to Indian Customs. Real import GST is
+            assessed by Customs against the Bill of Entry, not this invoice. Do not
+            rely on the tax figures below for this invoice; record the actual Customs
+            IGST separately once you have the Bill of Entry.
+          </p>
         )}
 
         {isItemMode && entryConfig.showShipTo && (

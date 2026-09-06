@@ -1,6 +1,10 @@
 import { defineReport } from "@/lib/reports/defineReport";
 import { ReportView } from "@/components/reports/ReportView";
 import type { DrillParams } from "@/components/reports/DrillLink";
+import { createClient } from "@/lib/supabase/server";
+import { readContext } from "@/lib/nav/context";
+import { EquityCarriedNote, OpeningBalanceGap } from "@/components/reports/OpeningBalanceGap";
+import type { OpeningGapRow } from "@/lib/reports/openingBalanceGap";
 
 /**
  * Trial Balance, re-expressed as a `defineReport` definition and rendered
@@ -48,6 +52,31 @@ import type { DrillParams } from "@/components/reports/DrillLink";
  * The chevron-based row drill (the thing that actually matters — a figure
  * that looks wrong is never more than one click from the ledger it came
  * from) is fully preserved; see `drill` below.
+ *
+ * ---------------------------------------------------------------------------
+ * The opening-balance-gap explanation (0755 / 1350), added back around this
+ * contract rather than inside it.
+ * ---------------------------------------------------------------------------
+ * Deviation #1 above already recorded that this migration lost the "Tallied /
+ * Out by ₹X" status badge because ReportView never threads a `status` into
+ * <ReportShell>. That same gap means <ReportView> has no hook a report
+ * definition could use to render a banner explaining WHY a statement is out —
+ * `defineReport`/`ReportView` are owned elsewhere and deliberately out of
+ * scope to extend here (see that file's own header for the reasoning this
+ * task inherited).
+ *
+ * So `TrialBalancePage` below stays on the defineReport/ReportView contract
+ * completely unchanged, and wraps its return instead: a second, independent
+ * `get_trial_balance` call (identical params to the definition's own
+ * `source.params`) computes `tallied` the same way the pre-migration page did,
+ * then <OpeningBalanceGap>/<EquityCarriedNote> render OUTSIDE <ReportView>'s
+ * own <ReportShell> chrome, immediately above and below it. The visible
+ * seam — this panel sits outside the report's card, where the Balance
+ * Sheet's equivalent panel (app/(app)/[companyId]/reports/balance-sheet)
+ * nests inside its own <ReportShell> — is the deliberate trade for not
+ * touching shared report infrastructure two other reports already depend on.
+ * A generic `status`/banner slot on <ReportShell>/<ReportView> remains a
+ * separate, bigger decision for whoever owns that contract.
  */
 
 type TrialBalanceRow = {
@@ -128,6 +157,84 @@ export default async function TrialBalancePage({
 }: PageProps<"/[companyId]/reports/trial-balance">) {
   const { companyId } = await params;
   const sp = await searchParams;
+  const supabase = await createClient();
 
-  return <ReportView definition={trialBalanceReport} companyId={companyId} searchParams={sp} />;
+  // Same resolution <ReportView> performs internally (see its own header) —
+  // duplicated here rather than threaded through, since ReportView has no
+  // way to hand this page the AppContext it computed. financial_year_start_month
+  // and the branch/from/to params both come from the exact same source, so
+  // this cannot disagree with what <ReportView> below is about to render.
+  const { data: company } = await supabase
+    .from("companies")
+    .select("financial_year_start_month")
+    .eq("id", companyId)
+    .maybeSingle();
+  const ctx = readContext(companyId, sp, company?.financial_year_start_month);
+
+  // A second, independent get_trial_balance call — identical params to the
+  // definition's own `source.params` above — purely to recover the tallied/
+  // out-of-balance fact ReportView's generic contract has nowhere to carry.
+  // See the header comment block for why this cannot instead read the figure
+  // out of <ReportView>'s own render.
+  const { data: tbRows } = await supabase.rpc("get_trial_balance", {
+    p_company_id: companyId,
+    p_from: ctx.from,
+    p_to: ctx.to,
+    p_branch_id: ctx.branchId ?? undefined,
+  });
+  const totals = ((tbRows ?? []) as unknown as TrialBalanceRow[]).reduce(
+    (acc, r) => ({
+      cdr: acc.cdr + Number(r.closing_debit ?? 0),
+      ccr: acc.ccr + Number(r.closing_credit ?? 0),
+    }),
+    { cdr: 0, ccr: 0 }
+  );
+  const tallied = Math.abs(totals.cdr - totals.ccr) < 0.005;
+
+  // Why the difference, and what to do about it (0755 / 1350) — see the
+  // Balance Sheet page's identical block for the full reasoning; this report
+  // has no branch caveat to gate on (get_trial_balance is already
+  // branch-filtered by ctx.branchId, and unlike the Balance Sheet this report
+  // makes no separate "whole company" claim), so it explains any imbalance.
+  const [{ data: gapRows }, { data: equity }, { data: membership }, { count: voucherCount }] =
+    await Promise.all([
+      tallied
+        ? Promise.resolve({ data: null })
+        : supabase.rpc("get_unbalanced_opening_balances", { p_company_id: companyId }),
+      supabase
+        .from("ledgers")
+        .select("id, opening_balance_amount, opening_balance_type")
+        .eq("company_id", companyId)
+        .ilike("name", "opening balance equity")
+        .maybeSingle(),
+      tallied
+        ? Promise.resolve({ data: null })
+        : supabase.from("company_members").select("role").eq("company_id", companyId),
+      tallied
+        ? Promise.resolve({ count: null })
+        : supabase
+            .from("vouchers")
+            .select("id", { count: "exact", head: true })
+            .eq("company_id", companyId)
+            .eq("is_deleted", false),
+    ]);
+  const isAdmin = (membership?.[0]?.role ?? null) === "admin";
+
+  return (
+    <>
+      {!tallied && (
+        <OpeningBalanceGap
+          companyId={companyId}
+          statement="Trial Balance"
+          reportGap={totals.cdr - totals.ccr}
+          rows={(gapRows ?? []) as unknown as OpeningGapRow[]}
+          equity={equity ?? null}
+          isAdmin={isAdmin}
+          voucherCount={voucherCount ?? 0}
+        />
+      )}
+      <ReportView definition={trialBalanceReport} companyId={companyId} searchParams={sp} />
+      {tallied && <EquityCarriedNote companyId={companyId} equity={equity ?? null} />}
+    </>
+  );
 }

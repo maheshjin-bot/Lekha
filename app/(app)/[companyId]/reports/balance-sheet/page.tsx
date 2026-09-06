@@ -6,6 +6,8 @@ import { defaultPeriod, financialYearStart } from "@/lib/utils/period";
 import { cn } from "@/lib/utils/cn";
 import { ReportShell, num, td, th } from "@/components/reports/ReportShell";
 import { DrillRow } from "@/components/reports/DrillLink";
+import { EquityCarriedNote, OpeningBalanceGap } from "@/components/reports/OpeningBalanceGap";
+import type { OpeningGapRow } from "@/lib/reports/openingBalanceGap";
 
 const NATURE_LABEL: Record<string, string> = {
   capital: "Capital Account",
@@ -338,6 +340,46 @@ export default async function BalanceSheetPage({
 
   const difference = total("assets") - total("liabilities");
   const balanced = Math.abs(difference) < 0.005;
+
+  // Why the difference, and what to do about it (0755 / 1350). This page has
+  // computed `difference` and printed "Out by ₹X" since it was written, but
+  // never said what the gap was — while get_unbalanced_opening_balances, added
+  // in August precisely to answer that, had no caller anywhere in the app.
+  //
+  // Deliberately whole-company only. A ledger's opening balance is not
+  // branch-scoped (app_private.ledger_opening_signed reads it off the ledger
+  // row and applies p_branch_id only to voucher_entries), so a branch-filtered
+  // statement is out by this difference PLUS every other branch's postings.
+  // Claiming the opening balances explain that would be false; the branch
+  // footnote further down already covers the branch case honestly.
+  const explainGap = !balanced && !branchId;
+  const [{ data: gapRows }, { data: equity }, { data: membership }, { count: voucherCount }] =
+    await Promise.all([
+      explainGap
+        ? supabase.rpc("get_unbalanced_opening_balances", { p_company_id: companyId })
+        : Promise.resolve({ data: null }),
+      // Unconditional: a company that BALANCES but carries a figure on this
+      // ledger is in the normal mid-setup state 0755 describes, and needs
+      // saying so (EquityCarriedNote) as much as an out-of-balance one does.
+      supabase
+        .from("ledgers")
+        .select("id, opening_balance_amount, opening_balance_type")
+        .eq("company_id", companyId)
+        .ilike("name", "opening balance equity")
+        .maybeSingle(),
+      explainGap
+        ? supabase.from("company_members").select("role").eq("company_id", companyId)
+        : Promise.resolve({ data: null }),
+      explainGap
+        ? supabase
+            .from("vouchers")
+            .select("id", { count: "exact", head: true })
+            .eq("company_id", companyId)
+            .eq("is_deleted", false)
+        : Promise.resolve({ count: null }),
+    ]);
+
+  const isAdmin = (membership?.[0]?.role ?? null) === "admin";
 
   // Which account groups are currently expanded to show their ledgers —
   // Tally's Shift+Enter, done with a plain <Link> and a searchParam instead
@@ -752,6 +794,17 @@ export default async function BalanceSheetPage({
           ))}
         </div>
       )}
+      {explainGap && (
+        <OpeningBalanceGap
+          companyId={companyId}
+          statement="Balance Sheet"
+          reportGap={difference}
+          rows={(gapRows ?? []) as unknown as OpeningGapRow[]}
+          equity={equity ?? null}
+          isAdmin={isAdmin}
+          voucherCount={voucherCount ?? 0}
+        />
+      )}
       <div className="grid divide-y divide-border md:grid-cols-2 md:divide-x md:divide-y-0">
         {renderSide({
           label: scheduleIII ? "Equity and Liabilities" : "Liabilities",
@@ -759,6 +812,7 @@ export default async function BalanceSheetPage({
         })}
         {renderSide({ label: "Assets", sideKey: "assets" })}
       </div>
+      {balanced && <EquityCarriedNote companyId={companyId} equity={equity ?? null} />}
       {!hasComparative && (
         <p className="border-t border-border px-4 py-3 text-xs text-ink-faint">
           No comparative column: the books began {formatAsAt(bookBeginning)}, after{" "}

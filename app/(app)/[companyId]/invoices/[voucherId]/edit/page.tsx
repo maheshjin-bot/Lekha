@@ -63,9 +63,13 @@ export default async function EditInvoicePage({
       .eq("company_id", companyId)
       .eq("is_active", true)
       .order("name"),
+    // lut_number/lut_valid_from/lut_valid_to (cf65288, ported) — see the same
+    // fields in invoices/new/page.tsx for why.
     supabase
       .from("branches")
-      .select("id, code, name, gst_registration_id, gst_registrations(state_code)")
+      .select(
+        "id, code, name, gst_registration_id, gst_registrations(state_code, lut_number, lut_valid_from, lut_valid_to)"
+      )
       .eq("company_id", companyId)
       .eq("is_active", true)
       .order("is_head_office", { ascending: false }),
@@ -212,6 +216,9 @@ export default async function EditInvoicePage({
     code: b.code,
     name: b.name,
     registeredState: b.gst_registrations?.state_code ?? null,
+    lutNumber: b.gst_registrations?.lut_number ?? null,
+    lutValidFrom: b.gst_registrations?.lut_valid_from ?? null,
+    lutValidTo: b.gst_registrations?.lut_valid_to ?? null,
   }));
 
   const gstOn = (modules ?? []).some((m) => m.code === "gst" && m.active);
