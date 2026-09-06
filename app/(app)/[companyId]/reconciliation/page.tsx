@@ -31,35 +31,93 @@ export default async function ReconciliationPage({
     );
   }
 
-  const [{ data: summary }, { data: unmatchedEntries }, { data: unmatchedLines }, { data: existingLines }] =
-    await Promise.all([
-      supabase.rpc("get_bank_reconciliation_summary", {
-        p_company_id: companyId,
-        p_ledger_id: ledgerId,
-      }),
-      supabase
-        .from("voucher_entries")
-        .select("id, debit_amount, credit_amount, vouchers!inner(voucher_number, voucher_date, narration, is_deleted)")
-        .eq("company_id", companyId)
-        .eq("ledger_id", ledgerId)
-        .eq("vouchers.is_deleted", false)
-        .order("vouchers(voucher_date)"),
-      supabase
-        .from("bank_statement_lines")
-        .select("id, txn_date, description, reference, debit_amount, credit_amount")
-        .eq("company_id", companyId)
-        .eq("ledger_id", ledgerId)
-        .is("matched_entry_id", null)
-        .order("txn_date"),
-      // external_txn_id (0164) predates the generated types being
-      // refreshed — same "as any" escape hatch the manufacturing/backup
-      // code already uses for a column/table ahead of codegen.
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      (supabase.from("bank_statement_lines") as any)
-        .select("external_txn_id")
-        .eq("company_id", companyId)
-        .eq("ledger_id", ledgerId) as Promise<{ data: { external_txn_id: string }[] | null }>,
-    ]);
+  const [
+    { data: summary },
+    { data: unmatchedEntries },
+    { data: unmatchedLines },
+    { data: existingLines },
+    { data: suggestionEvents },
+  ] = await Promise.all([
+    supabase.rpc("get_bank_reconciliation_summary", {
+      p_company_id: companyId,
+      p_ledger_id: ledgerId,
+    }),
+    supabase
+      .from("voucher_entries")
+      .select("id, debit_amount, credit_amount, vouchers!inner(voucher_number, voucher_date, narration, is_deleted)")
+      .eq("company_id", companyId)
+      .eq("ledger_id", ledgerId)
+      .eq("vouchers.is_deleted", false)
+      .order("vouchers(voucher_date)"),
+    supabase
+      .from("bank_statement_lines")
+      .select("id, txn_date, description, reference, debit_amount, credit_amount")
+      .eq("company_id", companyId)
+      .eq("ledger_id", ledgerId)
+      .is("matched_entry_id", null)
+      .order("txn_date"),
+    // external_txn_id (0164) predates the generated types being
+    // refreshed — same "as any" escape hatch the manufacturing/backup
+    // code already uses for a column/table ahead of codegen.
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    (supabase.from("bank_statement_lines") as any)
+      .select("external_txn_id")
+      .eq("company_id", companyId)
+      .eq("ledger_id", ledgerId) as Promise<{ data: { external_txn_id: string }[] | null }>,
+    // payment_webhook_events (1420) predates codegen too. A SUGGESTION only
+    // — never authoritative, see that migration's own header — surfaced
+    // here as a highlighted banner on the matching unmatched line, never as
+    // a new way to actually confirm a match (match_bank_line, below, is
+    // reused completely unmodified).
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    (supabase as any).from("payment_webhook_events")
+      .select("bank_statement_line_id, suggested_voucher_id, suggested_ledger_id, suggested_reason, amount")
+      .eq("company_id", companyId)
+      .eq("status", "suggested")
+      .not("bank_statement_line_id", "is", null) as Promise<{
+      data:
+        | {
+            bank_statement_line_id: string;
+            suggested_voucher_id: string;
+            suggested_ledger_id: string;
+            suggested_reason: string | null;
+            amount: number;
+          }[]
+        | null;
+    }>,
+  ]);
+
+  // Stitched client-side (here, server-side in the page) rather than via a
+  // PostgREST embed — payment_webhook_events carries two separate FKs
+  // (vouchers, ledgers via a composite key) and this keeps both lookups
+  // simple and independently typed rather than risking an ambiguous embed
+  // hint on a table PostgREST's schema cache learned about ahead of codegen.
+  const suggestionRows = suggestionEvents ?? [];
+  const suggestedVoucherIds = [...new Set(suggestionRows.map((s) => s.suggested_voucher_id))];
+  const suggestedLedgerIds = [...new Set(suggestionRows.map((s) => s.suggested_ledger_id))];
+
+  const [{ data: suggestedVouchers }, { data: suggestedLedgers }] = await Promise.all([
+    suggestedVoucherIds.length
+      ? supabase.from("vouchers").select("id, voucher_number").in("id", suggestedVoucherIds)
+      : Promise.resolve({ data: [] as { id: string; voucher_number: string }[] }),
+    suggestedLedgerIds.length
+      ? supabase.from("ledgers").select("id, name").in("id", suggestedLedgerIds)
+      : Promise.resolve({ data: [] as { id: string; name: string }[] }),
+  ]);
+  const voucherNumberById = new Map((suggestedVouchers ?? []).map((v) => [v.id, v.voucher_number]));
+  const ledgerNameById = new Map((suggestedLedgers ?? []).map((l) => [l.id, l.name]));
+
+  const suggestionByLineId = new Map(
+    suggestionRows.map((s) => [
+      s.bank_statement_line_id,
+      {
+        ledgerName: ledgerNameById.get(s.suggested_ledger_id) ?? "an unknown ledger",
+        voucherNumber: voucherNumberById.get(s.suggested_voucher_id) ?? "an invoice",
+        amount: Number(s.amount),
+        reason: s.suggested_reason,
+      },
+    ])
+  );
 
   // The unmatched-entries query can't filter matched_entry_id from here (it
   // lives on the other table), so exclude client-side against the same
@@ -105,6 +163,7 @@ export default async function ReconciliationPage({
           reference: l.reference,
           debit_amount: Number(l.debit_amount),
           credit_amount: Number(l.credit_amount),
+          suggestion: suggestionByLineId.get(l.id) ?? null,
         }))}
         existingLines={(existingLines ?? []).map((l) => ({
           externalTxnId: l.external_txn_id,

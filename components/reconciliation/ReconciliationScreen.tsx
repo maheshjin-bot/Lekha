@@ -32,6 +32,17 @@ type Entry = {
   narration: string | null;
 };
 
+// A SUGGESTION only (from payment_webhook_events, migration 1420) — never an
+// authoritative match. Surfaced as a highlighted banner on the line it
+// belongs to; the actual confirmation is always the existing match_bank_line
+// click below, on whichever book entry the user picks — never a new path.
+type Suggestion = {
+  ledgerName: string;
+  voucherNumber: string;
+  amount: number;
+  reason: string | null;
+} | null;
+
 type Line = {
   id: string;
   txn_date: string;
@@ -39,6 +50,7 @@ type Line = {
   reference: string | null;
   debit_amount: number;
   credit_amount: number;
+  suggestion?: Suggestion;
 };
 
 // One downloadable sample per adapter, in that bank's own real column
@@ -542,26 +554,32 @@ export function ReconciliationScreen({
               <p className="px-4 py-8 text-center text-sm text-ink-faint">Nothing unmatched.</p>
             )}
             {unmatchedLines.map((l) => (
-              <button
-                key={l.id}
-                type="button"
-                onClick={() => setSelectedLine(selectedLine === l.id ? null : l.id)}
-                className={
-                  "flex w-full items-center justify-between gap-3 border-b border-border px-4 py-2.5 text-left text-sm last:border-0  " +
-                  (selectedLine === l.id
-                    ? "bg-accent-soft"
-                    : "hover:bg-surface-2")
-                }
-              >
-                <span>
-                  <span className="tabular-nums text-ink-faint font-mono">{l.txn_date}</span>{" "}
-                  {l.description ?? "—"}
-                </span>
-                <span className="shrink-0 tabular-nums font-medium font-mono">
-                  {l.credit_amount > 0 ? "Cr " : "Dr "}
-                  {formatINR(l.credit_amount || l.debit_amount)}
-                </span>
-              </button>
+              <div key={l.id} className="border-b border-border last:border-0">
+                <button
+                  type="button"
+                  onClick={() => setSelectedLine(selectedLine === l.id ? null : l.id)}
+                  className={
+                    "flex w-full items-center justify-between gap-3 px-4 py-2.5 text-left text-sm " +
+                    (selectedLine === l.id ? "bg-accent-soft" : "hover:bg-surface-2")
+                  }
+                >
+                  <span>
+                    <span className="tabular-nums text-ink-faint font-mono">{l.txn_date}</span>{" "}
+                    {l.description ?? "—"}
+                  </span>
+                  <span className="shrink-0 tabular-nums font-medium font-mono">
+                    {l.credit_amount > 0 ? "Cr " : "Dr "}
+                    {formatINR(l.credit_amount || l.debit_amount)}
+                  </span>
+                </button>
+                {l.suggestion && (
+                  <p className="border-t border-accent/20 bg-accent-soft/60 px-4 py-1.5 text-xs text-accent">
+                    Looks like <span className="font-semibold">{l.suggestion.ledgerName}</span>&rsquo;s invoice{" "}
+                    <span className="font-mono">{l.suggestion.voucherNumber}</span> ({formatINR(l.suggestion.amount)}
+                    ) — post a receipt against it, then match its bank entry here. Not automatic.
+                  </p>
+                )}
+              </div>
             ))}
           </div>
         </section>

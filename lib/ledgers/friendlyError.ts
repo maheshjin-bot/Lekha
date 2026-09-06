@@ -20,6 +20,15 @@ import type { PostgrestError } from "@supabase/supabase-js";
  * GSTIN/PAN, bank block, MSME, state). Anything unrecognised falls back to
  * the raw Postgres message — better than swallowing a real error into a
  * generic "something went wrong" that hides what to fix.
+ *
+ * Extended for update_ledger (1330): pincode/email/TAN/bank-name-and-account
+ * constraints that a create-only form never hit because neither existing
+ * create path (LedgerManager's own form, QuickAddLedgerModal without a
+ * prefill) wrote those columns. update_ledger's own RAISE EXCEPTION messages
+ * (the admin-only opening-balance/group gate, the new group-lock-once-posted
+ * rule, the permission check) are deliberately plain English already, not
+ * constraint names — they fall through to the raw `error.message` at the
+ * bottom of this function unchanged, which is already what a human should see.
  */
 export function friendlyLedgerError(error: PostgrestError, ledgerName: string): string {
   if (error.code === "23505") {
@@ -58,6 +67,24 @@ export function friendlyLedgerError(error: PostgrestError, ledgerName: string): 
   }
   if (message.includes("ledgers_unregistered_has_no_gstin")) {
     return "Unregistered and Overseas parties can't carry a GSTIN — clear it, or change the GST type.";
+  }
+  if (message.includes("ledgers_pincode_check")) {
+    return "A PIN code is six digits and cannot start with a zero.";
+  }
+  if (message.includes("ledgers_email_check")) {
+    return "That doesn't look like an email address.";
+  }
+  if (message.includes("ledgers_tan_check")) {
+    return "That doesn't look like a valid TAN (format AAAA99999A) — re-check it against the deductor's certificate or Form 26AS.";
+  }
+  if (message.includes("ledgers_bank_account_number_check")) {
+    return "A bank account number is 5 to 34 letters or digits, with no spaces.";
+  }
+  if (message.includes("ledgers_bank_name_check")) {
+    return "A bank name needs to be between 2 and 120 characters — or leave it blank.";
+  }
+  if (message.includes("ledgers_relationship_type_requires_flag_check")) {
+    return "An AS 18 relationship can only be set when \"Related / specified person\" is ticked.";
   }
   return error.message ?? "The ledger could not be saved.";
 }
