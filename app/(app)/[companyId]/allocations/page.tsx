@@ -1,5 +1,6 @@
 import Link from "next/link";
 import { createClient } from "@/lib/supabase/server";
+import { defaultPeriod } from "@/lib/utils/period";
 import {
   AllocationManager,
   type AllocationRow,
@@ -27,10 +28,16 @@ export default async function AllocationsPage({
   // An as-at control, not just today. A receipt is often entered days after
   // the date it bears, and an AR desk reconciling a month-end needs to see the
   // position ON that date — the same reason every report here takes one.
+  // defaultPeriod's `to` with no override is todayLocal() regardless of the
+  // startMonth passed in — using it here, rather than a bare
+  // `new Date().toISOString()`, is what keeps this page off the UTC+05:30
+  // date bug period.ts's header documents: a bare toISOString() reads the
+  // UTC calendar date, which is still yesterday between IST midnight and
+  // 05:30 — see the same fix in reports/outstanding and reports/party-bills.
   const asAt =
     typeof sp.as_at === "string" && /^\d{4}-\d{2}-\d{2}$/.test(sp.as_at)
       ? sp.as_at
-      : new Date().toISOString().slice(0, 10);
+      : defaultPeriod(4).to;
   // Worklist is the default: the dashboard's "N unallocated settlements"
   // alert links straight here with no query string at all, and the whole
   // point of following that link is to clear the backlog, not to browse a

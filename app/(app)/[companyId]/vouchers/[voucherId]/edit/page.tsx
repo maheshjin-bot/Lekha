@@ -38,10 +38,15 @@ export default async function EditVoucherPage({
       // VoucherScreen's own unified Ledger type requires both (Recon B1b).
       // They render nothing on this fixed-mode edit screen (Ctrl+H is
       // disabled whenever isEdit — B6), but the prop type still requires them.
+      // party_type/gstin were missing here entirely until this fix — silently
+      // undefined on every ledger, which meant RawVoucherGrid's
+      // tdsReceivableSuggestion() (1780 Finding C: a customer withholding TDS
+      // on money owed to us) could never fire on an edit, only on a brand-new
+      // receipt, since it requires party_type==='both' and a truthy gstin.
       supabase
         .from("ledgers")
         .select(
-          "id, name, account_groups(ledger_role), is_tds_deductee, default_tds_section, ldc_rate, ldc_valid_from, ldc_valid_to, ldc_amount_cap, state_code, pan"
+          "id, name, account_groups(ledger_role), is_tds_deductee, default_tds_section, ldc_rate, ldc_valid_from, ldc_valid_to, ldc_amount_cap, state_code, pan, party_type, gstin"
         )
         .eq("company_id", companyId)
         .eq("is_active", true)
@@ -128,6 +133,8 @@ export default async function EditVoucherPage({
           ldc_amount_cap: l.ldc_amount_cap,
           state_code: l.state_code,
           pan: l.pan,
+          party_type: l.party_type,
+          gstin: l.gstin,
         }))}
         branches={(branches ?? []).map((b) => ({ ...b, registeredState: null }))}
         tdsSections={tdsSections ?? []}
