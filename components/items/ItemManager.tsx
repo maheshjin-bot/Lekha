@@ -25,6 +25,11 @@ type Item = {
   default_tcs_section: string | null;
   is_rcm_applicable: boolean;
   is_active: boolean;
+  // 1370: 'none' | 'batch' | 'serial'. Governs whether this item can ever
+  // appear on /batches, Reports > Stock expiry, or the batch half of
+  // /stock-verification — see BatchManager.tsx, which has pointed a
+  // preparer here since it shipped, long before this field had a writer.
+  batch_tracking: string;
 };
 
 type TcsSection = { section_code: string; description: string; rate_percent: number };
@@ -52,6 +57,14 @@ const ITC_BLOCK_CLAUSES = [
   { value: "17(5)(g)", label: "17(5)(g) — Personal consumption" },
   { value: "17(5)(h)", label: "17(5)(h) — Gifts, free samples, goods lost or written off" },
   { value: "17(5)(i)", label: "17(5)(i) — Tax paid under Sec 74, 129 or 130" },
+];
+
+// 1370: mirrors the live items_batch_tracking_check constraint exactly —
+// these are the only three values the database accepts.
+const BATCH_TRACKING_OPTIONS = [
+  { value: "none", label: "Not tracked" },
+  { value: "batch", label: "Batch / lot" },
+  { value: "serial", label: "Serial number" },
 ];
 
 const SUPPLY_NATURES = [
@@ -173,6 +186,7 @@ export function ItemManager({
     tcsSection: string;
     isRcmApplicable: boolean;
     isActive: boolean;
+    batchTracking: string;
   };
   const [editDraft, setEditDraft] = useState<EditDraft | null>(null);
   const [editBusy, setEditBusy] = useState(false);
@@ -196,6 +210,7 @@ export function ItemManager({
       tcsSection: it.default_tcs_section ?? "",
       isRcmApplicable: it.is_rcm_applicable,
       isActive: it.is_active,
+      batchTracking: it.batch_tracking,
     });
   }
 
@@ -243,6 +258,10 @@ export function ItemManager({
       p_default_tcs_section: editDraft.tcsSection || null,
       p_is_rcm_applicable: editDraft.isRcmApplicable,
       p_is_active: editDraft.isActive,
+      // items_batch_tracking_needs_stock refuses 'batch'/'serial' on
+      // anything but a goods item that maintains stock — a service can
+      // never carry it, same rule the control below is hidden under.
+      p_batch_tracking: isEditingService ? "none" : editDraft.batchTracking,
     });
 
     if (error) {
@@ -461,6 +480,29 @@ export function ItemManager({
                                 </option>
                               ))}
                             </select>
+                          </label>
+                        )}
+
+                        {editDraft.itemType === "goods" && (
+                          <label className="flex flex-col gap-1.5">
+                            <span className="text-sm font-medium">Batch tracking</span>
+                            <select
+                              value={editDraft.batchTracking}
+                              onChange={(e) =>
+                                setEditDraft({ ...editDraft, batchTracking: e.target.value })
+                              }
+                              className={field}
+                            >
+                              {BATCH_TRACKING_OPTIONS.map((o) => (
+                                <option key={o.value} value={o.value}>
+                                  {o.label}
+                                </option>
+                              ))}
+                            </select>
+                            <span className="text-xs text-ink-faint">
+                              Turns this item on for /batches, Stock expiry and batch/serial
+                              allocation on vouchers.
+                            </span>
                           </label>
                         )}
 

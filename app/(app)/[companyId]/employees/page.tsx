@@ -17,6 +17,7 @@ export default async function EmployeesPage({
     { data: company },
     { data: taxDeclarations },
     { data: postedRuns },
+    { data: exitSettlements },
   ] = await Promise.all([
     supabase
       .from("employees")
@@ -58,6 +59,13 @@ export default async function EmployeesPage({
       .select("period_month")
       .eq("company_id", companyId)
       .order("period_month", { ascending: false }),
+    // 1380: a finalized full-and-final settlement owns the exit date once it
+    // exists — the edit panel offers the F&F screen instead of its own date
+    // field, and set_employee_leaving_date refuses either way.
+    supabase
+      .from("employee_exit_settlements")
+      .select("employee_id, exit_date")
+      .eq("company_id", companyId),
   ]);
 
   const payrollOn = (modules ?? []).some((m) => m.code === "payroll" && m.active);
@@ -83,6 +91,11 @@ export default async function EmployeesPage({
     current_basic: latestByEmployee.get(e.id)?.basic ?? null,
     current_gross: latestByEmployee.get(e.id)?.gross ?? null,
   }));
+
+  const fnfExitDates: Record<string, string> = {};
+  for (const s of exitSettlements ?? []) {
+    if (s.exit_date) fnfExitDates[s.employee_id] = s.exit_date;
+  }
 
   // numeric(18,2) arrives from PostgREST as a string; the revision form does
   // arithmetic on these, so they are narrowed once here rather than at four
@@ -139,6 +152,7 @@ export default async function EmployeesPage({
         currentFinancialYearLabel={financialYearLabel(company?.financial_year_start_month ?? 4)}
         structures={structureRows}
         postedMonths={(postedRuns ?? []).map((p) => p.period_month)}
+        fnfExitDates={fnfExitDates}
       />
     </main>
   );

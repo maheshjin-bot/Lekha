@@ -62,6 +62,16 @@ const GSTIN_PATTERN = /^[0-9]{2}[A-Z]{5}[0-9]{4}[A-Z][1-9A-Z]Z[0-9A-Z]$/;
  */
 const stateFromGstin = (g: string) => (GSTIN_PATTERN.test(g) ? g.slice(0, 2) : "");
 
+// ledgers_pincode_check / ledgers_email_check — the same two patterns
+// QuickAddLedgerModal.tsx already carries under its own copies of this
+// comment. A ledger created here could not be e-invoiced at all
+// (build_einvoice_json, 0230, refuses outright with "Buyer (%) is missing a
+// required address field") because this screen never asked for address, city
+// or PIN code, though the quick-add popup on the invoice/voucher screens has
+// asked for all three for months.
+const PINCODE_PATTERN = /^[1-9][0-9]{5}$/;
+const EMAIL_PATTERN = /^[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}$/;
+
 // Registration types that mean "this party holds a GSTIN", mirroring
 // ledgers_registered_has_gstin (0735).
 const GST_TYPES_NEEDING_GSTIN = [
@@ -174,6 +184,17 @@ export function LedgerManager({
   const [gstin, setGstin] = useState("");
   const [stateCode, setStateCode] = useState("");
   const [states, setStates] = useState<StateOption[]>([]);
+  // Address, contact and credit terms — the rest of the party master this
+  // form never asked for. See the PINCODE_PATTERN/EMAIL_PATTERN comment above
+  // for why address/city/pincode matter, and the credit-days field below for
+  // why a blank box must write null rather than a default.
+  const [address, setAddress] = useState("");
+  const [city, setCity] = useState("");
+  const [pincode, setPincode] = useState("");
+  const [contactPerson, setContactPerson] = useState("");
+  const [phone, setPhone] = useState("");
+  const [email, setEmail] = useState("");
+  const [creditDays, setCreditDays] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -230,6 +251,13 @@ export function LedgerManager({
   const panLooksValid = pan.length === 0 || PAN_PATTERN.test(pan);
   const tanLooksValid = tan.length === 0 || TAN_PATTERN.test(tan);
   const gstinLooksValid = gstin.length === 0 || GSTIN_PATTERN.test(gstin);
+  const pincodeLooksValid = pincode.length === 0 || PINCODE_PATTERN.test(pincode);
+  const emailLooksValid = email.length === 0 || EMAIL_PATTERN.test(email);
+  // credit_days is a smallint, and negative credit terms are not a thing. An
+  // empty box means "not stated", which is what leaves get_overdue_receivables
+  // and get_bill_wise_outstanding on their 30-day coalesce fallback.
+  const creditDaysLooksValid =
+    creditDays.trim().length === 0 || /^[0-9]{1,4}$/.test(creditDays.trim());
   // "" here means "Regular / not set" in this screen's own dropdown, which is
   // stored as null and stays permissive — so only an explicit registered type
   // demands a number.
@@ -237,6 +265,21 @@ export function LedgerManager({
 
   async function onSubmit(e: React.FormEvent) {
     e.preventDefault();
+    // Stated here, in the preparer's own words, rather than letting
+    // ledgers_pincode_check/ledgers_email_check come back as raw constraint
+    // names after a round trip — same reasoning as PAN/TAN/GSTIN above.
+    if (!pincodeLooksValid) {
+      setError("A PIN code is six digits and cannot start with a zero.");
+      return;
+    }
+    if (!emailLooksValid) {
+      setError("That doesn't look like an email address.");
+      return;
+    }
+    if (!creditDaysLooksValid) {
+      setError("Credit days is a whole number of days — leave it blank if the party has no agreed terms.");
+      return;
+    }
     setBusy(true);
     setError(null);
 
@@ -266,6 +309,17 @@ export function LedgerManager({
       // and without it the party cannot be invoiced at all. See the
       // effectiveStateCode comment above.
       state_code: effectiveStateCode || null,
+      address: address.trim() || null,
+      city: city.trim() || null,
+      pincode: pincode.trim() || null,
+      contact_person: contactPerson.trim() || null,
+      phone: phone.trim() || null,
+      email: email.trim() || null,
+      // A blank box writes null, not 30 — get_overdue_receivables (0031) and
+      // get_bill_wise_outstanding both read a null credit_days as "no agreed
+      // terms" via coalesce(ledgers.credit_days, 30). Writing 30 here would
+      // turn a blank box into an assertion nobody made.
+      credit_days: creditDays.trim() ? Number(creditDays) : null,
     });
 
     if (error) {
@@ -296,6 +350,13 @@ export function LedgerManager({
     setGstRegType("");
     setGstin("");
     setStateCode("");
+    setAddress("");
+    setCity("");
+    setPincode("");
+    setContactPerson("");
+    setPhone("");
+    setEmail("");
+    setCreditDays("");
     setBusy(false);
     router.refresh();
   }
@@ -548,6 +609,99 @@ export function LedgerManager({
                   : "Only used to decide the place of supply on a GST invoice."}
             </span>
           </label>
+
+          <div className="rounded-md border border-border p-3">
+            <span className="text-sm font-medium">
+              Address &amp; contact{" "}
+              <span className="font-normal text-ink-faint">optional</span>
+            </span>
+            <p className="mt-0.5 text-xs text-ink-faint">
+              An e-invoice cannot be generated for this party without an
+              address, city or PIN code on file (build_einvoice_json refuses
+              outright) — the quick-add popup on the invoice screen has always
+              asked for these; this is the same information, asked here too.
+            </p>
+            <div className="mt-2 flex flex-col gap-2">
+              <label className="flex flex-col gap-1.5">
+                <span className="text-xs text-ink-faint">Address</span>
+                <input value={address} onChange={(e) => setAddress(e.target.value)} className={field} />
+              </label>
+              <div className="grid grid-cols-2 gap-2">
+                <label className="flex flex-col gap-1.5">
+                  <span className="text-xs text-ink-faint">Town / city</span>
+                  <input value={city} onChange={(e) => setCity(e.target.value)} className={field} />
+                </label>
+                <label className="flex flex-col gap-1.5">
+                  <span className="text-xs text-ink-faint">PIN code</span>
+                  <input
+                    value={pincode}
+                    onChange={(e) => setPincode(e.target.value.replace(/[^0-9]/g, "").slice(0, 6))}
+                    inputMode="numeric"
+                    maxLength={6}
+                    className={field + " font-mono"}
+                  />
+                  {pincode.length > 0 && !pincodeLooksValid && (
+                    <span className="text-xs text-warning">
+                      Six digits, and it cannot start with a zero.
+                    </span>
+                  )}
+                </label>
+              </div>
+              <div className="grid grid-cols-2 gap-2">
+                <label className="flex flex-col gap-1.5">
+                  <span className="text-xs text-ink-faint">Contact person</span>
+                  <input
+                    value={contactPerson}
+                    onChange={(e) => setContactPerson(e.target.value)}
+                    className={field}
+                  />
+                </label>
+                <label className="flex flex-col gap-1.5">
+                  <span className="text-xs text-ink-faint">Phone</span>
+                  <input value={phone} onChange={(e) => setPhone(e.target.value)} className={field} />
+                </label>
+              </div>
+              <label className="flex flex-col gap-1.5">
+                <span className="text-xs text-ink-faint">Email</span>
+                <input
+                  value={email}
+                  onChange={(e) => setEmail(e.target.value)}
+                  inputMode="email"
+                  className={field}
+                />
+                {email.length > 0 && !emailLooksValid && (
+                  <span className="text-xs text-warning">That is not a usable address.</span>
+                )}
+              </label>
+              <label className="flex flex-col gap-1.5">
+                <span className="text-xs text-ink-faint">
+                  Credit days{" "}
+                  <span className="text-ink-faint">
+                    — blank means no agreed terms; the overdue reports fall
+                    back to 30 days
+                  </span>
+                </span>
+                <input
+                  inputMode="numeric"
+                  value={creditDays}
+                  onChange={(e) =>
+                    setCreditDays(e.target.value.replace(/[^0-9]/g, "").slice(0, 4))
+                  }
+                  placeholder="30"
+                  className={
+                    field +
+                    " w-28 text-right tabular-nums" +
+                    (creditDaysLooksValid ? "" : " border-error focus-visible:border-error")
+                  }
+                />
+                {!creditDaysLooksValid && (
+                  <span className="text-xs text-warning">
+                    A whole number of days — leave it blank for no agreed terms.
+                  </span>
+                )}
+              </label>
+            </div>
+          </div>
 
           <label className="flex flex-col gap-1.5">
             <span className="text-sm font-medium">Group</span>

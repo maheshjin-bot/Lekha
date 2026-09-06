@@ -12,7 +12,7 @@ export default async function ItemsPage({
       supabase
         .from("items")
         .select(
-          "id, code, name, item_type, hsn_sac, uom, maintain_stock, opening_quantity, opening_value, sale_rate, purchase_rate, gst_rate_percent, cess_rate_percent, supply_nature, itc_blocked_clause, default_tcs_section, is_rcm_applicable, is_active"
+          "id, code, name, item_type, hsn_sac, uom, maintain_stock, opening_quantity, opening_value, sale_rate, purchase_rate, gst_rate_percent, cess_rate_percent, supply_nature, itc_blocked_clause, default_tcs_section, is_rcm_applicable, is_active, batch_tracking"
         )
         .eq("company_id", companyId)
         .order("name"),

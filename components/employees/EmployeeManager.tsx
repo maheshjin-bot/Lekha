@@ -1,9 +1,10 @@
 "use client";
 
-import { useState } from "react";
+import { Fragment, useState } from "react";
 import { useRouter } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
 import { formatINR } from "@/lib/utils/currency";
+import { EmployeeEditRow } from "@/components/employees/EmployeeEditRow";
 
 type Employee = {
   id: string;
@@ -14,6 +15,7 @@ type Employee = {
   date_of_joining: string;
   date_of_leaving: string | null;
   is_active: boolean;
+  branch_id: string | null;
   current_basic: number | null;
   current_gross: number | null;
 };
@@ -62,6 +64,7 @@ export function EmployeeManager({
   currentFinancialYearLabel,
   structures,
   postedMonths,
+  fnfExitDates,
 }: {
   companyId: string;
   employees: Employee[];
@@ -72,8 +75,16 @@ export function EmployeeManager({
   structures: SalaryStructure[];
   /** payroll_postings.period_month — the months already in the ledger. */
   postedMonths: string[];
+  /** employee_exit_settlements, keyed by employee_id — 1380: once a
+   * full-and-final settlement is finalized, it owns the exit date and the
+   * edit panel offers the F&F screen instead of its own date field. */
+  fnfExitDates: Record<string, string>;
 }) {
   const router = useRouter();
+  // 1380 — identity correction and an exit that doesn't need a full
+  // settlement, expanded in place under the row being edited (the same
+  // per-row-expand mechanic ItemManager.tsx already uses).
+  const [editingEmployeeId, setEditingEmployeeId] = useState<string | null>(null);
   const [name, setName] = useState("");
   const [pan, setPan] = useState("");
   const [uan, setUan] = useState("");
@@ -472,20 +483,23 @@ export function EmployeeManager({
                   Regime {currentFinancialYearLabel}
                 </th>
                 <th className="px-4 py-2.5 text-right font-medium">Current gross</th>
+                <th className="px-4 py-2.5 font-medium"><span className="sr-only">Actions</span></th>
               </tr>
             </thead>
             <tbody>
               {employees.length === 0 && (
                 <tr>
-                  <td colSpan={6} className="px-4 py-10 text-center text-ink-faint">
+                  <td colSpan={7} className="px-4 py-10 text-center text-ink-faint">
                     No employees yet. Add one on the right.
                   </td>
                 </tr>
               )}
               {employees.map((emp) => {
                 const declared = declarationByEmployee.get(emp.id);
+                const editing = editingEmployeeId === emp.id;
                 return (
-                <tr key={emp.id} className="border-b border-border last:border-0">
+                <Fragment key={emp.id}>
+                <tr className="border-b border-border last:border-0">
                   <td className="px-4 py-2.5 font-medium">{emp.name}</td>
                   <td className="px-4 py-2.5 font-mono text-xs text-ink-soft">
                     {emp.pan ?? <span className="text-ink-faint">—</span>}
@@ -516,7 +530,30 @@ export function EmployeeManager({
                       <span className="text-ink-faint">—</span>
                     )}
                   </td>
+                  <td className="px-4 py-2.5 text-right">
+                    <button
+                      type="button"
+                      onClick={() => setEditingEmployeeId(editing ? null : emp.id)}
+                      className="rounded-md border border-border-strong px-2 py-1 text-xs text-ink-soft hover:bg-surface-2"
+                    >
+                      {editing ? "Close" : "Edit"}
+                    </button>
+                  </td>
                 </tr>
+                {editing && (
+                  <tr className="border-b border-border last:border-0 bg-bg">
+                    <td colSpan={7} className="p-0">
+                      <EmployeeEditRow
+                        companyId={companyId}
+                        employee={emp}
+                        branches={branches}
+                        fnfExitDate={fnfExitDates[emp.id] ?? null}
+                        onDone={() => setEditingEmployeeId(null)}
+                      />
+                    </td>
+                  </tr>
+                )}
+                </Fragment>
                 );
               })}
             </tbody>
