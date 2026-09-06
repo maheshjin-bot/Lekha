@@ -420,6 +420,7 @@ export function Combobox({
                       itemRefs.current[index] = el;
                     }}
                     onMouseEnter={() => setActiveIndex(index)}
+                    onMouseDown={(e) => e.preventDefault()}
                     onClick={() => selectOption(option)}
                     className={cn(
                       "flex cursor-pointer items-center gap-3 rounded-lg px-2.5 py-2",
@@ -446,6 +447,7 @@ export function Combobox({
                     itemRefs.current[0] = el;
                   }}
                   onMouseEnter={() => setActiveIndex(0)}
+                  onMouseDown={(e) => e.preventDefault()}
                   onClick={triggerCreate}
                   className={cn(
                     "flex cursor-pointer items-center gap-2 rounded-lg px-2.5 py-2",
