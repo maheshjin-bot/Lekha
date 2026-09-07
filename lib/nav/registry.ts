@@ -349,6 +349,13 @@ const masters: NavEntry[] = [
     group: "Masters",
   },
   {
+    href: `${C}/branches`,
+    label: "Branches",
+    workspace: "masters",
+    keywords: ["branch office", "location", "multi-state", "gstin by branch", "head office"],
+    group: "Masters",
+  },
+  {
     href: `${C}/godowns`,
     label: "Godowns",
     workspace: "inventory",
