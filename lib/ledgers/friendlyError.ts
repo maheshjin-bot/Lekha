@@ -1,5 +1,3 @@
-import type { PostgrestError } from "@supabase/supabase-js";
-
 /**
  * Turns a raw Postgres error from a direct `ledgers` table insert/update into
  * a plain-English message, the same way the e-invoice and e-way-bill routes
@@ -29,8 +27,18 @@ import type { PostgrestError } from "@supabase/supabase-js";
  * rule, the permission check) are deliberately plain English already, not
  * constraint names — they fall through to the raw `error.message` at the
  * bottom of this function unchanged, which is already what a human should see.
+ *
+ * Takes the minimal shape this function actually reads (message, optional
+ * code) rather than the full supabase-js PostgrestError, so a caller behind
+ * callRpc — whose error type is narrower, since update_ledger isn't in
+ * generated types yet — can pass its error straight through with no cast.
+ * A real PostgrestError satisfies this shape too, so nothing about the
+ * direct-table-insert callers (LedgerManager, QuickAddLedgerModal) changes.
  */
-export function friendlyLedgerError(error: PostgrestError, ledgerName: string): string {
+export function friendlyLedgerError(
+  error: { message: string; code?: string },
+  ledgerName: string
+): string {
   if (error.code === "23505") {
     return `This company already has a ledger called "${ledgerName}".`;
   }

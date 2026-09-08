@@ -6,6 +6,20 @@ import { useRouter } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
 import { formatINR } from "@/lib/utils/currency";
 import { friendlyLedgerError } from "@/lib/ledgers/friendlyError";
+import {
+  UDYAM_PATTERN,
+  PAN_PATTERN,
+  TAN_PATTERN,
+  GSTIN_PATTERN,
+  stateFromGstin,
+  PINCODE_PATTERN,
+  EMAIL_PATTERN,
+  GST_TYPES_NEEDING_GSTIN,
+  SEC43B_LABEL,
+  GST_REG_TYPE_LABEL,
+  GST_REG_TYPE_OPTIONS,
+  RELATIONSHIP_TYPE_LABEL,
+} from "@/lib/ledgers/validation";
 
 type Ledger = {
   id: string;
@@ -40,98 +54,6 @@ type Group = {
 type TdsSection = { section_code: string; description: string; rate_percent: number };
 
 type StateOption = { code: string; name: string };
-
-// Mirrors app_private.is_valid_udyam exactly.
-const UDYAM_PATTERN = /^UDYAM-[A-Z]{2}-[0-9]{2}-[0-9]{7}$/;
-// Mirrors app_private.is_valid_pan exactly.
-const PAN_PATTERN = /^[A-Z]{5}[0-9]{4}[A-Z]$/;
-// Mirrors app_private.is_valid_tan exactly (0148) — 4 letters, 5 digits, 1
-// letter, a fixed real TAN format, distinct from PAN's shape above. This is
-// the deductor identity a 26AS/AIS row is keyed on (Reports > TDS credit
-// match) — without it here, a customer's TAN can never be recorded at all.
-const TAN_PATTERN = /^[A-Z]{4}[0-9]{5}[A-Z]$/;
-
-// The shape half of app_private.is_valid_gstin. The check digit stays the
-// database's job — a drifting second copy would reject numbers it accepts.
-const GSTIN_PATTERN = /^[0-9]{2}[A-Z]{5}[0-9]{4}[A-Z][1-9A-Z]Z[0-9A-Z]$/;
-
-/*
- * A GSTIN's first two characters ARE the state code (and 3-12 are the PAN) —
- * the same derivation QuickAddLedgerModal uses, and the reason
- * ledgers_gstin_matches_state (0735) can be a CHECK rather than a prompt.
- */
-const stateFromGstin = (g: string) => (GSTIN_PATTERN.test(g) ? g.slice(0, 2) : "");
-
-// ledgers_pincode_check / ledgers_email_check — the same two patterns
-// QuickAddLedgerModal.tsx already carries under its own copies of this
-// comment. A ledger created here could not be e-invoiced at all
-// (build_einvoice_json, 0230, refuses outright with "Buyer (%) is missing a
-// required address field") because this screen never asked for address, city
-// or PIN code, though the quick-add popup on the invoice/voucher screens has
-// asked for all three for months.
-const PINCODE_PATTERN = /^[1-9][0-9]{5}$/;
-const EMAIL_PATTERN = /^[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}$/;
-
-// Registration types that mean "this party holds a GSTIN", mirroring
-// ledgers_registered_has_gstin (0735).
-const GST_TYPES_NEEDING_GSTIN = [
-  "regular",
-  "composition",
-  "sez",
-  "sez_developer",
-  "uin",
-  "deemed_export",
-];
-
-// Short labels for the sec43b_category check-constraint values.
-const SEC43B_LABEL: Record<string, string> = {
-  statutory_dues: "Tax/duty/cess/fee",
-  employee_welfare_fund: "PF/gratuity fund",
-  bonus_commission: "Bonus/commission",
-  specified_interest: "Bank/PFI interest",
-  leave_encashment: "Leave encashment",
-};
-
-// Mirrors ledgers_gst_registration_type_check exactly (0006, extended in
-// meaning but not in values by 0087). 'regular' is left out of the dropdown
-// on purpose — a GSTIN attached to the ledger already sets it automatically
-// (enforce_ledger_gst_identity, 0006), and offering it here would invite
-// someone to pick it for a party that has no GSTIN at all.
-const GST_REG_TYPE_LABEL: Record<string, string> = {
-  regular: "Regular",
-  composition: "Composition",
-  unregistered: "Unregistered",
-  sez: "SEZ unit",
-  sez_developer: "SEZ developer",
-  overseas: "Overseas (export)",
-  uin: "UIN holder",
-  deemed_export: "Deemed export (Sec 147)",
-};
-const GST_REG_TYPE_OPTIONS = [
-  "composition",
-  "unregistered",
-  "sez",
-  "sez_developer",
-  "overseas",
-  "uin",
-  "deemed_export",
-];
-
-// Mirrors ledgers_relationship_type_check exactly (0105). AS 18 / Ind AS 24's
-// own relationship categories — see that migration's header for why this
-// rides the pre-existing Sec 40A(2)(b) is_related_party flag rather than a
-// separate one, and the coverage gap that reuse leaves.
-const RELATIONSHIP_TYPE_LABEL: Record<string, string> = {
-  holding_company: "Holding company",
-  subsidiary_or_fellow_subsidiary: "Subsidiary / fellow subsidiary",
-  associate_or_joint_venture: "Associate / joint venture",
-  individual_with_control_or_significant_influence: "Individual with control / significant influence",
-  relative_of_such_individual: "Relative of such individual",
-  key_management_personnel: "Key management personnel",
-  relative_of_kmp: "Relative of KMP",
-  enterprise_influenced_by_kmp_or_relative: "Enterprise influenced by KMP or relative",
-  other: "Other related party",
-};
 
 export function LedgerManager({
   companyId,
@@ -383,6 +305,7 @@ export function LedgerManager({
                 {sec43bOn && <th className="px-4 py-2.5 font-medium">Sec 43B</th>}
                 {gstOn && <th className="px-4 py-2.5 font-medium">GST type</th>}
                 <th className="px-4 py-2.5 text-right font-medium">Opening</th>
+                <th className="px-4 py-2.5"></th>
               </tr>
             </thead>
             <tbody>
@@ -390,7 +313,7 @@ export function LedgerManager({
                 <tr>
                   <td
                     colSpan={
-                      5 +
+                      6 +
                       (tdsOn ? 1 : 0) +
                       (msmeOn ? 1 : 0) +
                       (partnerRemunerationOn ? 1 : 0) +
@@ -514,6 +437,14 @@ export function LedgerManager({
                     ) : (
                       <span className="text-ink-faint">—</span>
                     )}
+                  </td>
+                  <td className="px-4 py-2.5 text-right">
+                    <Link
+                      href={`/${companyId}/ledgers/${l.id}/edit`}
+                      className="text-xs text-accent underline underline-offset-2"
+                    >
+                      Edit
+                    </Link>
                   </td>
                 </tr>
               ))}
