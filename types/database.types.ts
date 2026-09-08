@@ -3946,6 +3946,126 @@ export type Database = {
           },
         ]
       }
+      landed_cost_allocation_items: {
+        Row: {
+          allocated_amount: number
+          allocation_id: string
+          base_value: number
+          company_id: string
+          created_at: string
+          id: string
+          item_id: string
+          voucher_item_id: string
+        }
+        Insert: {
+          allocated_amount: number
+          allocation_id: string
+          base_value: number
+          company_id: string
+          created_at?: string
+          id?: string
+          item_id: string
+          voucher_item_id: string
+        }
+        Update: {
+          allocated_amount?: number
+          allocation_id?: string
+          base_value?: number
+          company_id?: string
+          created_at?: string
+          id?: string
+          item_id?: string
+          voucher_item_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "landed_cost_allocation_items_allocation_id_company_id_fkey"
+            columns: ["allocation_id", "company_id"]
+            isOneToOne: false
+            referencedRelation: "landed_cost_allocations"
+            referencedColumns: ["id", "company_id"]
+          },
+          {
+            foreignKeyName: "landed_cost_allocation_items_company_id_fkey"
+            columns: ["company_id"]
+            isOneToOne: false
+            referencedRelation: "companies"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "landed_cost_allocation_items_item_id_company_id_fkey"
+            columns: ["item_id", "company_id"]
+            isOneToOne: false
+            referencedRelation: "items"
+            referencedColumns: ["id", "company_id"]
+          },
+          {
+            foreignKeyName: "landed_cost_allocation_items_voucher_item_id_fkey"
+            columns: ["voucher_item_id"]
+            isOneToOne: false
+            referencedRelation: "voucher_items"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      landed_cost_allocations: {
+        Row: {
+          allocation_date: string
+          charges_voucher_id: string
+          company_id: string
+          created_at: string
+          created_by: string | null
+          id: string
+          narration: string | null
+          purchase_voucher_id: string
+          total_allocated_amount: number
+        }
+        Insert: {
+          allocation_date: string
+          charges_voucher_id: string
+          company_id: string
+          created_at?: string
+          created_by?: string | null
+          id?: string
+          narration?: string | null
+          purchase_voucher_id: string
+          total_allocated_amount: number
+        }
+        Update: {
+          allocation_date?: string
+          charges_voucher_id?: string
+          company_id?: string
+          created_at?: string
+          created_by?: string | null
+          id?: string
+          narration?: string | null
+          purchase_voucher_id?: string
+          total_allocated_amount?: number
+        }
+        Relationships: [
+          {
+            foreignKeyName: "landed_cost_allocations_charges_voucher_id_company_id_fkey"
+            columns: ["charges_voucher_id", "company_id"]
+            isOneToOne: false
+            referencedRelation: "vouchers"
+            referencedColumns: ["id", "company_id"]
+          },
+          {
+            foreignKeyName: "landed_cost_allocations_company_id_fkey"
+            columns: ["company_id"]
+            isOneToOne: false
+            referencedRelation: "companies"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "landed_cost_allocations_purchase_voucher_id_company_id_fkey"
+            columns: ["purchase_voucher_id", "company_id"]
+            isOneToOne: false
+            referencedRelation: "vouchers"
+            referencedColumns: ["id", "company_id"]
+          },
+        ]
+      }
       ledgers: {
         Row: {
           address: string | null
@@ -3955,6 +4075,7 @@ export type Database = {
           city: string | null
           company_id: string
           contact_person: string | null
+          country_code: string | null
           created_at: string
           created_by: string | null
           credit_days: number | null
@@ -4002,6 +4123,7 @@ export type Database = {
           city?: string | null
           company_id: string
           contact_person?: string | null
+          country_code?: string | null
           created_at?: string
           created_by?: string | null
           credit_days?: number | null
@@ -4049,6 +4171,7 @@ export type Database = {
           city?: string | null
           company_id?: string
           contact_person?: string | null
+          country_code?: string | null
           created_at?: string
           created_by?: string | null
           credit_days?: number | null
@@ -4530,6 +4653,152 @@ export type Database = {
           },
         ]
       }
+      payment_gateway_configs: {
+        Row: {
+          company_id: string
+          created_at: string
+          created_by: string | null
+          gateway: string
+          id: string
+          is_active: boolean
+          settlement_ledger_id: string
+          updated_at: string
+          webhook_secret: string
+        }
+        Insert: {
+          company_id: string
+          created_at?: string
+          created_by?: string | null
+          gateway?: string
+          id?: string
+          is_active?: boolean
+          settlement_ledger_id: string
+          updated_at?: string
+          webhook_secret: string
+        }
+        Update: {
+          company_id?: string
+          created_at?: string
+          created_by?: string | null
+          gateway?: string
+          id?: string
+          is_active?: boolean
+          settlement_ledger_id?: string
+          updated_at?: string
+          webhook_secret?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "payment_gateway_configs_company_id_fkey"
+            columns: ["company_id"]
+            isOneToOne: false
+            referencedRelation: "companies"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "payment_gateway_configs_settlement_ledger_id_company_id_fkey"
+            columns: ["settlement_ledger_id", "company_id"]
+            isOneToOne: false
+            referencedRelation: "ledgers"
+            referencedColumns: ["id", "company_id"]
+          },
+        ]
+      }
+      payment_webhook_events: {
+        Row: {
+          amount: number | null
+          bank_statement_line_id: string | null
+          company_id: string
+          created_at: string
+          currency: string | null
+          event_type: string
+          gateway: string
+          gateway_event_id: string
+          gateway_payment_id: string | null
+          id: string
+          notes: Json | null
+          payer_contact_masked: string | null
+          payer_vpa: string | null
+          raw_payload: Json | null
+          signature_verified: boolean
+          status: string
+          suggested_ledger_id: string | null
+          suggested_reason: string | null
+          suggested_voucher_id: string | null
+        }
+        Insert: {
+          amount?: number | null
+          bank_statement_line_id?: string | null
+          company_id: string
+          created_at?: string
+          currency?: string | null
+          event_type: string
+          gateway: string
+          gateway_event_id: string
+          gateway_payment_id?: string | null
+          id?: string
+          notes?: Json | null
+          payer_contact_masked?: string | null
+          payer_vpa?: string | null
+          raw_payload?: Json | null
+          signature_verified?: boolean
+          status?: string
+          suggested_ledger_id?: string | null
+          suggested_reason?: string | null
+          suggested_voucher_id?: string | null
+        }
+        Update: {
+          amount?: number | null
+          bank_statement_line_id?: string | null
+          company_id?: string
+          created_at?: string
+          currency?: string | null
+          event_type?: string
+          gateway?: string
+          gateway_event_id?: string
+          gateway_payment_id?: string | null
+          id?: string
+          notes?: Json | null
+          payer_contact_masked?: string | null
+          payer_vpa?: string | null
+          raw_payload?: Json | null
+          signature_verified?: boolean
+          status?: string
+          suggested_ledger_id?: string | null
+          suggested_reason?: string | null
+          suggested_voucher_id?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "payment_webhook_events_bank_statement_line_id_fkey"
+            columns: ["bank_statement_line_id"]
+            isOneToOne: false
+            referencedRelation: "bank_statement_lines"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "payment_webhook_events_company_id_fkey"
+            columns: ["company_id"]
+            isOneToOne: false
+            referencedRelation: "companies"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "payment_webhook_events_suggested_ledger_id_company_id_fkey"
+            columns: ["suggested_ledger_id", "company_id"]
+            isOneToOne: false
+            referencedRelation: "ledgers"
+            referencedColumns: ["id", "company_id"]
+          },
+          {
+            foreignKeyName: "payment_webhook_events_suggested_voucher_id_fkey"
+            columns: ["suggested_voucher_id"]
+            isOneToOne: false
+            referencedRelation: "vouchers"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       payroll_ledger_map: {
         Row: {
           company_id: string
@@ -4566,10 +4835,104 @@ export type Database = {
           },
         ]
       }
+      payroll_posting_lines: {
+        Row: {
+          basic: number
+          company_id: string
+          created_at: string
+          days_in_month: number
+          days_paid: number
+          dearness_allowance: number
+          edli_employer: number
+          employee_id: string
+          employee_name: string
+          esi_applicable: boolean
+          esi_employee: number
+          esi_employer: number
+          gross_pay: number
+          hra: number
+          id: string
+          net_pay: number
+          other_allowance: number
+          period_month: string
+          pf_employee: number
+          pf_employer: number
+          pf_wage: number
+          posting_id: string
+          professional_tax: number
+          special_allowance: number
+          tds: number
+        }
+        Insert: {
+          basic: number
+          company_id: string
+          created_at?: string
+          days_in_month: number
+          days_paid: number
+          dearness_allowance: number
+          edli_employer: number
+          employee_id: string
+          employee_name: string
+          esi_applicable: boolean
+          esi_employee: number
+          esi_employer: number
+          gross_pay: number
+          hra: number
+          id?: string
+          net_pay: number
+          other_allowance: number
+          period_month: string
+          pf_employee: number
+          pf_employer: number
+          pf_wage: number
+          posting_id: string
+          professional_tax: number
+          special_allowance: number
+          tds: number
+        }
+        Update: {
+          basic?: number
+          company_id?: string
+          created_at?: string
+          days_in_month?: number
+          days_paid?: number
+          dearness_allowance?: number
+          edli_employer?: number
+          employee_id?: string
+          employee_name?: string
+          esi_applicable?: boolean
+          esi_employee?: number
+          esi_employer?: number
+          gross_pay?: number
+          hra?: number
+          id?: string
+          net_pay?: number
+          other_allowance?: number
+          period_month?: string
+          pf_employee?: number
+          pf_employer?: number
+          pf_wage?: number
+          posting_id?: string
+          professional_tax?: number
+          special_allowance?: number
+          tds?: number
+        }
+        Relationships: [
+          {
+            foreignKeyName: "payroll_posting_lines_posting_id_company_id_period_month_fkey"
+            columns: ["posting_id", "company_id", "period_month"]
+            isOneToOne: false
+            referencedRelation: "payroll_postings"
+            referencedColumns: ["id", "company_id", "period_month"]
+          },
+        ]
+      }
       payroll_postings: {
         Row: {
           company_id: string
           id: string
+          lines_reconstructed_at: string | null
+          lines_reconstruction_note: string | null
           period_month: string
           posted_at: string
           posted_by: string | null
@@ -4578,6 +4941,8 @@ export type Database = {
         Insert: {
           company_id: string
           id?: string
+          lines_reconstructed_at?: string | null
+          lines_reconstruction_note?: string | null
           period_month: string
           posted_at?: string
           posted_by?: string | null
@@ -4586,6 +4951,8 @@ export type Database = {
         Update: {
           company_id?: string
           id?: string
+          lines_reconstructed_at?: string | null
+          lines_reconstruction_note?: string | null
           period_month?: string
           posted_at?: string
           posted_by?: string | null
@@ -4604,6 +4971,52 @@ export type Database = {
             columns: ["voucher_id"]
             isOneToOne: false
             referencedRelation: "vouchers"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      pos_revenue_ledger: {
+        Row: {
+          branch_id: string
+          company_id: string
+          ledger_id: string
+          updated_at: string
+          updated_by: string | null
+        }
+        Insert: {
+          branch_id: string
+          company_id: string
+          ledger_id: string
+          updated_at?: string
+          updated_by?: string | null
+        }
+        Update: {
+          branch_id?: string
+          company_id?: string
+          ledger_id?: string
+          updated_at?: string
+          updated_by?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "pos_revenue_ledger_branch_id_fkey"
+            columns: ["branch_id"]
+            isOneToOne: false
+            referencedRelation: "branches"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "pos_revenue_ledger_company_id_fkey"
+            columns: ["company_id"]
+            isOneToOne: false
+            referencedRelation: "companies"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "pos_revenue_ledger_ledger_id_fkey"
+            columns: ["ledger_id"]
+            isOneToOne: false
+            referencedRelation: "ledgers"
             referencedColumns: ["id"]
           },
         ]
@@ -5239,6 +5652,85 @@ export type Database = {
           name?: string
         }
         Relationships: []
+      }
+      saved_report_views: {
+        Row: {
+          company_id: string
+          created_at: string
+          id: string
+          name: string
+          query_string: string
+          screen_key: string
+          user_id: string
+        }
+        Insert: {
+          company_id: string
+          created_at?: string
+          id?: string
+          name: string
+          query_string?: string
+          screen_key: string
+          user_id: string
+        }
+        Update: {
+          company_id?: string
+          created_at?: string
+          id?: string
+          name?: string
+          query_string?: string
+          screen_key?: string
+          user_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "saved_report_views_company_id_fkey"
+            columns: ["company_id"]
+            isOneToOne: false
+            referencedRelation: "companies"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      screen_config: {
+        Row: {
+          company_id: string
+          config: Json
+          created_at: string
+          id: string
+          screen_key: string
+          updated_at: string
+          updated_by: string | null
+          user_id: string | null
+        }
+        Insert: {
+          company_id: string
+          config?: Json
+          created_at?: string
+          id?: string
+          screen_key: string
+          updated_at?: string
+          updated_by?: string | null
+          user_id?: string | null
+        }
+        Update: {
+          company_id?: string
+          config?: Json
+          created_at?: string
+          id?: string
+          screen_key?: string
+          updated_at?: string
+          updated_by?: string | null
+          user_id?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "screen_config_company_id_fkey"
+            columns: ["company_id"]
+            isOneToOne: false
+            referencedRelation: "companies"
+            referencedColumns: ["id"]
+          },
+        ]
       }
       sec186_investments: {
         Row: {
@@ -6014,6 +6506,71 @@ export type Database = {
           },
         ]
       }
+      voucher_allocations: {
+        Row: {
+          amount: number
+          bill_voucher_id: string
+          company_id: string
+          created_at: string
+          created_by: string | null
+          id: string
+          party_ledger_id: string
+          settlement_voucher_id: string
+          updated_at: string
+        }
+        Insert: {
+          amount: number
+          bill_voucher_id: string
+          company_id: string
+          created_at?: string
+          created_by?: string | null
+          id?: string
+          party_ledger_id: string
+          settlement_voucher_id: string
+          updated_at?: string
+        }
+        Update: {
+          amount?: number
+          bill_voucher_id?: string
+          company_id?: string
+          created_at?: string
+          created_by?: string | null
+          id?: string
+          party_ledger_id?: string
+          settlement_voucher_id?: string
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "voucher_allocations_bill_voucher_id_company_id_fkey"
+            columns: ["bill_voucher_id", "company_id"]
+            isOneToOne: false
+            referencedRelation: "vouchers"
+            referencedColumns: ["id", "company_id"]
+          },
+          {
+            foreignKeyName: "voucher_allocations_company_id_fkey"
+            columns: ["company_id"]
+            isOneToOne: false
+            referencedRelation: "companies"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "voucher_allocations_party_ledger_id_company_id_fkey"
+            columns: ["party_ledger_id", "company_id"]
+            isOneToOne: false
+            referencedRelation: "ledgers"
+            referencedColumns: ["id", "company_id"]
+          },
+          {
+            foreignKeyName: "voucher_allocations_settlement_voucher_id_company_id_fkey"
+            columns: ["settlement_voucher_id", "company_id"]
+            isOneToOne: false
+            referencedRelation: "vouchers"
+            referencedColumns: ["id", "company_id"]
+          },
+        ]
+      }
       voucher_entries: {
         Row: {
           branch_id: string
@@ -6144,7 +6701,9 @@ export type Database = {
           hsn_sac: string | null
           id: string
           item_id: string
+          landed_cost_amount: number
           line_order: number
+          moves_stock: boolean
           quantity: number
           rate: number
           uom: string
@@ -6165,7 +6724,9 @@ export type Database = {
           hsn_sac?: string | null
           id?: string
           item_id: string
+          landed_cost_amount?: number
           line_order?: number
+          moves_stock: boolean
           quantity: number
           rate?: number
           uom: string
@@ -6186,7 +6747,9 @@ export type Database = {
           hsn_sac?: string | null
           id?: string
           item_id?: string
+          landed_cost_amount?: number
           line_order?: number
+          moves_stock?: boolean
           quantity?: number
           rate?: number
           uom?: string
@@ -6451,6 +7014,63 @@ export type Database = {
           },
         ]
       }
+      voucher_type_definitions: {
+        Row: {
+          base_type: string
+          company_id: string
+          created_at: string
+          created_by: string | null
+          default_ledgers: Json
+          default_series_id: string | null
+          id: string
+          is_active: boolean
+          name: string
+          print_template: string | null
+          updated_at: string
+        }
+        Insert: {
+          base_type: string
+          company_id: string
+          created_at?: string
+          created_by?: string | null
+          default_ledgers?: Json
+          default_series_id?: string | null
+          id?: string
+          is_active?: boolean
+          name: string
+          print_template?: string | null
+          updated_at?: string
+        }
+        Update: {
+          base_type?: string
+          company_id?: string
+          created_at?: string
+          created_by?: string | null
+          default_ledgers?: Json
+          default_series_id?: string | null
+          id?: string
+          is_active?: boolean
+          name?: string
+          print_template?: string | null
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "voucher_type_definitions_company_id_fkey"
+            columns: ["company_id"]
+            isOneToOne: false
+            referencedRelation: "companies"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "voucher_type_definitions_series_fk"
+            columns: ["default_series_id", "company_id"]
+            isOneToOne: false
+            referencedRelation: "voucher_number_series"
+            referencedColumns: ["id", "company_id"]
+          },
+        ]
+      }
       vouchers: {
         Row: {
           approval_status: string
@@ -6681,8 +7301,10 @@ export type Database = {
           p_company_id: string
           p_filing_frequency?: string
           p_gstin: string
+          p_legal_name?: string
           p_registered_from: string
           p_registration_type?: string
+          p_trade_name?: string
         }
         Returns: string
       }
@@ -6694,6 +7316,18 @@ export type Database = {
           p_order_id: string
         }
         Returns: undefined
+      }
+      allocate_landed_cost: {
+        Args: {
+          p_allocation_date: string
+          p_branch_id: string
+          p_charge_lines: Json
+          p_company_id: string
+          p_narration?: string
+          p_purchase_voucher_id: string
+          p_settlement_ledger_id: string
+        }
+        Returns: string
       }
       allocate_voucher_item_to_batch: {
         Args: {
@@ -6736,6 +7370,18 @@ export type Database = {
       auto_match_bank_lines: {
         Args: { p_company_id: string; p_ledger_id: string }
         Returns: number
+      }
+      balance_opening_balances: {
+        Args: { p_company_id: string; p_expected_imbalance: number }
+        Returns: {
+          imbalance_absorbed: number
+          ledger_created: boolean
+          ledger_id: string
+          new_amount: number
+          new_type: string
+          previous_amount: number
+          previous_type: string
+        }[]
       }
       build_delivery_challan_ewb_json: {
         Args: { p_challan_id: string }
@@ -6797,6 +7443,19 @@ export type Database = {
       }
       create_api_key: {
         Args: { p_company_id: string; p_name: string }
+        Returns: string
+      }
+      create_branch: {
+        Args: {
+          p_address_line1?: string
+          p_address_line2?: string
+          p_city?: string
+          p_code: string
+          p_company_id: string
+          p_name: string
+          p_pincode?: string
+          p_state_code: string
+        }
         Returns: string
       }
       create_capture_draft: {
@@ -6943,6 +7602,14 @@ export type Database = {
         }
         Returns: string
       }
+      create_payment_gateway_config: {
+        Args: {
+          p_company_id: string
+          p_gateway?: string
+          p_settlement_ledger_id: string
+        }
+        Returns: string
+      }
       create_production_voucher: {
         Args: {
           p_additional_cost?: number
@@ -7013,6 +7680,17 @@ export type Database = {
           p_padding?: number
           p_prefix: string
           p_voucher_type: string
+        }
+        Returns: string
+      }
+      create_voucher_type_definition: {
+        Args: {
+          p_base_type: string
+          p_company_id: string
+          p_default_ledgers?: Json
+          p_default_series_id?: string
+          p_name: string
+          p_print_template?: string
         }
         Returns: string
       }
@@ -7107,6 +7785,20 @@ export type Database = {
           tds_deductible_for_quarter: number
         }[]
       }
+      get_adjacent_voucher: {
+        Args: {
+          p_company_id: string
+          p_direction: string
+          p_same_type?: boolean
+          p_voucher_id: string
+        }
+        Returns: {
+          id: string
+          voucher_date: string
+          voucher_number: string
+          voucher_type: string
+        }[]
+      }
       get_advance_tax_status: {
         Args: { p_as_of_date?: string; p_company_id: string; p_fy_end: string }
         Returns: {
@@ -7189,8 +7881,8 @@ export type Database = {
           p_to?: string
         }
         Returns: {
-          after_data: Json | null
-          before_data: Json | null
+          after_data: Json
+          before_data: Json
           changed_at: string
           changed_by: string
           changed_by_name: string
@@ -7237,6 +7929,24 @@ export type Database = {
           quantity_on_hand: number
           quantity_out: number
           uom: string
+        }[]
+      }
+      get_bill_wise_outstanding: {
+        Args: { p_as_at?: string; p_company_id: string; p_role?: string }
+        Returns: {
+          allocatable: number
+          allocated: number
+          bill_amount: number
+          days_overdue: number
+          due_date: string
+          fifo_applied: number
+          ledger_id: string
+          ledger_name: string
+          outstanding: number
+          voucher_date: string
+          voucher_id: string
+          voucher_number: string
+          voucher_type: string
         }[]
       }
       get_boms: {
@@ -7383,6 +8093,7 @@ export type Database = {
           common_credit_sgst: number
           d1_reversal: number
           d2_reversal: number
+          directly_taxable_itc: number
           eligible_itc: number
           exempt_linked_itc: number
           exempt_turnover: number
@@ -8453,12 +9164,19 @@ export type Database = {
         Returns: {
           cash_tax_payable: number
           interest_payable: number
+          itc_available: number
+          itc_balance_carried_forward: number
           itc_cess_utilised: number
           itc_cgst_utilised: number
           itc_igst_utilised: number
+          itc_opening: number
+          itc_period_gross: number
+          itc_period_reversal: number
           itc_sgst_utilised: number
           itc_total_utilised: number
           late_fee_payable: number
+          note: string
+          output_brought_forward: number
           tax_head: string
           tax_payable: number
           tds_tcs_credit: number
@@ -8634,6 +9352,19 @@ export type Database = {
           uom: string
         }[]
       }
+      get_item_edit_context: {
+        Args: { p_company_id: string }
+        Returns: {
+          batch_allocation_count: number
+          batch_master_count: number
+          closing_quantity: number
+          item_id: string
+          non_unit_allocation_count: number
+          stock_line_count: number
+          unallocated_line_count: number
+          uom_conversion_count: number
+        }[]
+      }
       get_job_work_outstanding: {
         Args: { p_as_at?: string; p_company_id: string }
         Returns: {
@@ -8652,6 +9383,22 @@ export type Database = {
           status: string
           statutory_due_date: string
           uom: string
+        }[]
+      }
+      get_landed_cost_allocations: {
+        Args: { p_company_id: string }
+        Returns: {
+          allocation_date: string
+          allocation_id: string
+          charges_voucher_id: string
+          charges_voucher_number: string
+          items: Json
+          narration: string
+          party_name: string
+          purchase_voucher_date: string
+          purchase_voucher_id: string
+          purchase_voucher_number: string
+          total_allocated_amount: number
         }[]
       }
       get_leave_balance: {
@@ -8934,6 +9681,41 @@ export type Database = {
           uan: string
         }[]
       }
+      get_pos_revenue_ledger_options: {
+        Args: { p_branch_id: string; p_company_id: string }
+        Returns: {
+          group_name: string
+          is_revenue: boolean
+          is_selected: boolean
+          ledger_id: string
+          ledger_name: string
+        }[]
+      }
+      get_posted_payroll_run: {
+        Args: { p_company_id: string; p_period_month: string }
+        Returns: {
+          basic: number
+          days_in_month: number
+          days_paid: number
+          dearness_allowance: number
+          edli_employer: number
+          employee_id: string
+          employee_name: string
+          esi_applicable: boolean
+          esi_employee: number
+          esi_employer: number
+          gross_pay: number
+          hra: number
+          net_pay: number
+          other_allowance: number
+          pf_employee: number
+          pf_employer: number
+          pf_wage: number
+          professional_tax: number
+          special_allowance: number
+          tds: number
+        }[]
+      }
       get_profit_and_loss: {
         Args: {
           p_branch_id?: string
@@ -8963,6 +9745,21 @@ export type Database = {
           pt_liability: number
           state_code: string
           state_name: string
+        }[]
+      }
+      get_qis_actuals: {
+        Args: {
+          p_company_id: string
+          p_quarter_end: string
+          p_quarter_start: string
+        }
+        Returns: {
+          metric_code: string
+          metric_label: string
+          note: string
+          section: string
+          unit: string
+          value: number
         }[]
       }
       get_quantitative_stock_details: {
@@ -9008,6 +9805,33 @@ export type Database = {
           pan: string
         }[]
       }
+      get_remittance_candidates: {
+        Args: { p_company_id: string; p_financial_year_label: string }
+        Returns: {
+          exchange_rate: number
+          fc_amount: number
+          has_lower_deduction_certificate: boolean
+          inr_amount: number
+          is_flagged_non_resident: boolean
+          is_foreign_currency: boolean
+          ldc_number: string
+          ldc_valid_from: string
+          ldc_valid_to: string
+          narration: string
+          party_address: string
+          party_city: string
+          party_country_code: string
+          party_fy_aggregate_inr: number
+          party_ledger_id: string
+          party_name: string
+          party_pan: string
+          party_pincode: string
+          txn_currency: string
+          voucher_date: string
+          voucher_id: string
+          voucher_number: string
+        }[]
+      }
       get_salary_tds_estimate: {
         Args: { p_company_id: string; p_period_month: string }
         Returns: {
@@ -9021,6 +9845,10 @@ export type Database = {
           standard_deduction: number
           taxable_salary_income: number
         }[]
+      }
+      get_screen_config: {
+        Args: { p_company_id: string; p_screen_key: string }
+        Returns: Json
       }
       get_sec186_ceiling_check: {
         Args: { p_company_id: string }
@@ -9319,6 +10147,7 @@ export type Database = {
         Returns: {
           collectee_ledger_id: string
           collectee_name: string
+          no_pan_rate_applied: boolean
           pan: string
           party_ledger_movement: number
           section_code: string
@@ -9408,6 +10237,26 @@ export type Database = {
           threshold_single_rupees: number
         }[]
       }
+      get_trade_analysis: {
+        Args: {
+          p_branch_id?: string
+          p_company_id: string
+          p_from: string
+          p_group_by: string
+          p_side: string
+          p_to: string
+        }
+        Returns: {
+          discount: number
+          document_count: number
+          gross: number
+          group_key: string
+          group_label: string
+          net: number
+          quantity: number
+          tax: number
+        }[]
+      }
       get_trial_balance: {
         Args: {
           p_branch_id?: string
@@ -9426,6 +10275,27 @@ export type Database = {
           opening_debit: number
           period_credit: number
           period_debit: number
+        }[]
+      }
+      get_unallocated_settlements: {
+        Args: {
+          p_as_at?: string
+          p_company_id: string
+          p_include_allocated?: boolean
+          p_role?: string
+        }
+        Returns: {
+          allocated: number
+          ledger_id: string
+          ledger_name: string
+          narration: string
+          on_account: number
+          reference_number: string
+          settlement_amount: number
+          voucher_date: string
+          voucher_id: string
+          voucher_number: string
+          voucher_type: string
         }[]
       }
       get_unallocated_stock_lines: {
@@ -9461,6 +10331,18 @@ export type Database = {
           opening_balance_amount: number
           opening_balance_type: string
           opening_signed: number
+        }[]
+      }
+      get_voucher_allocations: {
+        Args: { p_company_id: string; p_settlement_voucher_id: string }
+        Returns: {
+          amount: number
+          bill_voucher_date: string
+          bill_voucher_id: string
+          bill_voucher_number: string
+          created_at: string
+          id: string
+          party_ledger_id: string
         }[]
       }
       get_voucher_numbering_settings: {
@@ -9504,6 +10386,10 @@ export type Database = {
           p_source: string
         }
         Returns: number
+      }
+      is_strict_allocation_required: {
+        Args: { p_company_id: string }
+        Returns: boolean
       }
       list_gstr2b_periods: {
         Args: { p_company_id: string }
@@ -9549,6 +10435,15 @@ export type Database = {
           template_amount: number
           template_name: string
           voucher_type: string
+        }[]
+      }
+      list_report_views: {
+        Args: { p_company_id: string; p_screen_key: string }
+        Returns: {
+          created_at: string
+          id: string
+          name: string
+          query_string: string
         }[]
       }
       log_error: {
@@ -9682,6 +10577,30 @@ export type Database = {
         }
         Returns: string
       }
+      receive_payment_webhook_event: {
+        Args: {
+          p_amount: number
+          p_company_id: string
+          p_currency: string
+          p_event_type: string
+          p_gateway: string
+          p_gateway_event_id: string
+          p_gateway_payment_id: string
+          p_notes: Json
+          p_occurred_at?: string
+          p_payer_contact: string
+          p_payer_vpa: string
+          p_raw_body: string
+          p_raw_payload: Json
+          p_signature: string
+        }
+        Returns: {
+          bank_statement_line_id: string
+          event_id: string
+          signature_verified: boolean
+          status: string
+        }[]
+      }
       receive_whatsapp_inbound_message: {
         Args: {
           p_extracted_json?: Json
@@ -9744,6 +10663,22 @@ export type Database = {
         }
         Returns: string
       }
+      record_salary_revision: {
+        Args: {
+          p_basic: number
+          p_dearness_allowance?: number
+          p_effective_from: string
+          p_employee_id: string
+          p_esi_applicable?: boolean
+          p_hra?: number
+          p_other_allowance?: number
+          p_pf_applicable?: boolean
+          p_pf_wage_ceiling_applies?: boolean
+          p_professional_tax_monthly?: number
+          p_special_allowance?: number
+        }
+        Returns: string
+      }
       record_signed_document: {
         Args: {
           p_document_id: string
@@ -9799,6 +10734,14 @@ export type Database = {
         Args: { p_company_id: string; p_new_lock_date?: string }
         Returns: undefined
       }
+      repair_gst_ledger_map: {
+        Args: { p_company_id: string; p_registration_id: string }
+        Returns: {
+          action: string
+          ledger_name: string
+          tax_purpose: string
+        }[]
+      }
       resolve_statutory_rule: {
         Args: {
           p_as_at: string
@@ -9816,6 +10759,30 @@ export type Database = {
         Args: { p_company_id: string; p_key_id: string }
         Returns: undefined
       }
+      rotate_payment_gateway_webhook_secret: {
+        Args: { p_company_id: string; p_gateway?: string }
+        Returns: string
+      }
+      save_report_view: {
+        Args: {
+          p_company_id: string
+          p_name: string
+          p_query_string?: string
+          p_screen_key: string
+        }
+        Returns: string
+      }
+      search_company_entities: {
+        Args: { p_company_id: string; p_limit?: number; p_query: string }
+        Returns: {
+          href: string
+          id: string
+          kind: string
+          label: string
+          rank: number
+          sublabel: string
+        }[]
+      }
       send_signature_request: {
         Args: { p_request_id: string }
         Returns: undefined
@@ -9832,6 +10799,10 @@ export type Database = {
         Args: { p_company_id: string; p_password: string }
         Returns: undefined
       }
+      set_employee_leaving_date: {
+        Args: { p_date_of_leaving: string; p_employee_id: string }
+        Returns: undefined
+      }
       set_entry_cost_centre: {
         Args: {
           p_company_id: string
@@ -9839,6 +10810,10 @@ export type Database = {
           p_entry_ids: string[]
         }
         Returns: number
+      }
+      set_ledger_country_code: {
+        Args: { p_country_code: string; p_ledger_id: string }
+        Returns: string
       }
       set_module: {
         Args: {
@@ -9849,9 +10824,31 @@ export type Database = {
         }
         Returns: undefined
       }
+      set_pos_revenue_ledger: {
+        Args: { p_branch_id: string; p_company_id: string; p_ledger_id: string }
+        Returns: string
+      }
       set_recurring_voucher_template_active: {
         Args: { p_is_active: boolean; p_template_id: string }
         Returns: undefined
+      }
+      set_screen_config: {
+        Args: {
+          p_company_id: string
+          p_config: Json
+          p_for_company?: boolean
+          p_screen_key: string
+        }
+        Returns: undefined
+      }
+      set_voucher_allocations: {
+        Args: {
+          p_allocations?: Json
+          p_company_id: string
+          p_party_ledger_id: string
+          p_settlement_voucher_id: string
+        }
+        Returns: number
       }
       set_voucher_number_series_active: {
         Args: {
@@ -9874,6 +10871,26 @@ export type Database = {
         Args: { p_statement_line_id: string }
         Returns: undefined
       }
+      update_branch: {
+        Args: {
+          p_address_line1?: string
+          p_address_line2?: string
+          p_branch_id: string
+          p_city?: string
+          p_pincode?: string
+        }
+        Returns: undefined
+      }
+      update_gst_registration: {
+        Args: {
+          p_filing_frequency?: string
+          p_legal_name?: string
+          p_registered_to?: string
+          p_registration_id: string
+          p_trade_name?: string
+        }
+        Returns: undefined
+      }
       update_invoice: {
         Args: {
           p_challan_date?: string
@@ -9893,24 +10910,60 @@ export type Database = {
       }
       update_item: {
         Args: {
-          // 1370: defaults to null server-side, meaning "leave unchanged" —
-          // see that migration's header for why.
-          p_batch_tracking?: string | null
+          p_batch_tracking?: string
           p_cess_rate_percent: number
-          p_default_tcs_section: string | null
+          p_default_tcs_section: string
           p_gst_rate_percent: number
-          p_hsn_sac: string | null
+          p_hsn_sac: string
           p_is_active: boolean
           p_is_rcm_applicable: boolean
+          p_itc_blocked_clause: string
           p_item_id: string
           p_item_type: string
-          p_itc_blocked_clause: string | null
           p_maintain_stock: boolean
           p_name: string
-          p_purchase_rate: number | null
-          p_sale_rate: number | null
+          p_purchase_rate: number
+          p_sale_rate: number
           p_supply_nature: string
           p_uom: string
+        }
+        Returns: string
+      }
+      update_ledger: {
+        Args: {
+          p_address: string
+          p_bank_account_number: string
+          p_bank_ifsc: string
+          p_bank_name: string
+          p_city: string
+          p_contact_person: string
+          p_credit_days?: number
+          p_default_tds_section: string
+          p_email: string
+          p_group_id: string
+          p_gst_registration_type: string
+          p_gstin: string
+          p_is_active: boolean
+          p_is_loan_or_deposit: boolean
+          p_is_partner_remuneration: boolean
+          p_is_related_party: boolean
+          p_is_tds_deductee: boolean
+          p_ledger_id: string
+          p_msme_category: string
+          p_msme_payment_days: number
+          p_name: string
+          p_notes: string
+          p_opening_balance_amount: number
+          p_opening_balance_type: string
+          p_pan: string
+          p_party_type?: string
+          p_phone: string
+          p_pincode: string
+          p_relationship_type: string
+          p_sec43b_category: string
+          p_state_code: string
+          p_tan: string
+          p_udyam_number: string
         }
         Returns: string
       }
@@ -9981,12 +11034,12 @@ export type Tables<
   DefaultSchemaTableNameOrOptions extends
     | keyof (DefaultSchema["Tables"] & DefaultSchema["Views"])
     | { schema: keyof DatabaseWithoutInternals },
-  TableName extends DefaultSchemaTableNameOrOptions extends {
+  TableName extends (DefaultSchemaTableNameOrOptions extends {
     schema: keyof DatabaseWithoutInternals
   }
     ? keyof (DatabaseWithoutInternals[DefaultSchemaTableNameOrOptions["schema"]]["Tables"] &
         DatabaseWithoutInternals[DefaultSchemaTableNameOrOptions["schema"]]["Views"])
-    : never = never,
+    : never) = never,
 > = DefaultSchemaTableNameOrOptions extends {
   schema: keyof DatabaseWithoutInternals
 }
@@ -10010,11 +11063,11 @@ export type TablesInsert<
   DefaultSchemaTableNameOrOptions extends
     | keyof DefaultSchema["Tables"]
     | { schema: keyof DatabaseWithoutInternals },
-  TableName extends DefaultSchemaTableNameOrOptions extends {
+  TableName extends (DefaultSchemaTableNameOrOptions extends {
     schema: keyof DatabaseWithoutInternals
   }
     ? keyof DatabaseWithoutInternals[DefaultSchemaTableNameOrOptions["schema"]]["Tables"]
-    : never = never,
+    : never) = never,
 > = DefaultSchemaTableNameOrOptions extends {
   schema: keyof DatabaseWithoutInternals
 }
@@ -10035,11 +11088,11 @@ export type TablesUpdate<
   DefaultSchemaTableNameOrOptions extends
     | keyof DefaultSchema["Tables"]
     | { schema: keyof DatabaseWithoutInternals },
-  TableName extends DefaultSchemaTableNameOrOptions extends {
+  TableName extends (DefaultSchemaTableNameOrOptions extends {
     schema: keyof DatabaseWithoutInternals
   }
     ? keyof DatabaseWithoutInternals[DefaultSchemaTableNameOrOptions["schema"]]["Tables"]
-    : never = never,
+    : never) = never,
 > = DefaultSchemaTableNameOrOptions extends {
   schema: keyof DatabaseWithoutInternals
 }
@@ -10060,11 +11113,11 @@ export type Enums<
   DefaultSchemaEnumNameOrOptions extends
     | keyof DefaultSchema["Enums"]
     | { schema: keyof DatabaseWithoutInternals },
-  EnumName extends DefaultSchemaEnumNameOrOptions extends {
+  EnumName extends (DefaultSchemaEnumNameOrOptions extends {
     schema: keyof DatabaseWithoutInternals
   }
     ? keyof DatabaseWithoutInternals[DefaultSchemaEnumNameOrOptions["schema"]]["Enums"]
-    : never = never,
+    : never) = never,
 > = DefaultSchemaEnumNameOrOptions extends {
   schema: keyof DatabaseWithoutInternals
 }
@@ -10077,11 +11130,11 @@ export type CompositeTypes<
   PublicCompositeTypeNameOrOptions extends
     | keyof DefaultSchema["CompositeTypes"]
     | { schema: keyof DatabaseWithoutInternals },
-  CompositeTypeName extends PublicCompositeTypeNameOrOptions extends {
+  CompositeTypeName extends (PublicCompositeTypeNameOrOptions extends {
     schema: keyof DatabaseWithoutInternals
   }
     ? keyof DatabaseWithoutInternals[PublicCompositeTypeNameOrOptions["schema"]]["CompositeTypes"]
-    : never = never,
+    : never) = never,
 > = PublicCompositeTypeNameOrOptions extends {
   schema: keyof DatabaseWithoutInternals
 }

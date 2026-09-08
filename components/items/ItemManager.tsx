@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
 import { formatINR } from "@/lib/utils/currency";
 import { ItemUomPanel, type ItemUomConversion } from "@/components/items/ItemUomPanel";
+import { callRpc } from "@/lib/supabase/rpc";
 
 type Item = {
   id: string;
@@ -226,7 +227,13 @@ export function ItemManager({
     setEditError(null);
 
     const isEditingService = editDraft.itemType === "service";
-    const { error } = await createClient().rpc("update_item", {
+    // update_item's p_hsn_sac/p_sale_rate/p_purchase_rate/p_itc_blocked_clause/
+    // p_default_tcs_section have no SQL DEFAULT, so the generated Args type
+    // requires their base (non-null) type even though Postgres happily
+    // accepts an explicit null for any of them — a required parameter is not
+    // the same thing as a non-nullable one. Routed through callRpc (not the
+    // typed .rpc()) to pass null through rather than lying with a cast.
+    const { error } = await callRpc(createClient(), "update_item", {
       p_item_id: itemId,
       p_name: editDraft.name.trim(),
       p_item_type: editDraft.itemType,
