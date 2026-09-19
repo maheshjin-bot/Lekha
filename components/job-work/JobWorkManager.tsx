@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { toast } from "sonner";
 import { createClient } from "@/lib/supabase/client";
@@ -40,18 +40,57 @@ const STATUS_TONE: Record<Challan["status"], "neutral" | "accent" | "ok"> = {
   closed: "ok",
 };
 
+// Per-item live weighted-average cost (get_stock_summary.average_rate),
+// keyed by item_id. Used to suggest a real Rate default on both the
+// job-work-out challan and the job-work-in return, instead of leaving the
+// field blank/0 — a blank rate used to force preparers to type an arbitrary
+// placeholder just to get past the database's own (0,0) voucher_entries
+// rejection, and that placeholder then silently corrupted the item's
+// weighted-average cost (see migration 2070). Refreshed after every post so
+// a later challan/return in the same session suggests an up-to-date number.
+function useItemAverageRates(companyId: string) {
+  const [rates, setRates] = useState<Record<string, number>>({});
+
+  const refresh = useCallback(async () => {
+    const { data } = await createClient().rpc("get_stock_summary", { p_company_id: companyId });
+    if (!data) return;
+    const map: Record<string, number> = {};
+    for (const row of data as { item_id: string; average_rate: number | string }[]) {
+      map[row.item_id] = Number(row.average_rate) || 0;
+    }
+    setRates(map);
+  }, [companyId]);
+
+  // Wrapped in an inline async IIFE rather than calling `refresh` directly —
+  // same house pattern as CaptureReviewInbox.tsx's own fetch-on-open effect.
+  // Calling a named useCallback that itself sets state is exactly the shape
+  // react-hooks/set-state-in-effect traces and refuses; an anonymous inline
+  // async function is not.
+  useEffect(() => {
+    void (async () => {
+      await refresh();
+    })();
+  }, [refresh]);
+
+  return { rates, refresh };
+}
+
 function NewChallanForm({
   companyId,
   items,
   ledgers,
   branches,
   godowns,
+  avgRates,
+  onPosted,
 }: {
   companyId: string;
   items: Item[];
   ledgers: Ledger[];
   branches: Branch[];
   godowns: Godown[];
+  avgRates: Record<string, number>;
+  onPosted: () => void;
 }) {
   const router = useRouter();
   const [open, setOpen] = useState(false);
@@ -60,6 +99,9 @@ function NewChallanForm({
   const [itemId, setItemId] = useState("");
   const [quantity, setQuantity] = useState("1");
   const [rate, setRate] = useState("");
+  // Once the preparer edits Rate directly, stop overwriting it when the
+  // item changes — they may know a better number than the suggested one.
+  const [rateTouched, setRateTouched] = useState(false);
   const [godownId, setGodownId] = useState(godowns.find((g) => g.is_default)?.id ?? godowns[0]?.id ?? "");
   const [challanDate, setChallanDate] = useState(new Date().toISOString().slice(0, 10));
   const [expectedReturn, setExpectedReturn] = useState("");
@@ -72,6 +114,10 @@ function NewChallanForm({
     e.preventDefault();
     if (!jobWorkerId || !itemId || !godownId || !(Number(quantity) > 0)) {
       toast.error("Job worker, item, godown and a positive quantity are all required.");
+      return;
+    }
+    if (!(Number(rate) > 0)) {
+      toast.error("Rate must be greater than zero — it values the goods sent for job work. Enter the item's current cost, or its real value.");
       return;
     }
     setBusy(true);
@@ -99,10 +145,12 @@ function NewChallanForm({
     setItemId("");
     setQuantity("1");
     setRate("");
+    setRateTouched(false);
     setNature("");
     setExpectedReturn("");
     setOpen(false);
     router.refresh();
+    onPosted();
   }
 
   return (
@@ -132,7 +180,17 @@ function NewChallanForm({
             </label>
             <label className="flex flex-col gap-1.5">
               <Label>Item</Label>
-              <Select value={itemId} onChange={(e) => setItemId(e.target.value)}>
+              <Select
+                value={itemId}
+                onChange={(e) => {
+                  const newItemId = e.target.value;
+                  setItemId(newItemId);
+                  if (!rateTouched) {
+                    const suggested = avgRates[newItemId];
+                    setRate(suggested && suggested > 0 ? suggested.toFixed(2) : "");
+                  }
+                }}
+              >
                 <option value="">— select —</option>
                 {items.map((i) => (
                   <option key={i.id} value={i.id}>
@@ -146,8 +204,18 @@ function NewChallanForm({
               <Input type="number" min={0} step="any" value={quantity} onChange={(e) => setQuantity(e.target.value)} />
             </label>
             <label className="flex flex-col gap-1.5">
-              <Label>Rate (₹ per unit, for the challan value)</Label>
-              <Input type="number" min={0} step="any" value={rate} onChange={(e) => setRate(e.target.value)} placeholder="0" />
+              <Label>Rate (₹ per unit — suggested at current cost, editable)</Label>
+              <Input
+                type="number"
+                min={0}
+                step="any"
+                value={rate}
+                onChange={(e) => {
+                  setRate(e.target.value);
+                  setRateTouched(true);
+                }}
+                placeholder={itemId && !avgRates[itemId] ? "Item's cost per unit (required)" : undefined}
+              />
             </label>
             <label className="flex flex-col gap-1.5">
               <Label>Godown</Label>
@@ -198,6 +266,7 @@ function ReturnRow({
   godowns,
   items,
   c,
+  avgRates,
   onDone,
 }: {
   companyId: string;
@@ -205,6 +274,7 @@ function ReturnRow({
   godowns: Godown[];
   items: Item[];
   c: Challan;
+  avgRates: Record<string, number>;
   onDone: () => void;
 }) {
   const [open, setOpen] = useState(false);
@@ -213,11 +283,40 @@ function ReturnRow({
   const [receivedQty, setReceivedQty] = useState(String(c.quantity_outstanding));
   const [lossQty, setLossQty] = useState("0");
   const [rate, setRate] = useState("");
+  // Once the preparer edits Rate directly, stop overwriting it when the
+  // returned item changes — a real, deliberately different value (scrap,
+  // damage, added job-work cost) must always be accepted, never forced back
+  // to the suggestion.
+  const [rateTouched, setRateTouched] = useState(false);
   const [godownId, setGodownId] = useState(godowns.find((g) => g.is_default)?.id ?? godowns[0]?.id ?? "");
   // Defaults to the item that was sent — the common case — but the
   // returned item can legitimately differ (cloth out, shirts back), so
   // this is a real, changeable picker, not an assumption.
   const [returnedItemId, setReturnedItemId] = useState(c.item_id);
+
+  // Suggest the returned item's live weighted-average cost as the Rate
+  // default — never blank/0 by default (2070). The common case, a normal
+  // job-work return of the same item, is then rate-neutral by construction:
+  // accepting the suggestion adds units back at exactly today's average,
+  // which cannot move a weighted average. Re-suggests whenever the returned
+  // item (or that item's own known average) changes, but never overwrites a
+  // value the preparer already edited.
+  //
+  // Adjusted DURING RENDER, not in an effect: React's own guidance for "sync
+  // state to a changed input" is to compare against the last-seen key and
+  // call setState inline when it differs, which bails out into an immediate
+  // re-render with no committed intermediate frame — the effect version did
+  // the same adjustment one render later, which is what the set-state-in-
+  // effect lint rule is warning is unnecessary here.
+  const suggestionKey = `${returnedItemId}:${avgRates[returnedItemId] ?? ""}`;
+  const [lastSuggestionKey, setLastSuggestionKey] = useState(suggestionKey);
+  if (suggestionKey !== lastSuggestionKey) {
+    setLastSuggestionKey(suggestionKey);
+    if (!rateTouched) {
+      const suggested = avgRates[returnedItemId];
+      setRate(suggested && suggested > 0 ? suggested.toFixed(2) : "");
+    }
+  }
 
   async function submit() {
     const received = Number(receivedQty) || 0;
@@ -228,6 +327,10 @@ function ReturnRow({
     }
     if (received > 0 && !returnedItemId) {
       toast.error("Pick the item actually being returned.");
+      return;
+    }
+    if (received > 0 && !(Number(rate) > 0)) {
+      toast.error("Rate must be greater than zero to receive goods back into stock. Enter the item's current cost, or its real value if this batch is genuinely different.");
       return;
     }
     setBusy(true);
@@ -298,8 +401,12 @@ function ReturnRow({
           min={0}
           step="any"
           value={rate}
-          onChange={(e) => setRate(e.target.value)}
-          placeholder="Rate ₹"
+          onChange={(e) => {
+            setRate(e.target.value);
+            setRateTouched(true);
+          }}
+          placeholder={avgRates[returnedItemId] ? undefined : "Rate ₹ (required)"}
+          title="Suggested at the item's current cost — override for a genuinely different real value (scrap, damage, added job-work charge)"
           className="h-8 w-20 rounded-md border border-border-strong bg-surface px-2"
         />
         <select value={godownId} onChange={(e) => setGodownId(e.target.value)} className="h-8 rounded-md border border-border-strong bg-surface px-2">
@@ -320,7 +427,9 @@ function ReturnRow({
         />
       </div>
       <p className="text-xs text-ink-faint">
-        Still outstanding on this challan: {formatINR(c.quantity_outstanding, { showZero: true })} {c.uom}
+        Still outstanding on this challan: {formatINR(c.quantity_outstanding, { showZero: true })} {c.uom}.
+        Rate is suggested at the item&rsquo;s current cost so an ordinary return doesn&rsquo;t move its
+        valuation — override it if this batch is genuinely worth something different.
       </p>
       <div className="flex gap-2">
         <Button type="button" size="sm" onClick={submit} busy={busy} busyLabel="Saving…">
@@ -350,10 +459,19 @@ export function JobWorkManager({
   godowns: Godown[];
 }) {
   const router = useRouter();
+  const { rates: avgRates, refresh: refreshAvgRates } = useItemAverageRates(companyId);
 
   return (
     <div className="flex flex-col gap-6">
-      <NewChallanForm companyId={companyId} items={items} ledgers={ledgers} branches={branches} godowns={godowns} />
+      <NewChallanForm
+        companyId={companyId}
+        items={items}
+        ledgers={ledgers}
+        branches={branches}
+        godowns={godowns}
+        avgRates={avgRates}
+        onPosted={refreshAvgRates}
+      />
 
       {challans.length === 0 ? (
         <EmptyState>No job work challans yet.</EmptyState>
@@ -407,7 +525,11 @@ export function JobWorkManager({
                       godowns={godowns}
                       items={items}
                       c={c}
-                      onDone={() => router.refresh()}
+                      avgRates={avgRates}
+                      onDone={() => {
+                        router.refresh();
+                        refreshAvgRates();
+                      }}
                     />
                   </td>
                 </tr>
