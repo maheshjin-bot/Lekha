@@ -82,6 +82,7 @@ export function ItemManager({
   tcsSections,
   uomConversions = [],
   usedItemIds = [],
+  godowns = [],
 }: {
   companyId: string;
   items: Item[];
@@ -90,6 +91,11 @@ export function ItemManager({
   // Alternate-unit conversions (0121), keyed by item_id — additive to the
   // item master, not required by any caller that predates it.
   uomConversions?: ItemUomConversion[];
+  // 2210: which godown a NEW item's opening stock actually sits in — only
+  // meaningful when there's more than one to choose from (see the create
+  // form below). Never used for editing: opening_quantity/opening_value are
+  // create-time-only fields, update_item has no parameter for either.
+  godowns?: { id: string; name: string; is_default: boolean }[];
   // 1840: item ids that appear on at least one voucher_items line. item_type,
   // maintain_stock and uom are refused on these by the live
   // app_private.protect_item_master_fields trigger regardless of what this
@@ -108,6 +114,10 @@ export function ItemManager({
   const [uom, setUom] = useState("NOS");
   const [openingQty, setOpeningQty] = useState("0");
   const [openingValue, setOpeningValue] = useState("0");
+  // 2210: only asked when it's genuinely ambiguous. A single-godown company
+  // has nowhere else the opening stock could be, so godowns.length <= 1
+  // resolves it silently below with no field shown at all.
+  const [openingGodownId, setOpeningGodownId] = useState("");
   const [saleRate, setSaleRate] = useState("");
   const [gstRate, setGstRate] = useState("18");
   const [supplyNature, setSupplyNature] = useState("taxable");
@@ -122,8 +132,23 @@ export function ItemManager({
 
   async function onSubmit(e: React.FormEvent) {
     e.preventDefault();
-    setBusy(true);
     setError(null);
+
+    const openingQtyNum = isService ? 0 : Number(openingQty) || 0;
+    // 2210: with two or more godowns and a real opening quantity, there is
+    // no fallback left to resolve it — get_stock_summary's item_home_godown
+    // would otherwise place this item in no godown at all until its first
+    // voucher, showing its full value company-wide and zero in every
+    // per-godown view. Asked here, once, rather than left for the report to
+    // silently mislead on later.
+    if (openingQtyNum > 0 && godowns.length > 1 && !openingGodownId) {
+      setError(
+        "This company has more than one godown — pick which one the opening quantity actually sits in."
+      );
+      return;
+    }
+
+    setBusy(true);
 
     const { error } = await createClient()
       .from("items")
@@ -136,8 +161,17 @@ export function ItemManager({
         // A service cannot hold stock — the database refuses it, so the form
         // should not offer it either.
         maintain_stock: !isService,
-        opening_quantity: isService ? 0 : Number(openingQty) || 0,
+        opening_quantity: openingQtyNum,
         opening_value: isService ? 0 : Number(openingValue) || 0,
+        // 2210: null when there's nothing to disambiguate (service item,
+        // zero opening qty, or a single-godown company where the existing
+        // "company's only godown" fallback already gets it right).
+        opening_godown_id:
+          isService || openingQtyNum <= 0
+            ? null
+            : godowns.length === 1
+              ? godowns[0].id
+              : openingGodownId || null,
         sale_rate: saleRate.trim() ? Number(saleRate) : null,
         supply_nature: supplyNature,
         // The two must agree — a block needs a clause and a clause needs a
@@ -161,6 +195,7 @@ export function ItemManager({
     setHsn("");
     setOpeningQty("0");
     setOpeningValue("0");
+    setOpeningGodownId("");
     setSaleRate("");
     setTcsSection("");
     setBusy(false);
@@ -789,6 +824,29 @@ export function ItemManager({
                   An opening quantity needs a value, or the first issue is
                   costed at zero.
                 </p>
+              )}
+              {Number(openingQty) > 0 && godowns.length > 1 && (
+                <label className="flex flex-col gap-1.5">
+                  <span className="text-sm font-medium">Opening godown</span>
+                  <select
+                    value={openingGodownId}
+                    onChange={(e) => setOpeningGodownId(e.target.value)}
+                    className={field}
+                  >
+                    <option value="">— select —</option>
+                    {godowns.map((g) => (
+                      <option key={g.id} value={g.id}>
+                        {g.name}
+                        {g.is_default ? " (default)" : ""}
+                      </option>
+                    ))}
+                  </select>
+                  <span className="text-xs text-ink-faint">
+                    Where this opening quantity physically sits — with more
+                    than one godown, the stock report can&rsquo;t place it
+                    anywhere on its own until this item&rsquo;s first voucher.
+                  </span>
+                </label>
               )}
             </>
           )}

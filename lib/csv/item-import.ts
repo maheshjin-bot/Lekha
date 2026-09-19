@@ -16,6 +16,13 @@ export type ImportContext = {
   tcsSections: { section_code: string }[];
   /** Names already in the company's item list — flagged, not blocked. */
   existingNames: string[];
+  /**
+   * 2210: needed only to resolve an "Opening Godown" column when the company
+   * has more than one godown and a row carries a positive opening quantity —
+   * with zero or one godown there's nowhere else the opening could sit, so
+   * this list being empty or singular never blocks a row.
+   */
+  godowns: { id: string; name: string }[];
 };
 
 export type RowIssue = { field?: string; message: string; suggestion?: string };
@@ -28,6 +35,8 @@ export type ParsedItem = {
   maintain_stock: boolean;
   opening_quantity: number;
   opening_value: number;
+  /** 2210 — see ImportContext.godowns. */
+  opening_godown_id: string | null;
   sale_rate: number | null;
   purchase_rate: number | null;
   gst_rate_percent: number;
@@ -50,6 +59,7 @@ const COLUMNS = {
   uom: "unit",
   openingQty: "opening qty",
   openingValue: "opening value",
+  openingGodown: "opening godown",
   saleRate: "sale rate",
   purchaseRate: "purchase rate",
   gstRate: "gst rate",
@@ -103,6 +113,36 @@ export function buildItemPreview(rawRows: ItemCsvRow[], ctx: ImportContext): Row
       issues.push({ field: "Opening Qty", message: "Not a number." });
     }
 
+    // 2210: with zero or one godown there's nothing to disambiguate — the
+    // database's own "company's only godown" fallback already places it
+    // correctly. With two or more AND a real opening quantity, leaving this
+    // blank is exactly what used to make an item show its full value
+    // company-wide and zero in every single per-godown report.
+    let opening_godown_id: string | null = null;
+    if (item_type === "goods" && openingQty > 0 && ctx.godowns.length > 1) {
+      const godownRaw = pick(raw, COLUMNS.openingGodown);
+      const godownMatch = godownRaw
+        ? ctx.godowns.find((g) => g.name.toLowerCase() === godownRaw.toLowerCase())
+        : null;
+      if (!godownRaw) {
+        issues.push({
+          field: "Opening Godown",
+          message: `This company has ${ctx.godowns.length} godowns — say which one holds this item's opening quantity.`,
+          suggestion: ctx.godowns.slice(0, 8).map((g) => g.name).join(", "),
+        });
+      } else if (!godownMatch) {
+        issues.push({
+          field: "Opening Godown",
+          message: `"${godownRaw}" is not one of this company's godowns.`,
+          suggestion: ctx.godowns.slice(0, 8).map((g) => g.name).join(", "),
+        });
+      } else {
+        opening_godown_id = godownMatch.id;
+      }
+    } else if (item_type === "goods" && openingQty > 0 && ctx.godowns.length === 1) {
+      opening_godown_id = ctx.godowns[0].id;
+    }
+
     const saleRateRaw = pick(raw, COLUMNS.saleRate);
     const sale_rate = saleRateRaw ? parseAmount(saleRateRaw) : null;
     if (saleRateRaw && sale_rate === null) issues.push({ field: "Sale Rate", message: "Not a number." });
@@ -143,6 +183,7 @@ export function buildItemPreview(rawRows: ItemCsvRow[], ctx: ImportContext): Row
         maintain_stock: item_type === "goods",
         opening_quantity: openingQty ?? 0,
         opening_value: openingValue ?? 0,
+        opening_godown_id,
         sale_rate,
         purchase_rate,
         gst_rate_percent: gst_rate_percent ?? 0,

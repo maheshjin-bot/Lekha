@@ -13,9 +13,9 @@ import { Badge } from "@/components/ui/Badge";
 import { th, td, num, TableContainer } from "@/components/ui/Table";
 
 const TEMPLATE = [
-  "Name,Type,HSN/SAC,Unit,Opening Qty,Opening Value,Sale Rate,Purchase Rate,GST Rate,TCS Section",
-  "Steel Sheet 2mm,Goods,7208,KGS,500,150000.00,350.00,300.00,18,",
-  "Consulting — Setup,Service,998311,NOS,,,25000.00,,18,",
+  "Name,Type,HSN/SAC,Unit,Opening Qty,Opening Value,Opening Godown,Sale Rate,Purchase Rate,GST Rate,TCS Section",
+  "Steel Sheet 2mm,Goods,7208,KGS,500,150000.00,,350.00,300.00,18,",
+  "Consulting — Setup,Service,998311,NOS,,,,25000.00,,18,",
 ].join("\n");
 
 export function ItemImport({
@@ -23,11 +23,15 @@ export function ItemImport({
   uoms,
   tcsSections,
   existingNames,
+  godowns = [],
 }: {
   companyId: string;
   uoms: { code: string; name: string }[];
   tcsSections: { section_code: string }[];
   existingNames: string[];
+  // 2210: only required (per-row) when the company has more than one and a
+  // row carries a positive opening quantity — see lib/csv/item-import.ts.
+  godowns?: { id: string; name: string }[];
 }) {
   const router = useRouter();
   const fileRef = useRef<HTMLInputElement>(null);
@@ -39,8 +43,8 @@ export function ItemImport({
   const [parseError, setParseError] = useState<string | null>(null);
 
   const rows: RowResult[] = useMemo(
-    () => (rawRows.length ? buildItemPreview(rawRows, { uoms, tcsSections, existingNames }) : []),
-    [rawRows, uoms, tcsSections, existingNames]
+    () => (rawRows.length ? buildItemPreview(rawRows, { uoms, tcsSections, existingNames, godowns }) : []),
+    [rawRows, uoms, tcsSections, existingNames, godowns]
   );
   const validRows = rows.filter((r) => r.data !== null);
   const invalidCount = rows.length - validRows.length;

@@ -286,13 +286,19 @@ export default async function StockSummaryPage({
 
       {selectedGodown && (
         <p className="border-t border-border px-4 py-3 text-xs text-ink-faint">
-          Quantities filtered to {selectedGodown.name} always add up exactly
-          across every godown to the all-godowns figure above. Rate and Value
-          do not: each is its own moving-weighted-average (or FIFO stack) of
-          only the receipts posted into {selectedGodown.name}, so a
-          godown&rsquo;s own average cost can differ from the item&rsquo;s
-          company-wide average — the two views are both correct, just based
-          on different receipts.
+          Quantities filtered to {selectedGodown.name} add up across every
+          godown to the all-godowns figure above for any item with a recorded
+          voucher, or whose opening stock named a godown when it was created
+          (2210). The one exception: an item created before that with opening
+          stock and no movement since, in a company with more than one
+          godown — nothing has ever said where it physically sits, so it
+          counts company-wide but appears in no single godown here rather
+          than being guessed into one. Rate and Value never sum across
+          godowns regardless: each is its own moving-weighted-average (or
+          FIFO stack) of only the receipts posted into {selectedGodown.name},
+          so a godown&rsquo;s own average cost can differ from the
+          item&rsquo;s company-wide average — the two views are both correct,
+          just based on different receipts.
         </p>
       )}
 

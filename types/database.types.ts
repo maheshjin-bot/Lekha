@@ -3687,11 +3687,13 @@ export type Database = {
           item_type: string
           maintain_stock: boolean
           name: string
+          opening_godown_id: string | null
           opening_quantity: number
           opening_value: number
           purchase_rate: number | null
           reorder_level: number | null
           sale_rate: number | null
+          stock_ledger_id: string | null
           supply_nature: string
           uom: string
           updated_at: string
@@ -3715,11 +3717,13 @@ export type Database = {
           item_type?: string
           maintain_stock?: boolean
           name: string
+          opening_godown_id?: string | null
           opening_quantity?: number
           opening_value?: number
           purchase_rate?: number | null
           reorder_level?: number | null
           sale_rate?: number | null
+          stock_ledger_id?: string | null
           supply_nature?: string
           uom?: string
           updated_at?: string
@@ -3743,11 +3747,13 @@ export type Database = {
           item_type?: string
           maintain_stock?: boolean
           name?: string
+          opening_godown_id?: string | null
           opening_quantity?: number
           opening_value?: number
           purchase_rate?: number | null
           reorder_level?: number | null
           sale_rate?: number | null
+          stock_ledger_id?: string | null
           supply_nature?: string
           uom?: string
           updated_at?: string
@@ -3766,6 +3772,20 @@ export type Database = {
             isOneToOne: false
             referencedRelation: "ref_tcs_sections"
             referencedColumns: ["section_code"]
+          },
+          {
+            foreignKeyName: "items_opening_godown_id_company_fkey"
+            columns: ["opening_godown_id", "company_id"]
+            isOneToOne: false
+            referencedRelation: "godowns"
+            referencedColumns: ["id", "company_id"]
+          },
+          {
+            foreignKeyName: "items_stock_ledger_fk"
+            columns: ["stock_ledger_id", "company_id"]
+            isOneToOne: false
+            referencedRelation: "ledgers"
+            referencedColumns: ["id", "company_id"]
           },
           {
             foreignKeyName: "items_uom_fkey"
@@ -6697,11 +6717,13 @@ export type Database = {
           direction: string
           discount_amount: number | null
           discount_percent: number
-          godown_id: string
+          godown_id: string | null
           hsn_sac: string | null
           id: string
+          is_landed_cost: boolean
           item_id: string
           landed_cost_amount: number
+          landed_cost_applied: boolean
           line_order: number
           moves_stock: boolean
           quantity: number
@@ -6720,11 +6742,13 @@ export type Database = {
           direction: string
           discount_amount?: number | null
           discount_percent?: number
-          godown_id: string
+          godown_id?: string | null
           hsn_sac?: string | null
           id?: string
+          is_landed_cost?: boolean
           item_id: string
           landed_cost_amount?: number
+          landed_cost_applied?: boolean
           line_order?: number
           moves_stock: boolean
           quantity: number
@@ -6743,11 +6767,13 @@ export type Database = {
           direction?: string
           discount_amount?: number | null
           discount_percent?: number
-          godown_id?: string
+          godown_id?: string | null
           hsn_sac?: string | null
           id?: string
+          is_landed_cost?: boolean
           item_id?: string
           landed_cost_amount?: number
+          landed_cost_applied?: boolean
           line_order?: number
           moves_stock?: boolean
           quantity?: number
@@ -7521,6 +7547,7 @@ export type Database = {
       }
       create_invoice: {
         Args: {
+          p_allow_negative_stock?: boolean
           p_branch_id: string
           p_challan_date?: string
           p_challan_number?: string
@@ -7613,10 +7640,12 @@ export type Database = {
       create_production_voucher: {
         Args: {
           p_additional_cost?: number
+          p_allow_negative_stock?: boolean
           p_bom_id: string
           p_branch_id: string
           p_company_id: string
           p_component_godown_id: string
+          p_cost_ledger_id?: string
           p_narration?: string
           p_output_godown_id: string
           p_quantity_produced: number

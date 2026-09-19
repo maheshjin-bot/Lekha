@@ -172,10 +172,13 @@ async function InvoicesTab({ companyId, lockDate }: { companyId: string; lockDat
 
 async function ItemsTab({ companyId }: { companyId: string }) {
   const supabase = await createClient();
-  const [{ data: uoms }, { data: tcsSections }, { data: existing }] = await Promise.all([
+  const [{ data: uoms }, { data: tcsSections }, { data: existing }, { data: godowns }] = await Promise.all([
     supabase.from("ref_uom").select("code, name").order("name"),
     supabase.from("ref_tcs_sections").select("section_code").eq("is_active", true),
     supabase.from("items").select("name").eq("company_id", companyId),
+    // 2210: only used to resolve an "Opening Godown" column, and only when
+    // there's more than one to pick between.
+    supabase.from("godowns").select("id, name").eq("company_id", companyId).eq("is_active", true).order("name"),
   ]);
   return (
     <ItemImport
@@ -183,6 +186,7 @@ async function ItemsTab({ companyId }: { companyId: string }) {
       uoms={uoms ?? []}
       tcsSections={tcsSections ?? []}
       existingNames={(existing ?? []).map((r) => r.name)}
+      godowns={godowns ?? []}
     />
   );
 }
