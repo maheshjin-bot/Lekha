@@ -7,6 +7,8 @@ import { NavRail } from "@/components/nav/NavRail";
 import { CommandBar } from "@/components/nav/CommandBar";
 import { ContextBar, type ContextBarBranch } from "@/components/nav/ContextBar";
 import { ShortcutSheet } from "@/components/nav/ShortcutSheet";
+import { BottomNav } from "@/components/nav/BottomNav";
+import { ShortcutHint } from "@/components/nav/ShortcutHint";
 import { useShortcuts } from "@/lib/keys/useShortcuts";
 import { GLOBAL_SCOPE } from "@/lib/keys/registry";
 
@@ -68,6 +70,20 @@ import { GLOBAL_SCOPE } from "@/lib/keys/registry";
  *     the small "Keyboard shortcuts" button beside the mobile hamburger
  *     (and, at `lg:` and up, floating in the corner where NavRail leaves no
  *     header row to put it in) opens the exact same sheet by click.
+ *
+ *   - BottomNav: the mobile-only 5-slot bottom bar (Home / Invoices / Scan /
+ *     Reports / More), rendered as a sibling of NavRail so its `fixed`
+ *     position is relative to the viewport, not to NavRail's own scrolling
+ *     column. Its "More" slot is wired to the exact same `setMobileOpen`
+ *     call the mobile header's hamburger button above already makes — one
+ *     drawer, two doors in. The page content column carries the matching
+ *     bottom padding this bar's fixed position requires (see that div's own
+ *     comment).
+ *
+ *   - ShortcutHint: the once-per-user "Press ⌘K…" toast, gated to desktop
+ *     viewports and the dashboard route inside the component itself (see
+ *     its own file header) — mounted unconditionally here the same way
+ *     CommandBar is, because it is entirely self-contained.
  */
 export function AppShell({
   companyId,
@@ -157,8 +173,20 @@ export function AppShell({
           fyStartMonth={fyStartMonth}
           branches={branches}
         />
-        <div className="min-w-0 flex-1">{children}</div>
+        {/* The 4rem term clears BottomNav.tsx's own h-16 row so the last
+            line of any page is never sat on top of by the fixed bar below
+            it; env(safe-area-inset-bottom) on top of that adds the bar's
+            own safe-area padding, so a notched phone's home indicator
+            doesn't eat into that clearance either. lg:pb-0 because
+            BottomNav renders nothing at all at that breakpoint (it is
+            `lg:hidden`), so this padding would otherwise just be dead space
+            under every report on desktop. */}
+        <div className="min-w-0 flex-1 pb-[calc(4rem_+_env(safe-area-inset-bottom))] lg:pb-0">
+          {children}
+        </div>
       </div>
+      <BottomNav companyId={companyId} activePath={activePath} onOpenMore={() => setMobileOpen(true)} />
+      <ShortcutHint companyId={companyId} activePath={activePath} />
       {/* Desktop twin of the mobile header's button above — the header row
           itself is lg:hidden, so ShortcutSheet needs its own always-visible
           trigger at that breakpoint too (useShortcuts.ts's own rule: a combo

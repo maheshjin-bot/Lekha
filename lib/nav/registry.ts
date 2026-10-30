@@ -96,6 +96,22 @@ const overview: NavEntry = {
 // Transactions — everything that creates or moves a voucher.
 // ---------------------------------------------------------------------------
 
+/** Pulled out to a named const (rather than left inline in `transactions`
+ * below) so BottomNav.tsx's Scan FAB can reference the exact same entry —
+ * see `mobilePrimaryNav` at the bottom of this file. */
+const scanOnPhone: NavEntry = {
+  // Not company-scoped: /scan picks its own company on the device and
+  // deliberately carries none of this shell (see NavRail.tsx's own
+  // comment on this link — preserved here as the same fact, not
+  // re-derived).
+  href: "/scan",
+  label: "Scan on a phone",
+  workspace: "purchases",
+  keywords: ["mobile scan", "phone camera", "document scanner"],
+  group: "Transactions",
+  module: "documents",
+};
+
 const transactions: NavEntry[] = [
   {
     href: `${C}/vouchers/new`,
@@ -135,18 +151,7 @@ const transactions: NavEntry[] = [
     group: "Transactions",
     module: "documents",
   },
-  {
-    // Not company-scoped: /scan picks its own company on the device and
-    // deliberately carries none of this shell (see NavRail.tsx's own
-    // comment on this link — preserved here as the same fact, not
-    // re-derived).
-    href: "/scan",
-    label: "Scan on a phone",
-    workspace: "purchases",
-    keywords: ["mobile scan", "phone camera", "document scanner"],
-    group: "Transactions",
-    module: "documents",
-  },
+  scanOnPhone,
   {
     href: `${C}/orders`,
     label: "Orders",
@@ -539,6 +544,31 @@ const gst: NavEntry[] = [
 // 'payroll', and only the domain-neutral financial statements are 'reports'.
 // ---------------------------------------------------------------------------
 
+/** Pulled out to named consts (rather than left inline in `reports` below,
+ * the same way `scanOnPhone` was pulled out of `transactions` above) so
+ * BottomNav.tsx's Invoices and Reports tabs can reference the exact same
+ * entries — see `mobilePrimaryNav` at the bottom of this file. Trial
+ * balance, not one of the other core statements, is the pick for the
+ * bottom bar's "Reports" slot: there is no single /reports index page to
+ * link to instead (confirmed — every report lives at its own route), and a
+ * running trial balance is the one report an accountant checks most often
+ * day to day. */
+const salesInvoicesReport: NavEntry = {
+  href: `${C}/reports/sales-invoices`,
+  label: "Sales invoices",
+  workspace: "sales",
+  keywords: ["sales register", "invoice list", "b2b b2c invoices"],
+  group: "Reports",
+};
+
+const trialBalanceReport: NavEntry = {
+  href: `${C}/reports/trial-balance`,
+  label: "Trial balance",
+  workspace: "reports",
+  keywords: ["tb", "trial bal"],
+  group: "Reports",
+};
+
 const reports: NavEntry[] = [
   {
     href: `${C}/reports/daybook`,
@@ -547,13 +577,7 @@ const reports: NavEntry[] = [
     keywords: ["day book", "all vouchers", "transaction log"],
     group: "Reports",
   },
-  {
-    href: `${C}/reports/sales-invoices`,
-    label: "Sales invoices",
-    workspace: "sales",
-    keywords: ["sales register", "invoice list", "b2b b2c invoices"],
-    group: "Reports",
-  },
+  salesInvoicesReport,
   {
     href: `${C}/reports/purchase-invoices`,
     label: "Purchase invoices",
@@ -596,13 +620,7 @@ const reports: NavEntry[] = [
     keywords: ["ledger vouchers", "account statement", "party statement"],
     group: "Reports",
   },
-  {
-    href: `${C}/reports/trial-balance`,
-    label: "Trial balance",
-    workspace: "reports",
-    keywords: ["tb", "trial bal"],
-    group: "Reports",
-  },
+  trialBalanceReport,
   {
     href: `${C}/reports/profit-loss`,
     label: "Profit & loss",
@@ -1123,3 +1141,38 @@ export const navGroups: { label: string; items: NavEntry[] }[] = [
   { label: "GST", items: gst },
   { label: "Reports", items: reports },
 ];
+
+// ---------------------------------------------------------------------------
+// Mobile primary nav — the five slots components/nav/BottomNav.tsx renders
+// below `lg:` (the same breakpoint NavRail's own drawer/rail split already
+// uses). Curated by hand, not filtered by workspace or group: "primary"
+// here means "the four destinations worth a permanent thumb-reach slot on a
+// phone regardless of which of the ten workspaces a company actually uses",
+// which is not a property any existing NavEntry carries and not a shape a
+// filter over `navEntries` could derive.
+//
+// Every value below is a reference to one of the real entries above (not a
+// second, inline href/label pair) — see `scanOnPhone`, `salesInvoicesReport`
+// and `trialBalanceReport`'s own comments — so a future edit to any one of
+// their labels or hrefs cannot silently drift out of sync with what the
+// bottom bar shows. The fifth slot, "More", opens NavRail's own off-canvas
+// drawer and has no destination of its own, so it carries no entry here;
+// BottomNav.tsx wires that slot directly to the same `onMobileClose`-paired
+// `setMobileOpen(true)` call AppShell.tsx's hamburger button already makes.
+export const mobilePrimaryNav = {
+  home: overview,
+  invoices: salesInvoicesReport,
+  scan: scanOnPhone,
+  reports: trialBalanceReport,
+};
+
+/** Resolves a NavEntry.href's ":companyId" token against a real company id
+ * — the exact substitution NavRail.tsx's own (unexported) `resolveHref` does
+ * for the same reason: the token carries no leading slash, so this replaces
+ * it with `/${companyId}`, not the bare id (see that file's own comment on
+ * why the bare id would silently drop the leading "/"). The two routes with
+ * no such token (/scan, /security) pass through this unchanged, same as
+ * they do in NavRail today. */
+export function resolveNavHref(href: string, companyId: string): string {
+  return href.replace(":companyId", `/${companyId}`);
+}

@@ -112,7 +112,7 @@ export function SupportChatWidget() {
   return (
     <>
       {open && (
-        <div className="fixed bottom-24 right-6 z-50 flex h-[32rem] w-96 max-w-[calc(100vw-3rem)] flex-col overflow-hidden rounded-xl border border-border bg-surface shadow-[var(--shadow)] print:hidden">
+        <div className="fixed bottom-24 right-6 z-50 flex h-[32rem] w-96 max-w-[calc(100vw-3rem)] flex-col overflow-hidden rounded-xl border border-border bg-surface shadow-[var(--shadow)] print:hidden max-lg:bottom-[calc(9.5rem_+_env(safe-area-inset-bottom))]">
           <div className="flex items-start justify-between gap-2 border-b border-border px-4 py-3">
             <div className="min-w-0">
               <p className="text-sm font-semibold text-ink">LEKHA Assistant</p>
@@ -212,10 +212,20 @@ export function SupportChatWidget() {
         </div>
       )}
 
+      {/* max-lg: bumps this up clear of components/nav/BottomNav.tsx's fixed
+          mobile bar (added for the Phase 1 nav work) — that bar only mounts
+          below `lg:`, inside a company workspace, but this widget mounts
+          unconditionally from app/(app)/layout.tsx for every authenticated
+          page including ones with no bottom bar at all (/companies,
+          /security). A `max-lg:` offset rather than a prop or context is
+          deliberate: it costs nothing on the pages that have no bottom bar
+          (a little extra clearance from the edge, not a real defect) and
+          needs no coordination between two files that otherwise know
+          nothing about each other. */}
       <button
         type="button"
         onClick={() => setOpen((o) => !o)}
-        className="fixed bottom-6 right-6 z-50 flex h-12 w-12 items-center justify-center rounded-full bg-accent text-accent-ink shadow-[var(--shadow)] transition-opacity hover:opacity-90 print:hidden"
+        className="fixed bottom-6 right-6 z-50 flex h-12 w-12 items-center justify-center rounded-full bg-accent text-accent-ink shadow-[var(--shadow)] transition-opacity hover:opacity-90 print:hidden max-lg:bottom-[calc(5rem_+_env(safe-area-inset-bottom))]"
         aria-label={open ? "Close support chat" : "Open support chat"}
       >
         {open ? <X size={20} /> : <MessageCircle size={20} />}

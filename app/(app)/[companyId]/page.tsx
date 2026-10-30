@@ -2,6 +2,7 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 import { createClient } from "@/lib/supabase/server";
 import { formatINR, formatINRWithSymbol } from "@/lib/utils/currency";
+import { periodPreset } from "@/lib/utils/period";
 import { KpiTile } from "@/components/ui/KpiTile";
 import { Badge } from "@/components/ui/Badge";
 import { Card } from "@/components/ui/Card";
@@ -21,6 +22,19 @@ export default async function CompanyPage({
   const { companyId } = await params;
   const supabase = await createClient();
 
+  // Needed up front (not inside the Promise.all below) because the
+  // role-aware ordering below (company_members.role) has to filter on it —
+  // company_members_read (0003) is `is_company_member(company_id)`, which
+  // lets any active member read every member row for the company, not just
+  // their own; without an explicit `.eq("user_id", user.id)` the first row
+  // returned could belong to a co-worker, not the signed-in user. Same
+  // gotcha app/(app)/[companyId]/approvals/page.tsx documents and guards
+  // against the same way — several other pages in this codebase (trial
+  // balance, branches, team settings) skip the `.eq("user_id", ...)` and
+  // only happen to work for single-admin companies.
+  const { data: userData } = await supabase.auth.getUser();
+  const user = userData.user;
+
   const [
     { data: profile },
     { data: modules },
@@ -30,6 +44,7 @@ export default async function CompanyPage({
     { count: pendingNotifications },
     { data: unallocatedDebtor },
     { data: unallocatedCreditor },
+    { data: membership },
   ] = await Promise.all([
       supabase.rpc("get_company_profile", { p_company_id: companyId }),
       supabase.rpc("get_company_modules", { p_company_id: companyId }),
@@ -63,10 +78,84 @@ export default async function CompanyPage({
       supabase
         // eslint-disable-next-line @typescript-eslint/no-explicit-any -- see above
         .rpc("get_unallocated_settlements" as any, { p_company_id: companyId, p_role: "creditor" }),
+      // The signed-in user's own role in THIS company, for the role-aware
+      // ordering below — see the comment above `user` for why `user.id` has
+      // to be in the filter, not just `company_id`.
+      user
+        ? supabase
+            .from("company_members")
+            .select("role")
+            .eq("company_id", companyId)
+            .eq("user_id", user.id)
+            .maybeSingle()
+        : Promise.resolve({ data: null }),
     ]);
 
   const company = profile?.[0];
   if (!company) notFound();
+
+  // Role-aware ordering (Phase 1 audit item #2). company_members.role is a
+  // three-way CHECK ('admin','accountant','auditor' — 0003), not a literal
+  // Owner/Accountant/CA/Staff taxonomy, so this maps pragmatically: admin
+  // keeps the owner-style ordering that shipped before this change (cash
+  // position and profit first, compliance numbers and the action feed
+  // after); accountant and auditor — the schema's only non-admin roles,
+  // both compliance-facing in practice — get a compliance/action-first
+  // ordering instead. A null role (should not happen; get_company_profile
+  // above would already have 404'd a non-member) defensively falls back to
+  // the owner-style default rather than guessing.
+  const complianceFirst = membership?.role === "accountant" || membership?.role === "auditor";
+
+  // Profit · This Month (Phase 1 audit item #1) — reuses get_profit_and_loss
+  // (0009/0210) exactly as the Profit & Loss report does
+  // (app/(app)/[companyId]/reports/profit-loss/page.tsx: netProfit = direct
+  // + indirect income minus direct + indirect expense), rather than
+  // duplicating that computation in SQL. periodPreset's "currentMonth"/
+  // "previousMonth" keys (lib/utils/period.ts) are calendar-month, not
+  // FY-relative — startMonth is threaded through anyway for the same reason
+  // every other report page does, and because a future preset could become
+  // FY-relative without this call site needing to change. get_profit_and_loss
+  // already filters `not v.is_deleted` server-side, the same soft-delete
+  // convention every other balance/report RPC in this codebase uses.
+  const startMonth = company.financial_year_start_month ?? 4;
+  const thisMonth = periodPreset("currentMonth", startMonth);
+  const prevMonth = periodPreset("previousMonth", startMonth);
+
+  const [{ data: plThisMonth }, { data: plPrevMonth }] = await Promise.all([
+    supabase.rpc("get_profit_and_loss", {
+      p_company_id: companyId,
+      p_from: thisMonth.from,
+      p_to: thisMonth.to,
+    }),
+    supabase.rpc("get_profit_and_loss", {
+      p_company_id: companyId,
+      p_from: prevMonth.from,
+      p_to: prevMonth.to,
+    }),
+  ]);
+
+  const netProfit = (rows: { nature: string; amount: number }[] | null) =>
+    (rows ?? []).reduce(
+      (n, r) => n + (r.nature.includes("income") ? 1 : -1) * Number(r.amount),
+      0
+    );
+  const thisMonthProfit = netProfit(plThisMonth);
+  const prevMonthProfit = netProfit(plPrevMonth);
+
+  // "vs last month" is a full prior calendar month against a month-to-date
+  // figure, so it is directional, not a precise comparison — the same
+  // caveat any month-to-date KPI carries. formatVariance's own convention
+  // (reports/profit-loss/page.tsx): an em dash when there is nothing
+  // meaningful to divide by (a zero-profit prior month), never a fake 0% or
+  // "Infinity%".
+  const profitDeltaPct =
+    prevMonthProfit !== 0 ? ((thisMonthProfit - prevMonthProfit) / Math.abs(prevMonthProfit)) * 100 : null;
+  const profitDelta =
+    profitDeltaPct === null
+      ? undefined
+      : `${profitDeltaPct >= 0 ? "+" : ""}${profitDeltaPct.toFixed(1)}% vs last month`;
+  const profitDeltaTone: "ok" | "bad" | "neutral" =
+    profitDeltaPct === null ? "neutral" : profitDeltaPct >= 0 ? "ok" : "bad";
 
   const active = (modules ?? []).filter((m) => m.active);
   const inactive = (modules ?? []).filter((m) => !m.active);
@@ -121,72 +210,123 @@ export default async function CompanyPage({
         </Link>
       </header>
 
-      {/* The first thing an owner sees is not a chart — it's the answer to
-          "where do I stand today, and what needs me right now?" */}
-      {kpi && (
-        <section className="mb-8 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
-          <KpiTile label="Cash & Bank" value={formatINR(kpi.cash_bank, { showZero: true })} />
-          <KpiTile
-            label="Receivable"
-            value={formatINR(kpi.receivables, { showZero: true })}
-            delta={kpi.receivables_overdue > 0 ? `Overdue ${formatINR(kpi.receivables_overdue)}` : undefined}
-            deltaTone={kpi.receivables_overdue > 0 ? "warn" : "neutral"}
-          />
-          <KpiTile label="GST Liability" value={formatINR(kpi.gst_liability, { showZero: true })} />
-          <KpiTile label="TDS Payable" value={formatINR(kpi.tds_payable, { showZero: true })} />
-        </section>
-      )}
+      {(() => {
+        // Tile order is role-aware (see `complianceFirst` above): an owner
+        // wants cash position and profit first; an accountant/auditor wants
+        // the compliance numbers first. Same five tiles either way, just
+        // reordered — this is a pure rendering choice, not a data one.
+        const kpiByKey = kpi && {
+          cash_bank: (
+            <KpiTile
+              key="cash_bank"
+              label="Cash & Bank"
+              value={formatINR(kpi.cash_bank, { showZero: true })}
+            />
+          ),
+          profit: (
+            <KpiTile
+              key="profit"
+              label="Profit · This Month"
+              value={formatINR(thisMonthProfit, { showZero: true })}
+              delta={profitDelta}
+              deltaTone={profitDeltaTone}
+              href={`/${companyId}/reports/profit-loss?from=${thisMonth.from}&to=${thisMonth.to}`}
+            />
+          ),
+          receivable: (
+            <KpiTile
+              key="receivable"
+              label="Receivable"
+              value={formatINR(kpi.receivables, { showZero: true })}
+              delta={kpi.receivables_overdue > 0 ? `Overdue ${formatINR(kpi.receivables_overdue)}` : undefined}
+              deltaTone={kpi.receivables_overdue > 0 ? "warn" : "neutral"}
+            />
+          ),
+          gst_liability: (
+            <KpiTile
+              key="gst_liability"
+              label="GST Liability"
+              value={formatINR(kpi.gst_liability, { showZero: true })}
+            />
+          ),
+          tds_payable: (
+            <KpiTile
+              key="tds_payable"
+              label="TDS Payable"
+              value={formatINR(kpi.tds_payable, { showZero: true })}
+            />
+          ),
+        };
+        const kpiOrder: (keyof NonNullable<typeof kpiByKey>)[] = complianceFirst
+          ? ["gst_liability", "tds_payable", "receivable", "cash_bank", "profit"]
+          : ["cash_bank", "profit", "receivable", "gst_liability", "tds_payable"];
+        const kpiSection = kpiByKey && (
+          <section key="kpis" className="mb-8 grid gap-3 sm:grid-cols-2 lg:grid-cols-5">
+            {kpiOrder.map((k) => kpiByKey[k])}
+          </section>
+        );
 
-      <section className="mb-12 grid gap-4 lg:grid-cols-2">
-        <Card>
-          <div className="border-b border-border px-4 py-3">
-            <h2 className="text-sm font-semibold text-ink">Needs your attention</h2>
-          </div>
-          {attentionRows.length === 0 ? (
-            <p className="px-4 py-6 text-sm text-ink-faint">
-              Nothing needs you right now.
-            </p>
-          ) : (
-            <ul>
-              {attentionRows.map((r, i) => (
-                <li key={i}>
-                  <Link
-                    href={r.href ?? `/${companyId}`}
-                    className="flex items-center justify-between gap-3 border-b border-border px-4 py-2.5 text-sm transition-colors last:border-0 hover:bg-surface-2"
-                  >
-                    <span className="min-w-0 truncate">{r.label}</span>
-                    <Badge tone={SEVERITY_TONE[r.severity] ?? "neutral"} className="shrink-0">
-                      {r.detail || r.category}
-                    </Badge>
-                  </Link>
-                </li>
-              ))}
-            </ul>
-          )}
-        </Card>
+        const attentionSection = (
+          <section key="attention-and-company" className="mb-12 grid gap-4 lg:grid-cols-2">
+            <Card>
+              <div className="border-b border-border px-4 py-3">
+                <h2 className="text-sm font-semibold text-ink">Needs your attention</h2>
+              </div>
+              {attentionRows.length === 0 ? (
+                <p className="px-4 py-6 text-sm text-ink-faint">
+                  Nothing needs you right now.
+                </p>
+              ) : (
+                <ul>
+                  {attentionRows.map((r, i) => (
+                    <li key={i}>
+                      <Link
+                        href={r.href ?? `/${companyId}`}
+                        className="flex items-center justify-between gap-3 border-b border-border px-4 py-2.5 text-sm transition-colors last:border-0 hover:bg-surface-2"
+                      >
+                        <span className="min-w-0 truncate">{r.label}</span>
+                        <Badge tone={SEVERITY_TONE[r.severity] ?? "neutral"} className="shrink-0">
+                          {r.detail || r.category}
+                        </Badge>
+                      </Link>
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </Card>
 
-        <Card>
-          <div className="border-b border-border px-4 py-3">
-            <h2 className="text-sm font-semibold text-ink">This company</h2>
-          </div>
-          <dl className="grid grid-cols-2 gap-x-4 gap-y-3 p-4 text-sm">
-            <dt className="text-ink-faint">Statements</dt>
-            <dd className="text-right font-medium">
-              {company.statement_format === "schedule_iii" ? "Schedule III" : "Simple"}
-            </dd>
-            <dt className="text-ink-faint">Income tax return</dt>
-            <dd className="text-right font-medium">{company.itr_form}</dd>
-            <dt className="text-ink-faint">Tax audit report</dt>
-            <dd className="text-right font-medium">
-              {company.tax_audit_report_form.toUpperCase().replace("_OR_", " or ")}
-            </dd>
-            <dt className="text-ink-faint">Modules active</dt>
-            <dd className="text-right font-medium">
-              {active.length} of {modules?.length ?? 0}
-            </dd>
-          </dl>
-        </Card>
-      </section>
+            <Card>
+              <div className="border-b border-border px-4 py-3">
+                <h2 className="text-sm font-semibold text-ink">This company</h2>
+              </div>
+              <dl className="grid grid-cols-2 gap-x-4 gap-y-3 p-4 text-sm">
+                <dt className="text-ink-faint">Statements</dt>
+                <dd className="text-right font-medium">
+                  {company.statement_format === "schedule_iii" ? "Schedule III" : "Simple"}
+                </dd>
+                <dt className="text-ink-faint">Income tax return</dt>
+                <dd className="text-right font-medium">{company.itr_form}</dd>
+                <dt className="text-ink-faint">Tax audit report</dt>
+                <dd className="text-right font-medium">
+                  {company.tax_audit_report_form.toUpperCase().replace("_OR_", " or ")}
+                </dd>
+                <dt className="text-ink-faint">Modules active</dt>
+                <dd className="text-right font-medium">
+                  {active.length} of {modules?.length ?? 0}
+                </dd>
+              </dl>
+            </Card>
+          </section>
+        );
+
+        // The section-level swap: an accountant/auditor sees what needs
+        // action before the headline numbers; an admin (or a null role,
+        // defensively) sees the headline numbers first, same as before this
+        // change.
+        return complianceFirst
+          ? <>{attentionSection}{kpiSection}</>
+          : <>{kpiSection}{attentionSection}</>;
+      })()}
 
       {company.special_provisions?.length ? (
         <section className="mb-12 rounded-lg border border-warning/30 bg-warning-soft p-5">

@@ -46,3 +46,12 @@ next-env.d.ts
 
 # Supabase CLI scratch (version cache), not source
 supabase/.temp/
+
+# Some external tool's upload-staging cache, not source — landed in the
+# project root, and being untracked/un-ignored let Tailwind v4's default
+# content auto-detection (which respects .gitignore) scan it, choke on a
+# corrupted byte inside one of its ~80k blob files, and break the dev build
+# for every session pointed at this repo. Ignoring it, not deleting it: it's
+# read-only, dated days before this fix, and not this project's to remove
+# without knowing what still expects it there.
+.tmp.driveupload/
